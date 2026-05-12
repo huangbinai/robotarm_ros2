@@ -84,7 +84,7 @@ python3 -m pip install --user --index-url https://pypi.org/simple motorbridge
 ```bash
 cd ~/seeed/rebotarm_ros2
 mkdir -p third_party
-git clone https://github.com/vectorBH6/reBotArm_control_py.git third_party/reBotArm_control_py
+git clone https://github.com/huangbinai/rebotarm_control.git third_party/reBotArm_control_py
 ```
 
 ### Step 4. 确认底层 SDK 可导入

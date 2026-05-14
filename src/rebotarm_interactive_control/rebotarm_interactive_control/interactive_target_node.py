@@ -16,6 +16,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from .command_models import PoseTarget
 from .execution_coordinator import InteractiveCoordinator
 from .mode_manager import parse_control_mode
+from .parameter_helpers import build_joint_limits
 from .pose_math import quaternion_to_rpy, rpy_to_quaternion
 from .pose_preview_solver import PosePreviewSolver
 from .preview_manager import PreviewManager
@@ -42,15 +43,12 @@ class InteractiveTargetNode(Node):
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
         )
         self.declare_parameter(
-            "joint_limits",
-            {
-                "joint1": [-3.14159, 3.14159],
-                "joint2": [-3.14159, 3.14159],
-                "joint3": [-3.14159, 3.14159],
-                "joint4": [-3.14159, 3.14159],
-                "joint5": [-3.14159, 3.14159],
-                "joint6": [-3.14159, 3.14159],
-            },
+            "joint_lower_limits",
+            [-3.14159, -3.14159, -3.14159, -3.14159, -3.14159, -3.14159],
+        )
+        self.declare_parameter(
+            "joint_upper_limits",
+            [3.14159, 3.14159, 3.14159, 3.14159, 3.14159, 3.14159],
         )
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
@@ -63,11 +61,17 @@ class InteractiveTargetNode(Node):
         self._marker_scale = float(self.get_parameter("interactive_marker_scale").value)
 
         joint_names = tuple(str(v) for v in self.get_parameter("joint_names").value)
-        raw_limits = dict(self.get_parameter("joint_limits").value)
-        joint_limits = {
-            str(name): (float(bounds[0]), float(bounds[1]))
-            for name, bounds in raw_limits.items()
-        }
+        lower_limits = tuple(
+            float(v) for v in self.get_parameter("joint_lower_limits").value
+        )
+        upper_limits = tuple(
+            float(v) for v in self.get_parameter("joint_upper_limits").value
+        )
+        joint_limits = build_joint_limits(
+            joint_names=joint_names,
+            lower_limits=lower_limits,
+            upper_limits=upper_limits,
+        )
 
         workspace_root = Path(__file__).resolve().parents[3]
         pose_solver = None

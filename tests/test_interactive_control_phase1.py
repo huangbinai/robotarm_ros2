@@ -26,6 +26,9 @@ from rebotarm_interactive_control.pose_math import (  # type: ignore[import-not-
     quaternion_to_rpy,
     rpy_to_quaternion,
 )
+from rebotarm_interactive_control.parameter_helpers import (  # type: ignore[import-not-found]
+    build_joint_limits,
+)
 
 
 class FakePoseSolver:
@@ -194,6 +197,31 @@ class PoseMathTests(unittest.TestCase):
         self.assertAlmostEqual(roll, 0.0, places=6)
         self.assertAlmostEqual(pitch, 0.0, places=6)
         self.assertAlmostEqual(yaw, 1.57079632679, places=6)
+
+
+class ParameterHelperTests(unittest.TestCase):
+    def test_build_joint_limits_from_parallel_arrays(self) -> None:
+        limits = build_joint_limits(
+            joint_names=("joint1", "joint2"),
+            lower_limits=(-1.0, -2.0),
+            upper_limits=(1.0, 2.0),
+        )
+
+        self.assertEqual(
+            limits,
+            {
+                "joint1": (-1.0, 1.0),
+                "joint2": (-2.0, 2.0),
+            },
+        )
+
+    def test_build_joint_limits_rejects_length_mismatch(self) -> None:
+        with self.assertRaises(ValueError):
+            build_joint_limits(
+                joint_names=("joint1", "joint2"),
+                lower_limits=(-1.0,),
+                upper_limits=(1.0, 2.0),
+            )
 
 
 if __name__ == "__main__":

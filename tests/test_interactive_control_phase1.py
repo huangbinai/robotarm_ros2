@@ -29,6 +29,9 @@ from rebotarm_interactive_control.pose_math import (  # type: ignore[import-not-
 from rebotarm_interactive_control.parameter_helpers import (  # type: ignore[import-not-found]
     build_joint_limits,
 )
+from rebotarm_interactive_control.parameter_helpers import (  # type: ignore[import-not-found]
+    sensor_qos_kwargs,
+)
 
 
 class FakePoseSolver:
@@ -222,6 +225,11 @@ class ParameterHelperTests(unittest.TestCase):
                 lower_limits=(-1.0,),
                 upper_limits=(1.0, 2.0),
             )
+
+    def test_sensor_qos_kwargs_uses_best_effort_sensor_profile(self) -> None:
+        qos = sensor_qos_kwargs()
+        self.assertEqual(qos["depth"], 10)
+        self.assertEqual(qos["reliability"], "best_effort")
 
 
 if __name__ == "__main__":

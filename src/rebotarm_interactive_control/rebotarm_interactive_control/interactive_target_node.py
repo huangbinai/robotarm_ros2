@@ -6,6 +6,7 @@ import rclpy
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rebotarm_msgs.srv import SetMode
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
@@ -16,7 +17,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from .command_models import PoseTarget
 from .execution_coordinator import InteractiveCoordinator
 from .mode_manager import parse_control_mode
-from .parameter_helpers import build_joint_limits
+from .parameter_helpers import build_joint_limits, sensor_qos_kwargs
 from .pose_math import quaternion_to_rpy, rpy_to_quaternion
 from .pose_preview_solver import PosePreviewSolver
 from .preview_manager import PreviewManager
@@ -110,6 +111,12 @@ class InteractiveTargetNode(Node):
             FollowJointTrajectory,
             f"/{self._arm_namespace}/follow_joint_trajectory",
         )
+        sensor_qos_spec = sensor_qos_kwargs()
+        sensor_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=int(sensor_qos_spec["depth"]),
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+        )
         self.create_subscription(
             JointTrajectory,
             f"/{self._arm_namespace}/interactive_control/joint_target",
@@ -126,7 +133,7 @@ class InteractiveTargetNode(Node):
             JointState,
             f"/{self._arm_namespace}/joint_states",
             self._on_joint_state,
-            20,
+            sensor_qos,
         )
 
         self.create_service(

@@ -15,3 +15,10 @@ def build_joint_limits(
         name: (float(lower), float(upper))
         for name, lower, upper in zip(joint_names, lower_limits, upper_limits)
     }
+
+
+def sensor_qos_kwargs() -> dict[str, object]:
+    return {
+        "depth": 10,
+        "reliability": "best_effort",
+    }

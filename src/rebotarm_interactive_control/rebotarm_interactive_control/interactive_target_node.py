@@ -382,7 +382,8 @@ class InteractiveTargetNode(Node):
 
         visual_control = InteractiveMarkerControl()
         visual_control.always_visible = True
-        visual_control.interaction_mode = InteractiveMarkerControl.NONE
+        visual_control.name = "move_rotate_3d"
+        visual_control.interaction_mode = InteractiveMarkerControl.MOVE_ROTATE_3D
         visual_control.markers.extend(self._make_visible_markers(Marker))
         marker.controls.append(visual_control)
 

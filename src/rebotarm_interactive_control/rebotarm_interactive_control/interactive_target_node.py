@@ -38,7 +38,7 @@ class InteractiveTargetNode(Node):
             "rebotarm/interactive_control/ee_target",
         )
         self.declare_parameter("interactive_marker_name", "ee_target")
-        self.declare_parameter("interactive_marker_scale", 0.2)
+        self.declare_parameter("interactive_marker_scale", 0.28)
         self.declare_parameter(
             "joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
@@ -383,7 +383,7 @@ class InteractiveTargetNode(Node):
         visual_control = InteractiveMarkerControl()
         visual_control.always_visible = True
         visual_control.interaction_mode = InteractiveMarkerControl.NONE
-        visual_control.markers.append(self._make_visible_marker(Marker))
+        visual_control.markers.extend(self._make_visible_markers(Marker))
         marker.controls.append(visual_control)
 
         for name, orientation, mode in (
@@ -405,17 +405,66 @@ class InteractiveTargetNode(Node):
 
         return marker
 
-    def _make_visible_marker(self, marker_cls):
-        marker = marker_cls()
-        marker.type = marker_cls.SPHERE
-        marker.scale.x = self._marker_scale * 0.28
-        marker.scale.y = self._marker_scale * 0.28
-        marker.scale.z = self._marker_scale * 0.28
-        marker.color.r = 0.10
-        marker.color.g = 0.70
-        marker.color.b = 0.95
-        marker.color.a = 0.90
-        return marker
+    def _make_visible_markers(self, marker_cls):
+        markers = []
+
+        center = marker_cls()
+        center.type = marker_cls.SPHERE
+        center.scale.x = self._marker_scale * 0.36
+        center.scale.y = self._marker_scale * 0.36
+        center.scale.z = self._marker_scale * 0.36
+        center.color.r = 0.10
+        center.color.g = 0.70
+        center.color.b = 0.95
+        center.color.a = 0.95
+        markers.append(center)
+
+        axis_length = self._marker_scale * 0.65
+        axis_shaft = self._marker_scale * 0.09
+        axis_head = self._marker_scale * 0.16
+        axis_offset = axis_length * 0.5
+
+        for axis_name, rgba, position, orientation in (
+            (
+                "x",
+                (0.95, 0.25, 0.25, 0.95),
+                (axis_offset, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            ),
+            (
+                "y",
+                (0.20, 0.85, 0.25, 0.95),
+                (0.0, axis_offset, 0.0),
+                (0.0, 0.0, 0.70710678, 0.70710678),
+            ),
+            (
+                "z",
+                (0.20, 0.45, 0.95, 0.95),
+                (0.0, 0.0, axis_offset),
+                (0.0, 0.70710678, 0.0, 0.70710678),
+            ),
+        ):
+            axis = marker_cls()
+            axis.ns = "ee_target_axes"
+            axis.id = ord(axis_name)
+            axis.type = marker_cls.ARROW
+            axis.scale.x = axis_length
+            axis.scale.y = axis_shaft
+            axis.scale.z = axis_head
+            axis.pose.position.x = position[0]
+            axis.pose.position.y = position[1]
+            axis.pose.position.z = position[2]
+            axis.pose.orientation.x = orientation[0]
+            axis.pose.orientation.y = orientation[1]
+            axis.pose.orientation.z = orientation[2]
+            axis.pose.orientation.w = orientation[3]
+            axis.color.r = rgba[0]
+            axis.color.g = rgba[1]
+            axis.color.b = rgba[2]
+            axis.color.a = rgba[3]
+            markers.append(axis)
+
+        return markers
 
     def _on_marker_feedback(self, feedback) -> None:
         if self._interactive_classes is None:

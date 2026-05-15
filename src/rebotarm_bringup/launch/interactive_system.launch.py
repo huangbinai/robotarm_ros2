@@ -1,0 +1,126 @@
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    arm_namespace = LaunchConfiguration("arm_namespace")
+    bringup_share = FindPackageShare("rebotarm_bringup")
+    interactive_share = FindPackageShare("rebotarm_interactive_control")
+    arm_config = LaunchConfiguration("arm_config")
+    gripper_config = LaunchConfiguration("gripper_config")
+    channel = LaunchConfiguration("channel")
+    use_rviz = LaunchConfiguration("use_rviz")
+    joint_state_rate = LaunchConfiguration("joint_state_rate")
+    cmd_arbitration = LaunchConfiguration("cmd_arbitration")
+    frame_id = LaunchConfiguration("frame_id")
+    ee_frame_id = LaunchConfiguration("ee_frame_id")
+    interactive_config = LaunchConfiguration("interactive_config")
+
+    urdf_file = PathJoinSubstitution(
+        [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
+    )
+    rviz_config = PathJoinSubstitution(
+        [bringup_share, "rviz", "interactive_system.rviz"]
+    )
+    robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "arm_config",
+                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+            ),
+            DeclareLaunchArgument(
+                "gripper_config",
+                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+            ),
+            DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
+            DeclareLaunchArgument("channel", default_value=""),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
+            DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
+            DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("frame_id", default_value="base_link"),
+            DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
+            DeclareLaunchArgument(
+                "interactive_config",
+                default_value=PathJoinSubstitution(
+                    [interactive_share, "config", "interactive_control.yaml"]
+                ),
+            ),
+            Node(
+                package="rebotarmcontroller",
+                executable="reBotArmController",
+                name="reBotArmController",
+                output="screen",
+                parameters=[
+                    {
+                        "arm_config": arm_config,
+                        "gripper_config": gripper_config,
+                        "channel": channel,
+                        "joint_state_rate": joint_state_rate,
+                        "cmd_arbitration": cmd_arbitration,
+                        "arm_namespace": arm_namespace,
+                        "frame_id": frame_id,
+                        "ee_frame_id": ee_frame_id,
+                    }
+                ],
+            ),
+            Node(
+                package="robot_state_publisher",
+                executable="robot_state_publisher",
+                name="robot_state_publisher",
+                output="screen",
+                parameters=[{"robot_description": robot_description}],
+                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+            ),
+            Node(
+                package="rebotarm_interactive_control",
+                executable="MarkerServerNode",
+                name="marker_server",
+                output="screen",
+                parameters=[
+                    interactive_config,
+                    {
+                        "arm_namespace": arm_namespace,
+                    },
+                ],
+            ),
+            Node(
+                package="rebotarm_interactive_control",
+                executable="PreviewNode",
+                name="preview_node",
+                output="screen",
+                parameters=[
+                    interactive_config,
+                    {
+                        "arm_namespace": arm_namespace,
+                    },
+                ],
+            ),
+            Node(
+                package="rebotarm_interactive_control",
+                executable="ExecutionNode",
+                name="execution_node",
+                output="screen",
+                parameters=[
+                    interactive_config,
+                    {
+                        "arm_namespace": arm_namespace,
+                    },
+                ],
+            ),
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="rviz2",
+                output="screen",
+                arguments=["-d", rviz_config],
+                condition=IfCondition(use_rviz),
+            ),
+        ]
+    )

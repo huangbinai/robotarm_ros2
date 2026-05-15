@@ -509,6 +509,9 @@ class InteractiveTargetNode(Node):
 
     def _default_pose_message(self) -> Pose:
         pose = Pose()
+        pose.position.x = 0.5
+        pose.position.y = 0.0
+        pose.position.z = 0.5
         pose.orientation.w = 1.0
         return pose
 

@@ -6,7 +6,7 @@ interactive_control:
     marker_frame_id: base_link
     interactive_marker_namespace: rebotarm/interactive_control/ee_target
     interactive_marker_name: ee_target
-    interactive_marker_scale: 0.2
+    interactive_marker_scale: 0.28
     joint_names:
       - joint1
       - joint2

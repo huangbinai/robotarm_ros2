@@ -52,11 +52,8 @@ def generate_launch_description():
     ompl_planning_yaml = load_yaml(
         "rebotarm_moveit_config", "config/ompl_planning.yaml"
     )
-    planning_pipelines = {
-        "default_planning_pipeline": "ompl",
-        "planning_pipelines": ["ompl"],
-    }
     trajectory_execution = {
+        "default_planning_pipeline": "ompl",
         "moveit_manage_controllers": False,
         "trajectory_execution.allowed_execution_duration_scaling": 1.2,
         "trajectory_execution.allowed_goal_duration_margin": 0.5,
@@ -105,7 +102,6 @@ def generate_launch_description():
                     robot_description_kinematics,
                     robot_description_planning,
                     ompl_planning_yaml,
-                    planning_pipelines,
                     trajectory_execution,
                     moveit_controllers,
                     sensors_3d,
@@ -124,7 +120,6 @@ def generate_launch_description():
                     robot_description_kinematics,
                     robot_description_planning,
                     ompl_planning_yaml,
-                    planning_pipelines,
                 ],
                 condition=IfCondition(use_rviz),
             ),

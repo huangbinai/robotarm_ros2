@@ -22,6 +22,7 @@
 - 配置了基础 OMPL 规划器骨架
 - 配置了 6 轴 FollowJointTrajectory 控制器占位映射
 - 配置了第一版 `move_group` 启动入口
+- 已切换为官方风格 `MoveItConfigsBuilder` 启动组织方式
 
 当前还未完成：
 
@@ -86,6 +87,7 @@ ros2 launch rebotarm_moveit_config demo.launch.py use_rviz:=true
   - `move_group` 启动
   - `rviz2` 启动
 - 不应出现 `robot_description_semantic` 缺失、`arm` group 不存在、SRDF 解析失败等报错
+- 不应再出现 `Planning plugin name is empty or not defined in namespace 'ompl'`
 
 ### 第 3 步：检查节点是否存在
 

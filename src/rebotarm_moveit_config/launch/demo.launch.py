@@ -1,6 +1,5 @@
 import os
 
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -8,20 +7,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-
-
-def load_file(package_name, relative_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_path = os.path.join(package_path, relative_path)
-    with open(absolute_path, "r", encoding="utf-8") as file:
-        return file.read()
-
-
-def load_yaml(package_name, relative_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_path = os.path.join(package_path, relative_path)
-    with open(absolute_path, "r", encoding="utf-8") as file:
-        return yaml.safe_load(file)
+from moveit_configs_utils import MoveItConfigsBuilder
 
 
 def generate_launch_description():
@@ -29,49 +15,45 @@ def generate_launch_description():
     moveit_share = FindPackageShare("rebotarm_moveit_config")
     rviz_config = PathJoinSubstitution([moveit_share, "rviz", "moveit.rviz"])
 
-    robot_description = {
-        "robot_description": load_file(
-            "rebotarm_bringup", "description/urdf/reBot-DevArm_fixend.urdf"
+    bringup_share = get_package_share_directory("rebotarm_bringup")
+
+    moveit_config = (
+        MoveItConfigsBuilder(
+            "reBot-DevArm_fixend", package_name="rebotarm_moveit_config"
         )
-    }
-    robot_description_semantic = {
-        "robot_description_semantic": load_file(
-            "rebotarm_moveit_config", "config/reBot-DevArm_fixend.srdf"
+        .robot_description(
+            file_path=os.path.join(
+                bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"
+            )
         )
-    }
-    robot_description_kinematics = {
-        "robot_description_kinematics": load_yaml(
-            "rebotarm_moveit_config", "config/kinematics.yaml"
+        .robot_description_semantic(file_path="config/reBot-DevArm_fixend.srdf")
+        .robot_description_kinematics(file_path="config/kinematics.yaml")
+        .joint_limits(file_path="config/joint_limits.yaml")
+        .trajectory_execution(file_path="config/moveit_controllers.yaml")
+        .planning_scene_monitor(
+            publish_robot_description=True,
+            publish_robot_description_semantic=True,
+            publish_geometry_updates=True,
+            publish_state_updates=True,
+            publish_transforms_updates=True,
         )
-    }
-    robot_description_planning = {
-        "robot_description_planning": load_yaml(
-            "rebotarm_moveit_config", "config/joint_limits.yaml"
+        .planning_pipelines(
+            pipelines=["ompl"],
+            default_planning_pipeline="ompl",
         )
-    }
-    ompl_planning_yaml = load_yaml(
-        "rebotarm_moveit_config", "config/ompl_planning.yaml"
+        .to_moveit_configs()
     )
+
+    sensors_3d = {
+        "sensors": ["no_depth_sensor"],
+        "no_depth_sensor": {"sensor_plugin": "~"},
+    }
+
     trajectory_execution = {
-        "default_planning_pipeline": "ompl",
         "moveit_manage_controllers": False,
         "trajectory_execution.allowed_execution_duration_scaling": 1.2,
         "trajectory_execution.allowed_goal_duration_margin": 0.5,
         "trajectory_execution.allowed_start_tolerance": 0.01,
-    }
-    moveit_controllers = load_yaml(
-        "rebotarm_moveit_config", "config/moveit_controllers.yaml"
-    )
-    sensors_3d = load_yaml(
-        "rebotarm_moveit_config", "config/sensors_3d.yaml"
-    )
-    planning_scene_monitor_parameters = {
-        "publish_planning_scene": True,
-        "publish_geometry_updates": True,
-        "publish_state_updates": True,
-        "publish_transforms_updates": True,
-        "publish_robot_description": True,
-        "publish_robot_description_semantic": True,
     }
 
     return LaunchDescription(
@@ -89,7 +71,7 @@ def generate_launch_description():
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
-                parameters=[robot_description],
+                parameters=[moveit_config.robot_description],
             ),
             Node(
                 package="moveit_ros_move_group",
@@ -97,15 +79,9 @@ def generate_launch_description():
                 name="move_group",
                 output="screen",
                 parameters=[
-                    robot_description,
-                    robot_description_semantic,
-                    robot_description_kinematics,
-                    robot_description_planning,
-                    ompl_planning_yaml,
+                    moveit_config.to_dict(),
                     trajectory_execution,
-                    moveit_controllers,
                     sensors_3d,
-                    planning_scene_monitor_parameters,
                 ],
             ),
             Node(
@@ -115,11 +91,11 @@ def generate_launch_description():
                 output="screen",
                 arguments=["-d", rviz_config],
                 parameters=[
-                    robot_description,
-                    robot_description_semantic,
-                    robot_description_kinematics,
-                    robot_description_planning,
-                    ompl_planning_yaml,
+                    moveit_config.robot_description,
+                    moveit_config.robot_description_semantic,
+                    moveit_config.robot_description_kinematics,
+                    moveit_config.planning_pipelines,
+                    moveit_config.joint_limits,
                 ],
                 condition=IfCondition(use_rviz),
             ),

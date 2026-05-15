@@ -29,6 +29,11 @@ class InteractiveTargetNode(Node):
 
     def __init__(self) -> None:
         super().__init__("interactive_control")
+        self.get_logger().warn(
+            "InteractiveTargetNode is kept for legacy compatibility. "
+            "Prefer the split-node system via "
+            "`ros2 launch rebotarm_bringup interactive_system.launch.py`."
+        )
 
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("mode", "simulation")

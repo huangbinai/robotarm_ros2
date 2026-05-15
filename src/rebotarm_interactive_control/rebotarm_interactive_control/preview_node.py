@@ -10,6 +10,7 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
 from .command_models import PoseTarget
+from .message_codec import encode_preview_command, encode_status
 from .parameter_helpers import build_joint_limits, sensor_qos_kwargs
 from .pose_math import quaternion_to_rpy
 from .pose_preview_solver import PosePreviewSolver
@@ -114,7 +115,7 @@ class PreviewNode(Node):
             yaw=yaw,
         )
         preview = self._preview_manager.preview_pose_target(pose_target)
-        self._publish_preview(preview.message, preview.joint_positions)
+        self._publish_preview(preview)
         if preview.reachable:
             self._publish_status("preview ready")
         else:
@@ -130,19 +131,14 @@ class PreviewNode(Node):
             }
         )
 
-    def _publish_preview(self, message: str, joint_positions: tuple[float, ...]) -> None:
-        payload = (
-            "state=preview_ready; "
-            f"message={message}; "
-            f"joints={[round(v, 6) for v in joint_positions]}"
-        )
+    def _publish_preview(self, preview) -> None:
         msg = String()
-        msg.data = payload
+        msg.data = encode_preview_command(preview, state="preview_ready")
         self._preview_pub.publish(msg)
 
     def _publish_status(self, message: str) -> None:
         msg = String()
-        msg.data = f"mode=simulation; state=idle; message={message}"
+        msg.data = encode_status(mode="simulation", state="idle", message=message)
         self._status_pub.publish(msg)
 
 

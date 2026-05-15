@@ -10,6 +10,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # Legacy compatibility entrypoint.
+    # Preferred formal entrypoint: `ros2 launch rebotarm_bringup interactive_system.launch.py`
     arm_namespace = LaunchConfiguration("arm_namespace")
     bringup_share = FindPackageShare("rebotarm_bringup")
     interactive_share = FindPackageShare("rebotarm_interactive_control")

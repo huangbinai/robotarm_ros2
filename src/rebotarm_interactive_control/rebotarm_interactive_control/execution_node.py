@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-
 import rclpy
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
@@ -12,8 +10,9 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from rebotarm_msgs.srv import SetMode
 
-from .command_models import ExecutionState, PreviewCommand
+from .command_models import ExecutionState
 from .execution_coordinator import InteractiveCoordinator
+from .message_codec import decode_preview_command, encode_status
 from .mode_manager import parse_control_mode
 from .preview_manager import PreviewManager
 
@@ -107,7 +106,7 @@ class ExecutionNode(Node):
         self._publish_status("execution node idle")
 
     def _on_preview(self, msg: String) -> None:
-        parsed = self._parse_preview_payload(msg.data)
+        _state, parsed = decode_preview_command(msg.data)
         if parsed is None:
             return
         self._coordinator._last_preview = parsed  # noqa: SLF001
@@ -116,32 +115,6 @@ class ExecutionNode(Node):
             if parsed.reachable
             else ExecutionState.IDLE
         )
-
-    def _parse_preview_payload(self, payload: str) -> PreviewCommand | None:
-        try:
-            pieces = [segment.strip() for segment in payload.split(";")]
-            values = {}
-            for piece in pieces:
-                if "=" not in piece:
-                    continue
-                key, value = piece.split("=", 1)
-                values[key.strip()] = value.strip()
-            joints_literal = values.get("joints")
-            if joints_literal is None:
-                return None
-            joint_positions = tuple(float(v) for v in ast.literal_eval(joints_literal))
-            message = values.get("message", "")
-            reachable = "unreachable" not in message.lower() and "unavailable" not in message.lower()
-            joint_names = self._coordinator._preview_manager.joint_names  # noqa: SLF001
-            return PreviewCommand(
-                command_type="pose",
-                reachable=reachable,
-                message=message,
-                joint_names=joint_names,
-                joint_positions=joint_positions,
-            )
-        except Exception:
-            return None
 
     def _execute_preview(self, _request, response):
         decision = self._coordinator.execute_preview(duration=self._default_duration)
@@ -238,13 +211,12 @@ class ExecutionNode(Node):
             self._publish_status(f"trajectory result retrieval failed: {exc}")
 
     def _publish_status(self, message: str) -> None:
-        payload = (
-            f"mode={self._coordinator.mode.value}; "
-            f"state={self._coordinator.execution_state.value}; "
-            f"message={message}"
-        )
         msg = String()
-        msg.data = payload
+        msg.data = encode_status(
+            mode=self._coordinator.mode.value,
+            state=self._coordinator.execution_state.value,
+            message=message,
+        )
         self._status_pub.publish(msg)
 
 

@@ -24,6 +24,7 @@ setup(
         "console_scripts": [
             "InteractiveTargetNode = rebotarm_interactive_control.interactive_target_node:main",
             "InteractiveMarkerSmokeNode = rebotarm_interactive_control.interactive_marker_smoke_node:main",
+            "MarkerServerNode = rebotarm_interactive_control.marker_server_node:main",
         ],
     },
 )

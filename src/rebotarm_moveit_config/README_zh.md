@@ -21,11 +21,11 @@
 - 配置了 KDL IK 求解器
 - 配置了基础 OMPL 规划器骨架
 - 配置了 6 轴 FollowJointTrajectory 控制器占位映射
+- 配置了第一版 `move_group` 启动入口
 
 当前还未完成：
 
 - 完整自碰撞禁用矩阵
-- `move_group` 正式启动入口
 - 和现有 `PreviewNode` 的 MoveIt 后端联调
 - 和真实执行层的轨迹桥接
 

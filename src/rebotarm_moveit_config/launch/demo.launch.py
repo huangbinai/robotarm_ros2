@@ -66,6 +66,9 @@ def generate_launch_description():
     moveit_controllers = load_yaml(
         "rebotarm_moveit_config", "config/moveit_controllers.yaml"
     )
+    sensors_3d = load_yaml(
+        "rebotarm_moveit_config", "config/sensors_3d.yaml"
+    )
     planning_scene_monitor_parameters = {
         "publish_planning_scene": True,
         "publish_geometry_updates": True,
@@ -102,9 +105,11 @@ def generate_launch_description():
                     robot_description_semantic,
                     robot_description_kinematics,
                     robot_description_planning,
+                    ompl_planning_yaml,
                     planning_pipelines,
                     trajectory_execution,
                     moveit_controllers,
+                    sensors_3d,
                     planning_scene_monitor_parameters,
                 ],
             ),
@@ -119,6 +124,7 @@ def generate_launch_description():
                     robot_description_semantic,
                     robot_description_kinematics,
                     robot_description_planning,
+                    ompl_planning_yaml,
                     planning_pipelines,
                 ],
                 condition=IfCondition(use_rviz),

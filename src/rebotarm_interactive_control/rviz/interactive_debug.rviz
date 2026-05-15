@@ -1,0 +1,19 @@
+Panels:
+  - Class: rviz_common/Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enabled: true
+      Name: SmokeMarker
+      Interactive Markers Namespace: /rebotarm/interactive_control/smoke_marker
+      Show Axes: true
+      Show Descriptions: true
+      Show Visual Aids: true
+  Enabled: true
+  Global Options:
+    Fixed Frame: world
+  Name: root

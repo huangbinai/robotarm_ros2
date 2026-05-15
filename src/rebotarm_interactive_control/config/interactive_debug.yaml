@@ -1,0 +1,5 @@
+interactive_marker_smoke:
+  ros__parameters:
+    interactive_marker_namespace: rebotarm/interactive_control/smoke_marker
+    marker_frame_id: base_link
+    marker_scale: 0.35

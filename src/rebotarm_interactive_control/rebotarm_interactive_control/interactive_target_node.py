@@ -16,6 +16,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from .command_models import PoseTarget
 from .execution_coordinator import InteractiveCoordinator
+from .marker_builder import build_ee_target_marker
 from .mode_manager import parse_control_mode
 from .parameter_helpers import build_joint_limits, sensor_qos_kwargs
 from .pose_math import quaternion_to_rpy, rpy_to_quaternion
@@ -372,108 +373,15 @@ class InteractiveTargetNode(Node):
             _InteractiveMarkerFeedback,
             Marker,
         ) = self._interactive_classes
-
-        marker = InteractiveMarker()
-        marker.header.frame_id = self._marker_frame_id
-        marker.name = self._marker_name
-        marker.description = "reBotArm EE Target"
-        marker.scale = self._marker_scale
-        marker.pose = pose
-
-        visual_control = InteractiveMarkerControl()
-        visual_control.always_visible = True
-        visual_control.interaction_mode = InteractiveMarkerControl.NONE
-        visual_control.markers.extend(self._make_visible_markers(Marker))
-        marker.controls.append(visual_control)
-
-        for name, orientation, mode in (
-            ("move_plane", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.MOVE_PLANE),
-            ("move_x", (1.0, 1.0, 0.0, 0.0), InteractiveMarkerControl.MOVE_AXIS),
-            ("move_z", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.MOVE_AXIS),
-            ("rotate_z", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.ROTATE_AXIS),
-        ):
-            control = InteractiveMarkerControl()
-            control.name = name
-            control.orientation.w = orientation[0]
-            control.orientation.x = orientation[1]
-            control.orientation.y = orientation[2]
-            control.orientation.z = orientation[3]
-            control.interaction_mode = mode
-            marker.controls.append(control)
-
-        return marker
-
-    def _make_visible_markers(self, marker_cls):
-        markers = []
-
-        center = marker_cls()
-        center.type = marker_cls.SPHERE
-        center.scale.x = self._marker_scale * 0.7
-        center.scale.y = self._marker_scale * 0.7
-        center.scale.z = self._marker_scale * 0.7
-        center.color.r = 1.0
-        center.color.g = 0.85
-        center.color.b = 0.10
-        center.color.a = 1.0
-        markers.append(center)
-
-        label = marker_cls()
-        label.type = marker_cls.TEXT_VIEW_FACING
-        label.text = "EE Target"
-        label.scale.z = self._marker_scale * 0.35
-        label.pose.position.z = self._marker_scale * 0.7
-        label.color.r = 1.0
-        label.color.g = 1.0
-        label.color.b = 1.0
-        label.color.a = 1.0
-        markers.append(label)
-
-        axis_length = self._marker_scale * 1.1
-        axis_shaft = self._marker_scale * 0.15
-        axis_head = self._marker_scale * 0.24
-        axis_offset = axis_length * 0.5
-
-        for axis_name, rgba, position, orientation in (
-            (
-                "x",
-                (0.95, 0.25, 0.25, 0.95),
-                (axis_offset, 0.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0),
-            ),
-            (
-                "y",
-                (0.20, 0.85, 0.25, 0.95),
-                (0.0, axis_offset, 0.0),
-                (0.0, 0.0, 0.70710678, 0.70710678),
-            ),
-            (
-                "z",
-                (0.20, 0.45, 0.95, 0.95),
-                (0.0, 0.0, axis_offset),
-                (0.0, 0.70710678, 0.0, 0.70710678),
-            ),
-        ):
-            axis = marker_cls()
-            axis.ns = "ee_target_axes"
-            axis.id = ord(axis_name)
-            axis.type = marker_cls.ARROW
-            axis.scale.x = axis_length
-            axis.scale.y = axis_shaft
-            axis.scale.z = axis_head
-            axis.pose.position.x = position[0]
-            axis.pose.position.y = position[1]
-            axis.pose.position.z = position[2]
-            axis.pose.orientation.x = orientation[0]
-            axis.pose.orientation.y = orientation[1]
-            axis.pose.orientation.z = orientation[2]
-            axis.pose.orientation.w = orientation[3]
-            axis.color.r = rgba[0]
-            axis.color.g = rgba[1]
-            axis.color.b = rgba[2]
-            axis.color.a = rgba[3]
-            markers.append(axis)
-
-        return markers
+        return build_ee_target_marker(
+            interactive_marker_cls=InteractiveMarker,
+            control_cls=InteractiveMarkerControl,
+            marker_cls=Marker,
+            frame_id=self._marker_frame_id,
+            marker_name=self._marker_name,
+            marker_scale=self._marker_scale,
+            pose=pose,
+        )
 
     def _on_marker_feedback(self, feedback) -> None:
         if self._interactive_classes is None:

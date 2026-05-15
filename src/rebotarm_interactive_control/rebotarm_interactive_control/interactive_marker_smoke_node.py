@@ -4,6 +4,8 @@ import rclpy
 from geometry_msgs.msg import Pose
 from rclpy.node import Node
 
+from .marker_builder import build_smoke_marker
+
 
 class InteractiveMarkerSmokeNode(Node):
     """Minimal interactive-marker smoke test node for RViz verification."""
@@ -39,53 +41,14 @@ class InteractiveMarkerSmokeNode(Node):
 
         self._server = InteractiveMarkerServer(self, namespace)
 
-        marker = InteractiveMarker()
-        marker.header.frame_id = frame_id
-        marker.name = "smoke_marker"
-        marker.description = "Smoke Marker"
-        marker.scale = scale
-        marker.pose = self._default_pose()
-
-        move_plane = InteractiveMarkerControl()
-        move_plane.name = "move_plane"
-        move_plane.orientation.w = 1.0
-        move_plane.orientation.x = 0.0
-        move_plane.orientation.y = 1.0
-        move_plane.orientation.z = 0.0
-        move_plane.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
-        marker.controls.append(move_plane)
-
-        move_axis = InteractiveMarkerControl()
-        move_axis.name = "move_x"
-        move_axis.orientation.w = 1.0
-        move_axis.orientation.x = 1.0
-        move_axis.orientation.y = 0.0
-        move_axis.orientation.z = 0.0
-        move_axis.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
-        marker.controls.append(move_axis)
-
-        rotate_axis = InteractiveMarkerControl()
-        rotate_axis.name = "rotate_z"
-        rotate_axis.orientation.w = 1.0
-        rotate_axis.orientation.x = 0.0
-        rotate_axis.orientation.y = 1.0
-        rotate_axis.orientation.z = 0.0
-        rotate_axis.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
-        marker.controls.append(rotate_axis)
-
-        visual = InteractiveMarkerControl()
-        visual.always_visible = True
-        sphere = Marker()
-        sphere.type = Marker.SPHERE
-        sphere.scale.x = scale * 0.45
-        sphere.scale.y = scale * 0.45
-        sphere.scale.z = scale * 0.45
-        sphere.color.r = 1.0
-        sphere.color.g = 0.2
-        sphere.color.b = 0.2
-        sphere.color.a = 1.0
-        visual.markers.append(sphere)
-        marker.controls.append(visual)
+        marker = build_smoke_marker(
+            interactive_marker_cls=InteractiveMarker,
+            control_cls=InteractiveMarkerControl,
+            marker_cls=Marker,
+            frame_id=frame_id,
+            marker_scale=scale,
+            pose=self._default_pose(),
+        )
 
         self._server.insert(marker, feedback_callback=self._on_feedback)
         self._server.applyChanges()

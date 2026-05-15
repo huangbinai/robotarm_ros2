@@ -55,7 +55,6 @@ def generate_launch_description():
     planning_pipelines = {
         "default_planning_pipeline": "ompl",
         "planning_pipelines": ["ompl"],
-        "ompl": ompl_planning_yaml,
     }
     trajectory_execution = {
         "moveit_manage_controllers": False,

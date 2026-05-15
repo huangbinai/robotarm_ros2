@@ -382,23 +382,15 @@ class InteractiveTargetNode(Node):
 
         visual_control = InteractiveMarkerControl()
         visual_control.always_visible = True
-        visual_control.name = "move_plane"
-        visual_control.orientation.w = 1.0
-        visual_control.orientation.x = 0.0
-        visual_control.orientation.y = 1.0
-        visual_control.orientation.z = 0.0
-        visual_control.orientation_mode = InteractiveMarkerControl.FIXED
-        visual_control.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
+        visual_control.interaction_mode = InteractiveMarkerControl.NONE
         visual_control.markers.extend(self._make_visible_markers(Marker))
         marker.controls.append(visual_control)
 
         for name, orientation, mode in (
-            ("move_x", (0.70710678, 0.70710678, 0.0, 0.0), InteractiveMarkerControl.MOVE_AXIS),
-            ("move_y", (0.70710678, 0.0, 0.70710678, 0.0), InteractiveMarkerControl.MOVE_AXIS),
-            ("move_z", (0.70710678, 0.0, 0.0, 0.70710678), InteractiveMarkerControl.MOVE_AXIS),
-            ("rotate_x", (0.70710678, 0.70710678, 0.0, 0.0), InteractiveMarkerControl.ROTATE_AXIS),
-            ("rotate_y", (0.70710678, 0.0, 0.70710678, 0.0), InteractiveMarkerControl.ROTATE_AXIS),
-            ("rotate_z", (0.70710678, 0.0, 0.0, 0.70710678), InteractiveMarkerControl.ROTATE_AXIS),
+            ("move_plane", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.MOVE_PLANE),
+            ("move_x", (1.0, 1.0, 0.0, 0.0), InteractiveMarkerControl.MOVE_AXIS),
+            ("move_z", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.MOVE_AXIS),
+            ("rotate_z", (1.0, 0.0, 1.0, 0.0), InteractiveMarkerControl.ROTATE_AXIS),
         ):
             control = InteractiveMarkerControl()
             control.name = name
@@ -406,7 +398,6 @@ class InteractiveTargetNode(Node):
             control.orientation.x = orientation[1]
             control.orientation.y = orientation[2]
             control.orientation.z = orientation[3]
-            control.orientation_mode = InteractiveMarkerControl.FIXED
             control.interaction_mode = mode
             marker.controls.append(control)
 

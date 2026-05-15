@@ -401,6 +401,7 @@ class InteractiveTargetNode(Node):
             control.orientation.y = orientation[2]
             control.orientation.z = orientation[3]
             control.interaction_mode = mode
+            control.always_visible = True
             marker.controls.append(control)
 
         return marker

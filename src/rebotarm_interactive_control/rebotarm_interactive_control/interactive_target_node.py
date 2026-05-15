@@ -410,18 +410,29 @@ class InteractiveTargetNode(Node):
 
         center = marker_cls()
         center.type = marker_cls.SPHERE
-        center.scale.x = self._marker_scale * 0.36
-        center.scale.y = self._marker_scale * 0.36
-        center.scale.z = self._marker_scale * 0.36
-        center.color.r = 0.10
-        center.color.g = 0.70
-        center.color.b = 0.95
-        center.color.a = 0.95
+        center.scale.x = self._marker_scale * 0.7
+        center.scale.y = self._marker_scale * 0.7
+        center.scale.z = self._marker_scale * 0.7
+        center.color.r = 1.0
+        center.color.g = 0.85
+        center.color.b = 0.10
+        center.color.a = 1.0
         markers.append(center)
 
-        axis_length = self._marker_scale * 0.65
-        axis_shaft = self._marker_scale * 0.09
-        axis_head = self._marker_scale * 0.16
+        label = marker_cls()
+        label.type = marker_cls.TEXT_VIEW_FACING
+        label.text = "EE Target"
+        label.scale.z = self._marker_scale * 0.35
+        label.pose.position.z = self._marker_scale * 0.7
+        label.color.r = 1.0
+        label.color.g = 1.0
+        label.color.b = 1.0
+        label.color.a = 1.0
+        markers.append(label)
+
+        axis_length = self._marker_scale * 1.1
+        axis_shaft = self._marker_scale * 0.15
+        axis_head = self._marker_scale * 0.24
         axis_offset = axis_length * 0.5
 
         for axis_name, rgba, position, orientation in (

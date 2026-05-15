@@ -1,6 +1,3 @@
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -15,21 +12,14 @@ def generate_launch_description():
     moveit_share = FindPackageShare("rebotarm_moveit_config")
     rviz_config = PathJoinSubstitution([moveit_share, "rviz", "moveit.rviz"])
 
-    bringup_share = get_package_share_directory("rebotarm_bringup")
-
     moveit_config = (
-        MoveItConfigsBuilder(
-            "reBot-DevArm_fixend", package_name="rebotarm_moveit_config"
-        )
-        .robot_description(
-            file_path=os.path.join(
-                bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"
-            )
-        )
-        .robot_description_semantic(file_path="config/reBot-DevArm_fixend.srdf")
+        MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
+        .robot_description(file_path="config/rebotarm.urdf")
+        .robot_description_semantic(file_path="config/rebotarm.srdf")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
         .trajectory_execution(file_path="config/moveit_controllers.yaml")
+        .moveit_cpp(file_path="config/moveit_cpp.yaml")
         .planning_scene_monitor(
             publish_robot_description=True,
             publish_robot_description_semantic=True,

@@ -23,9 +23,11 @@
 - 配置了 6 轴 FollowJointTrajectory 控制器占位映射
 - 配置了第一版 `move_group` 启动入口
 - 已切换为官方风格 `MoveItConfigsBuilder` 启动组织方式
+- 已补齐更接近官方 MoveIt config 包的标准命名文件骨架
 
 当前还未完成：
 
+- `rebotarm.urdf` 还只是兼容占位文件，未形成最终标准拷贝方案
 - 完整自碰撞禁用矩阵
 - 和现有 `PreviewNode` 的 MoveIt 后端联调
 - 和真实执行层的轨迹桥接
@@ -54,6 +56,12 @@
 ## Ubuntu 验证步骤
 
 下面这组步骤用于验证当前 MoveIt 基础层是否正常。
+
+注意：
+
+- 当前正在做的是“标准 MoveIt 配置包重整”
+- 这一阶段的目标是先让 MoveIt 配置包结构正确
+- 如果仍有报错，优先关注 `MoveItConfigsBuilder` 是否还在报推断/配置相关问题
 
 ### 第 1 步：编译
 

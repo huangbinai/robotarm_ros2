@@ -1,0 +1,5 @@
+<!--
+  Compatibility placeholder for tools that expect a URDF file inside the
+  MoveIt config package. The real robot description source of truth remains:
+  rebotarm_bringup/description/urdf/reBot-DevArm_fixend.urdf
+-->

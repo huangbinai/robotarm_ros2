@@ -26,6 +26,7 @@ setup(
             "InteractiveMarkerSmokeNode = rebotarm_interactive_control.interactive_marker_smoke_node:main",
             "MarkerServerNode = rebotarm_interactive_control.marker_server_node:main",
             "PreviewNode = rebotarm_interactive_control.preview_node:main",
+            "ExecutionNode = rebotarm_interactive_control.execution_node:main",
         ],
     },
 )

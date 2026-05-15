@@ -22,6 +22,7 @@ setup(
     entry_points={
         "console_scripts": [
             "InteractiveTargetNode = rebotarm_interactive_control.interactive_target_node:main",
+            "InteractiveMarkerSmokeNode = rebotarm_interactive_control.interactive_marker_smoke_node:main",
         ],
     },
 )

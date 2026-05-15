@@ -11,7 +11,7 @@ def generate_launch_description():
     interactive_config = PathJoinSubstitution(
         [package_share, "config", "interactive_control.yaml"]
     )
-    rviz_config = PathJoinSubstitution([package_share, "rviz", "interactive_debug.rviz"])
+    rviz_config = PathJoinSubstitution([package_share, "rviz", "marker_server_debug.rviz"])
     use_rviz = LaunchConfiguration("use_rviz")
     arm_namespace = LaunchConfiguration("arm_namespace")
 

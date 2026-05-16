@@ -1,6 +1,8 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import IncludeLaunchDescription
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -11,10 +13,13 @@ def generate_launch_description():
     arm_namespace = LaunchConfiguration("arm_namespace")
     bringup_share = FindPackageShare("rebotarm_bringup")
     interactive_share = FindPackageShare("rebotarm_interactive_control")
+    moveit_share = FindPackageShare("rebotarm_moveit_config")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
     use_rviz = LaunchConfiguration("use_rviz")
+    use_moveit_preview = LaunchConfiguration("use_moveit_preview")
+    use_hardware = LaunchConfiguration("use_hardware")
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     frame_id = LaunchConfiguration("frame_id")
@@ -44,6 +49,8 @@ def generate_launch_description():
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("use_moveit_preview", default_value="false"),
+            DeclareLaunchArgument("use_hardware", default_value="true"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
             DeclareLaunchArgument(
@@ -52,11 +59,19 @@ def generate_launch_description():
                     [interactive_share, "config", "interactive_control.yaml"]
                 ),
             ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution([moveit_share, "launch", "demo.launch.py"])
+                ),
+                condition=IfCondition(use_moveit_preview),
+                launch_arguments={"use_rviz": "false"}.items(),
+            ),
             Node(
                 package="rebotarmcontroller",
                 executable="reBotArmController",
                 name="reBotArmController",
                 output="screen",
+                condition=IfCondition(use_hardware),
                 parameters=[
                     {
                         "arm_config": arm_config,
@@ -87,8 +102,10 @@ def generate_launch_description():
                     interactive_config,
                     {
                         "arm_namespace": arm_namespace,
+                        "preview_backend": "moveit",
                     },
                 ],
+                condition=IfCondition(use_moveit_preview),
             ),
             Node(
                 package="rebotarm_interactive_control",
@@ -99,7 +116,20 @@ def generate_launch_description():
                     interactive_config,
                     {
                         "arm_namespace": arm_namespace,
+                        "preview_backend": "sdk",
                     },
+                ],
+                condition=IfCondition(use_hardware),
+            ),
+            Node(
+                package="joint_state_publisher",
+                executable="joint_state_publisher",
+                name="interactive_joint_state_publisher",
+                output="screen",
+                condition=IfCondition(use_moveit_preview),
+                parameters=[
+                    {"robot_description": robot_description},
+                    {"rate": 30.0},
                 ],
             ),
             Node(

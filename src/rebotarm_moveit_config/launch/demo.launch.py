@@ -1,10 +1,21 @@
+import os
+
+import yaml
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
 from launch_ros.substitutions import FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
+
+
+def load_yaml(package_name, relative_path):
+    package_path = get_package_share_directory(package_name)
+    absolute_path = os.path.join(package_path, relative_path)
+    with open(absolute_path, "r", encoding="utf-8") as file:
+        return yaml.safe_load(file)
 
 
 def generate_launch_description():
@@ -27,11 +38,10 @@ def generate_launch_description():
             publish_state_updates=True,
             publish_transforms_updates=True,
         )
-        .planning_pipelines(
-            pipelines=["ompl"],
-            default_planning_pipeline="ompl",
-        )
         .to_moveit_configs()
+    )
+    ompl_planning_yaml = load_yaml(
+        "rebotarm_moveit_config", "config/ompl_planning.yaml"
     )
 
     sensors_3d = {
@@ -80,6 +90,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     moveit_config.to_dict(),
+                    ompl_planning_yaml,
                     trajectory_execution,
                     sensors_3d,
                 ],
@@ -94,8 +105,8 @@ def generate_launch_description():
                     moveit_config.robot_description,
                     moveit_config.robot_description_semantic,
                     moveit_config.robot_description_kinematics,
-                    moveit_config.planning_pipelines,
                     moveit_config.joint_limits,
+                    ompl_planning_yaml,
                 ],
                 condition=IfCondition(use_rviz),
             ),

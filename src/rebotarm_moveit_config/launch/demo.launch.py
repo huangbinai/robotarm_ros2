@@ -43,6 +43,11 @@ def generate_launch_description():
     ompl_planning_yaml = load_yaml(
         "rebotarm_moveit_config", "config/ompl_planning.yaml"
     )
+    move_group_planning_file = os.path.join(
+        get_package_share_directory("rebotarm_moveit_config"),
+        "config",
+        "move_group_planning.yaml",
+    )
 
     sensors_3d = {
         "sensors": ["no_depth_sensor"],
@@ -107,7 +112,7 @@ def generate_launch_description():
                     moveit_config.joint_limits,
                     moveit_config.trajectory_execution,
                     moveit_config.moveit_cpp,
-                    ompl_planning_yaml,
+                    move_group_planning_file,
                     trajectory_execution,
                     sensors_3d,
                 ],

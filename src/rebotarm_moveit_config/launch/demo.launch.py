@@ -89,7 +89,12 @@ def generate_launch_description():
                 name="move_group",
                 output="screen",
                 parameters=[
-                    moveit_config.to_dict(),
+                    moveit_config.robot_description,
+                    moveit_config.robot_description_semantic,
+                    moveit_config.robot_description_kinematics,
+                    moveit_config.joint_limits,
+                    moveit_config.trajectory_execution,
+                    moveit_config.moveit_cpp,
                     ompl_planning_yaml,
                     trajectory_execution,
                     sensors_3d,

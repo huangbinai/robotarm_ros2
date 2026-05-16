@@ -38,15 +38,11 @@ def generate_launch_description():
             publish_state_updates=True,
             publish_transforms_updates=True,
         )
+        .planning_pipelines(pipelines=["ompl"])
         .to_moveit_configs()
     )
     ompl_planning_yaml = load_yaml(
         "rebotarm_moveit_config", "config/ompl_planning.yaml"
-    )
-    move_group_planning_file = os.path.join(
-        get_package_share_directory("rebotarm_moveit_config"),
-        "config",
-        "move_group_planning.yaml",
     )
 
     sensors_3d = {
@@ -62,11 +58,13 @@ def generate_launch_description():
     }
     planning_debug_summary = yaml.safe_dump(
         {
-            "planning_pipelines": ompl_planning_yaml.get("planning_pipelines"),
-            "default_planning_pipeline": ompl_planning_yaml.get(
-                "default_planning_pipeline"
+            "planning_plugins": ompl_planning_yaml.get("planning_plugins"),
+            "request_adapters": ompl_planning_yaml.get("request_adapters"),
+            "response_adapters": ompl_planning_yaml.get("response_adapters"),
+            "planner_configs": list(
+                (ompl_planning_yaml.get("planner_configs") or {}).keys()
             ),
-            "ompl": ompl_planning_yaml.get("ompl"),
+            "arm": ompl_planning_yaml.get("arm"),
         },
         sort_keys=False,
         allow_unicode=True,
@@ -106,13 +104,8 @@ def generate_launch_description():
                 name="move_group",
                 output="screen",
                 parameters=[
-                    moveit_config.robot_description,
-                    moveit_config.robot_description_semantic,
-                    moveit_config.robot_description_kinematics,
-                    moveit_config.joint_limits,
-                    moveit_config.trajectory_execution,
-                    moveit_config.moveit_cpp,
-                    move_group_planning_file,
+                    moveit_config.to_dict(),
+                    ompl_planning_yaml,
                     trajectory_execution,
                     sensors_3d,
                 ],
@@ -126,6 +119,7 @@ def generate_launch_description():
                 parameters=[
                     moveit_config.robot_description,
                     moveit_config.robot_description_semantic,
+                    moveit_config.planning_pipelines,
                     moveit_config.robot_description_kinematics,
                     moveit_config.joint_limits,
                     ompl_planning_yaml,

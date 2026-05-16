@@ -2,7 +2,7 @@ import os
 
 import yaml
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -55,10 +55,22 @@ def generate_launch_description():
         "trajectory_execution.allowed_goal_duration_margin": 0.5,
         "trajectory_execution.allowed_start_tolerance": 0.01,
     }
+    planning_debug_summary = yaml.safe_dump(
+        {
+            "planning_pipelines": ompl_planning_yaml.get("planning_pipelines"),
+            "default_planning_pipeline": ompl_planning_yaml.get(
+                "default_planning_pipeline"
+            ),
+            "ompl": ompl_planning_yaml.get("ompl"),
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_rviz", default_value="true"),
+            LogInfo(msg="move_group planning params:\n" + planning_debug_summary),
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",

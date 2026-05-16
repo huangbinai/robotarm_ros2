@@ -17,7 +17,7 @@ def generate_launch_description():
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
-    use_rviz = LaunchConfiguration("use_rviz")
+    use_local_rviz = LaunchConfiguration("use_local_rviz")
     use_moveit_preview = LaunchConfiguration("use_moveit_preview")
     use_hardware = LaunchConfiguration("use_hardware")
     joint_state_rate = LaunchConfiguration("joint_state_rate")
@@ -48,7 +48,7 @@ def generate_launch_description():
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
-            DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("use_moveit_preview", default_value="false"),
             DeclareLaunchArgument("use_hardware", default_value="true"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
@@ -163,7 +163,7 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_config],
-                condition=IfCondition(use_rviz),
+                condition=IfCondition(use_local_rviz),
             ),
         ]
     )

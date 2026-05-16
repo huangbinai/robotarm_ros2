@@ -92,6 +92,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
                 remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+                condition=UnlessCondition(use_moveit_preview),
             ),
             Node(
                 package="rebotarm_interactive_control",
@@ -139,7 +140,7 @@ def generate_launch_description():
                 executable="joint_state_publisher",
                 name="interactive_joint_state_publisher",
                 output="screen",
-                condition=IfCondition(use_moveit_preview),
+                condition=UnlessCondition(use_moveit_preview),
                 parameters=[
                     {"robot_description": robot_description},
                     {"rate": 30.0},

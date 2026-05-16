@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.actions import IncludeLaunchDescription
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
@@ -102,6 +102,19 @@ def generate_launch_description():
                     interactive_config,
                     {
                         "arm_namespace": arm_namespace,
+                    },
+                ],
+                condition=IfCondition(use_moveit_preview),
+            ),
+            Node(
+                package="rebotarm_interactive_control",
+                executable="PreviewNode",
+                name="preview_node",
+                output="screen",
+                parameters=[
+                    interactive_config,
+                    {
+                        "arm_namespace": arm_namespace,
                         "preview_backend": "moveit",
                     },
                 ],
@@ -119,7 +132,7 @@ def generate_launch_description():
                         "preview_backend": "sdk",
                     },
                 ],
-                condition=IfCondition(use_hardware),
+                condition=UnlessCondition(use_moveit_preview),
             ),
             Node(
                 package="joint_state_publisher",

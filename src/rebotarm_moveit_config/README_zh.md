@@ -24,10 +24,10 @@
 - 配置了第一版 `move_group` 启动入口
 - 已切换为官方风格 `MoveItConfigsBuilder` 启动组织方式
 - 已补齐更接近官方 MoveIt config 包的标准命名文件骨架
+- 已补 joint_state_publisher，支持离线无实机状态发布
 
 当前还未完成：
 
-- `rebotarm.urdf` 还只是兼容占位文件，未形成最终标准拷贝方案
 - 完整自碰撞禁用矩阵
 - 和现有 `PreviewNode` 的 MoveIt 后端联调
 - 和真实执行层的轨迹桥接
@@ -92,6 +92,7 @@ ros2 launch rebotarm_moveit_config demo.launch.py use_rviz:=true
 
 - 终端里能看到：
   - `robot_state_publisher` 启动
+  - `joint_state_publisher` 启动
   - `move_group` 启动
   - `rviz2` 启动
 - 不应出现 `robot_description_semantic` 缺失、`arm` group 不存在、SRDF 解析失败等报错
@@ -110,6 +111,7 @@ ros2 node list | grep -E "move_group|robot_state_publisher|rviz"
 
 - 至少应看到：
   - `/move_group`
+  - `/joint_state_publisher`
   - `/robot_state_publisher`
   - `/rviz2`
 

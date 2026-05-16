@@ -64,6 +64,16 @@ def generate_launch_description():
                 parameters=[moveit_config.robot_description],
             ),
             Node(
+                package="joint_state_publisher",
+                executable="joint_state_publisher",
+                name="joint_state_publisher",
+                output="screen",
+                parameters=[
+                    moveit_config.robot_description,
+                    {"rate": 30.0},
+                ],
+            ),
+            Node(
                 package="moveit_ros_move_group",
                 executable="move_group",
                 name="move_group",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .command_models import PoseTarget, PreviewCommand
+from .command_models import PoseSolverProtocol, PoseTarget, PreviewCommand
 
 
 class PreviewManager:
@@ -12,7 +12,7 @@ class PreviewManager:
         joint_names: tuple[str, ...],
         joint_limits: dict[str, tuple[float, float]],
         initial_positions: tuple[float, ...],
-        pose_solver=None,
+        pose_solver: PoseSolverProtocol | None = None,
     ) -> None:
         if len(joint_names) != len(initial_positions):
             raise ValueError("joint_names and initial_positions must have same length")

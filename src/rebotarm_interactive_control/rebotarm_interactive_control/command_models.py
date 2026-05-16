@@ -33,6 +33,16 @@ class PreviewSolveResult:
     message: str
 
 
+class PoseSolverProtocol:
+    def solve_pose(
+        self,
+        pose_target: "PoseTarget",
+        seed_positions: tuple[float, ...],
+        joint_names: tuple[str, ...],
+    ) -> "PreviewSolveResult":
+        raise NotImplementedError
+
+
 @dataclass(frozen=True)
 class PreviewCommand:
     command_type: str

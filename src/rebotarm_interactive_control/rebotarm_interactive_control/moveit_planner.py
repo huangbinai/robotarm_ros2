@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from geometry_msgs.msg import PoseStamped
@@ -166,6 +167,4 @@ class MoveItMotionPlanner:
     def _spin_until_future(self, future) -> None:
         deadline = self._node.get_clock().now() + Duration(seconds=self._planning_time + 1.0)
         while not future.done() and self._node.get_clock().now() < deadline:
-            import rclpy
-
-            rclpy.spin_once(self._node, timeout_sec=0.1)
+            time.sleep(0.05)

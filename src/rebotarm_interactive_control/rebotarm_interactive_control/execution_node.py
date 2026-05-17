@@ -3,6 +3,8 @@ from __future__ import annotations
 import rclpy
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -21,6 +23,7 @@ class ExecutionNode(Node):
 
     def __init__(self) -> None:
         super().__init__("execution_node")
+        self._callback_group = ReentrantCallbackGroup()
 
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("mode", "simulation")
@@ -92,6 +95,7 @@ class ExecutionNode(Node):
             self,
             FollowJointTrajectory,
             f"/{self._arm_namespace}/follow_joint_trajectory",
+            callback_group=self._callback_group,
         )
         self._moveit_planner = MoveItMotionPlanner(
             self,
@@ -116,26 +120,31 @@ class ExecutionNode(Node):
             f"/{self._arm_namespace}/interactive_control/preview",
             self._on_preview,
             10,
+            callback_group=self._callback_group,
         )
         self.create_service(
             Trigger,
             f"/{self._arm_namespace}/interactive_control/execute_preview",
             self._execute_preview,
+            callback_group=self._callback_group,
         )
         self.create_service(
             Trigger,
             f"/{self._arm_namespace}/interactive_control/estop",
             self._trigger_estop,
+            callback_group=self._callback_group,
         )
         self.create_service(
             Trigger,
             f"/{self._arm_namespace}/interactive_control/reset_estop",
             self._reset_estop,
+            callback_group=self._callback_group,
         )
         self.create_service(
             SetMode,
             f"/{self._arm_namespace}/interactive_control/set_mode",
             self._set_mode,
+            callback_group=self._callback_group,
         )
 
         self.get_logger().info(f"execution node ready: namespace=/{self._arm_namespace}")
@@ -261,8 +270,11 @@ class ExecutionNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = ExecutionNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()

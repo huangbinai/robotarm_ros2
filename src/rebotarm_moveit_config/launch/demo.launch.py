@@ -87,22 +87,14 @@ def generate_launch_description():
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[moveit_config.robot_description],
-            ),
-            Node(
-                package="joint_state_publisher",
-                executable="joint_state_publisher",
-                name="joint_state_publisher",
-                output="screen",
-                parameters=[
-                    moveit_config.robot_description,
-                    {"rate": 30.0},
-                ],
+                remappings=[("/joint_states", "/rebotarm/joint_states")],
             ),
             Node(
                 package="moveit_ros_move_group",
                 executable="move_group",
                 name="move_group",
                 output="screen",
+                remappings=[("/joint_states", "/rebotarm/joint_states")],
                 parameters=[
                     moveit_config.to_dict(),
                     ompl_planning_yaml,
@@ -116,6 +108,7 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_config],
+                remappings=[("/joint_states", "/rebotarm/joint_states")],
                 parameters=[
                     moveit_config.robot_description,
                     moveit_config.robot_description_semantic,

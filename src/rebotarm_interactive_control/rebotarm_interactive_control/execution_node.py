@@ -6,14 +6,13 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-
 from rebotarm_msgs.srv import SetMode
 
 from .command_models import ExecutionState
 from .execution_coordinator import InteractiveCoordinator
 from .message_codec import decode_preview_command, encode_status
 from .mode_manager import parse_control_mode
+from .moveit_planner import MoveItMotionPlanner
 from .preview_manager import PreviewManager
 
 
@@ -26,6 +25,16 @@ class ExecutionNode(Node):
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("mode", "simulation")
         self.declare_parameter("default_move_duration", 2.0)
+        self.declare_parameter("moveit_group_name", "arm")
+        self.declare_parameter("moveit_planning_service", "/plan_kinematic_path")
+        self.declare_parameter("moveit_planning_pipeline", "ompl")
+        self.declare_parameter("moveit_planner_id", "")
+        self.declare_parameter("moveit_planning_time", 2.0)
+        self.declare_parameter("moveit_num_planning_attempts", 1)
+        self.declare_parameter("marker_frame_id", "base_link")
+        self.declare_parameter("ee_frame_id", "end_link")
+        self.declare_parameter("goal_position_tolerance", 0.005)
+        self.declare_parameter("goal_orientation_tolerance", 0.02)
         self.declare_parameter(
             "joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
@@ -41,6 +50,16 @@ class ExecutionNode(Node):
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._default_duration = float(self.get_parameter("default_move_duration").value)
+        self._moveit_group_name = str(self.get_parameter("moveit_group_name").value)
+        self._moveit_planning_service = str(
+            self.get_parameter("moveit_planning_service").value
+        )
+        self._moveit_planning_pipeline = str(
+            self.get_parameter("moveit_planning_pipeline").value
+        )
+        self._moveit_planner_id = str(self.get_parameter("moveit_planner_id").value)
+        self._marker_frame_id = str(self.get_parameter("marker_frame_id").value)
+        self._ee_frame_id = str(self.get_parameter("ee_frame_id").value)
         joint_names = tuple(str(v) for v in self.get_parameter("joint_names").value)
         lower_limits = tuple(
             float(v) for v in self.get_parameter("joint_lower_limits").value
@@ -73,6 +92,23 @@ class ExecutionNode(Node):
             self,
             FollowJointTrajectory,
             f"/{self._arm_namespace}/follow_joint_trajectory",
+        )
+        self._moveit_planner = MoveItMotionPlanner(
+            self,
+            group_name=self._moveit_group_name,
+            ee_frame_id=self._ee_frame_id,
+            frame_id=self._marker_frame_id,
+            planning_service=self._moveit_planning_service,
+            planning_pipeline=self._moveit_planning_pipeline,
+            planner_id=self._moveit_planner_id,
+            planning_time=float(self.get_parameter("moveit_planning_time").value),
+            num_attempts=int(self.get_parameter("moveit_num_planning_attempts").value),
+            goal_position_tolerance=float(
+                self.get_parameter("goal_position_tolerance").value
+            ),
+            goal_orientation_tolerance=float(
+                self.get_parameter("goal_orientation_tolerance").value
+            ),
         )
 
         self.create_subscription(
@@ -140,20 +176,22 @@ class ExecutionNode(Node):
             self._publish_status(response.message)
             return response
 
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory = JointTrajectory()
-        goal.trajectory.joint_names = list(request.joint_names)
+        plan_result = self._moveit_planner.plan_preview(request.preview_command)
+        if not plan_result.success or plan_result.trajectory is None:
+            response.success = False
+            response.message = plan_result.message
+            self._coordinator.execution_finished()
+            self._publish_status(response.message)
+            return response
 
-        point = JointTrajectoryPoint()
-        point.positions = list(request.joint_positions)
-        secs = max(0.0, float(request.duration))
-        point.time_from_start.sec = int(secs)
-        point.time_from_start.nanosec = int((secs - int(secs)) * 1e9)
-        goal.trajectory.points = [point]
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = plan_result.trajectory
 
         send_future = self._trajectory_client.send_goal_async(goal)
         send_future.add_done_callback(self._on_goal_response)
-        self._publish_status("real execution goal sent")
+        self._publish_status(
+            f"real execution goal sent: {len(goal.trajectory.points)} trajectory points"
+        )
         return response
 
     def _set_mode(self, request, response):

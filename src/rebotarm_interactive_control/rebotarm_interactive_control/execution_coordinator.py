@@ -95,7 +95,7 @@ class InteractiveCoordinator:
             joint_positions=self._last_preview.joint_positions,
             duration=float(duration),
             preview_only=self._mode == ControlMode.SIMULATION,
-            source_command=self._last_preview.command_type,
+            preview_command=self._last_preview,
         )
         self._execution_state = ExecutionState.EXECUTING
         return ExecutionDecision(

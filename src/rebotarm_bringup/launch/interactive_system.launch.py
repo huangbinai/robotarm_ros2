@@ -1,3 +1,7 @@
+import os
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
@@ -7,6 +11,14 @@ from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitut
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+from moveit_configs_utils import MoveItConfigsBuilder
+
+
+def load_yaml(package_name, relative_path):
+    package_path = get_package_share_directory(package_name)
+    absolute_path = os.path.join(package_path, relative_path)
+    with open(absolute_path, "r", encoding="utf-8") as file:
+        return yaml.safe_load(file)
 
 
 def generate_launch_description():
@@ -33,6 +45,27 @@ def generate_launch_description():
         [bringup_share, "rviz", "interactive_system.rviz"]
     )
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
+    moveit_config = (
+        MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
+        .robot_description(file_path="config/rebotarm.urdf")
+        .robot_description_semantic(file_path="config/rebotarm.srdf")
+        .robot_description_kinematics(file_path="config/kinematics.yaml")
+        .joint_limits(file_path="config/joint_limits.yaml")
+        .trajectory_execution(file_path="config/moveit_controllers.yaml")
+        .moveit_cpp(file_path="config/moveit_cpp.yaml")
+        .planning_scene_monitor(
+            publish_robot_description=True,
+            publish_robot_description_semantic=True,
+            publish_geometry_updates=True,
+            publish_state_updates=True,
+            publish_transforms_updates=True,
+        )
+        .planning_pipelines(pipelines=["ompl"])
+        .to_moveit_configs()
+    )
+    ompl_planning_yaml = load_yaml(
+        "rebotarm_moveit_config", "config/ompl_planning.yaml"
+    )
 
     return LaunchDescription(
         [
@@ -164,6 +197,14 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_config],
+                parameters=[
+                    moveit_config.robot_description,
+                    moveit_config.robot_description_semantic,
+                    moveit_config.planning_pipelines,
+                    moveit_config.robot_description_kinematics,
+                    moveit_config.joint_limits,
+                    ompl_planning_yaml,
+                ],
                 condition=IfCondition(use_local_rviz),
             ),
         ]

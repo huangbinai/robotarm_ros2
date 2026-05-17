@@ -60,7 +60,7 @@ class ExecutionRequest:
     joint_positions: tuple[float, ...]
     duration: float
     preview_only: bool
-    source_command: str
+    preview_command: PreviewCommand
 
 
 @dataclass(frozen=True)

@@ -73,12 +73,19 @@ def generate_launch_description():
                 ],
             ),
             Node(
+                package="rebotarm_interactive_control",
+                executable="GripperVisualJointStateNode",
+                name="gripper_visual_joint_state_node",
+                output="screen",
+                parameters=[interactive_config, {"arm_namespace": arm_namespace}],
+            ),
+            Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
-                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
             ),
             Node(
                 package="rebotarm_interactive_control",

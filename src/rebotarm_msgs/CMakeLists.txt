@@ -8,13 +8,23 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Detection2D.msg"
+  "msg/Detection2DArray.msg"
+  "msg/GraspCandidate.msg"
+  "msg/GraspCandidateArray.msg"
+  "msg/GraspPlan.msg"
+  "msg/ExecutionState.msg"
+  "msg/TaskStatus.msg"
   "msg/JointMotorCmd.msg"
   "msg/JointMotorState.msg"
   "msg/ArmStatus.msg"
+  "srv/PlanGraspForLabel.srv"
   "srv/SetMode.srv"
   "srv/SetZero.srv"
+  "srv/SetTeachRecordPath.srv"
   "srv/MoveToPoseIK.srv"
   "srv/SetGripper.srv"
+  "action/ExecuteGrasp.action"
   "action/MoveToPose.action"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )

@@ -57,6 +57,8 @@ class ArmActions:
         return CancelResponse.ACCEPT
 
     def cancel_follow_joint_trajectory(self, _goal_handle):
+        self._hardware.stop_active_motion()
+        self._node.publish_arm_status()
         return CancelResponse.ACCEPT
 
     def cancel_gripper_command(self, _goal_handle):
@@ -180,6 +182,8 @@ class ArmActions:
             for target_time, target in zip(sample_times[1:], sample_positions[1:]):
                 if not self._wait_until_time(goal_handle, start + target_time, result):
                     return result
+                if self._trajectory_stopped(goal_handle, result):
+                    return result
 
                 self._set_endpos_target(list(trajectory.joint_names), target)
 
@@ -190,6 +194,37 @@ class ArmActions:
                 feedback.error = self._error_point(desired, feedback.actual)
                 goal_handle.publish_feedback(feedback)
             trajectory_done = True
+
+            if not trajectory_done:
+                goal_handle.abort()
+                result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+                result.error_string = "trajectory interrupted"
+                return result
+
+            self._set_endpos_target(list(trajectory.joint_names), sample_positions[-1])
+            ok, max_error = self._wait_until_goal_reached(
+                goal_handle,
+                list(trajectory.joint_names),
+                sample_positions[-1],
+                _FOLLOW_TRAJECTORY_GOAL_TOLERANCE,
+                result,
+            )
+            if not ok:
+                if result.error_string in ("canceled", "preempted"):
+                    return result
+                self._hardware.hold_current_position()
+                goal_handle.abort()
+                result.error_code = FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED
+                result.error_string = (
+                    "trajectory goal not reached within tolerance "
+                    f"(max error {max_error:.3f} rad > "
+                    f"{_FOLLOW_TRAJECTORY_GOAL_TOLERANCE:.3f} rad)"
+                )
+                return result
+            goal_handle.succeed()
+            result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+            result.error_string = "follow_joint_trajectory complete"
+            return result
         except Exception as exc:
             self._hardware.hold_current_position()
             goal_handle.abort()
@@ -200,33 +235,6 @@ class ArmActions:
             self._hardware.set_state_machine("IDLE")
             self._node.publish_arm_status()
 
-        if not trajectory_done:
-            goal_handle.abort()
-            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
-            result.error_string = "trajectory interrupted"
-            return result
-
-        self._set_endpos_target(list(trajectory.joint_names), sample_positions[-1])
-        ok, max_error = self._wait_until_goal_reached(
-            list(trajectory.joint_names),
-            sample_positions[-1],
-            _FOLLOW_TRAJECTORY_GOAL_TOLERANCE,
-        )
-        if not ok:
-            self._hardware.hold_current_position()
-            goal_handle.abort()
-            result.error_code = FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED
-            result.error_string = (
-                "trajectory goal not reached within tolerance "
-                f"(max error {max_error:.3f} rad > "
-                f"{_FOLLOW_TRAJECTORY_GOAL_TOLERANCE:.3f} rad)"
-            )
-            return result
-        goal_handle.succeed()
-        result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
-        result.error_string = "follow_joint_trajectory complete"
-        return result
-
     def _set_endpos_target(self, joint_names: list[str], positions: np.ndarray) -> None:
         if set(joint_names) != set(self._hardware.joint_names):
             raise ValueError(f"trajectory joints must match {self._hardware.joint_names}")
@@ -236,6 +244,22 @@ class ArmActions:
             dtype=np.float64,
         )
         self._hardware.endpos_ctrl._q_target[:] = ordered
+
+    def _trajectory_stopped(self, goal_handle, result) -> bool:
+        if goal_handle.is_cancel_requested:
+            self._hardware.stop_active_motion()
+            self._node.publish_arm_status()
+            goal_handle.canceled()
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = "canceled"
+            return True
+        if self._hardware.state_machine != "TRAJ_RUNNING":
+            self._hardware.hold_current_position()
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = "preempted"
+            return True
+        return False
 
     def _current_positions_for(self, joint_names: list[str]) -> np.ndarray:
         if len(joint_names) != len(set(joint_names)):
@@ -294,15 +318,13 @@ class ArmActions:
     def _wait_until_time(self, goal_handle, target_time: float, result) -> bool:
         while time.monotonic() < target_time:
             if goal_handle.is_cancel_requested:
-                self._hardware.hold_current_position()
-                self._hardware.set_state_machine("IDLE")
+                self._hardware.stop_active_motion()
                 self._node.publish_arm_status()
                 goal_handle.canceled()
                 result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
                 result.error_string = "canceled"
                 return False
             if self._hardware.state_machine != "TRAJ_RUNNING":
-                self._hardware.hold_current_position()
                 goal_handle.abort()
                 result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
                 result.error_string = "preempted"
@@ -312,13 +334,27 @@ class ArmActions:
 
     def _wait_until_goal_reached(
         self,
+        goal_handle,
         joint_names: list[str],
         target: np.ndarray,
         goal_tolerance: float,
+        result,
     ) -> tuple[bool, float]:
         deadline = time.monotonic() + _FOLLOW_TRAJECTORY_SETTLE_TIMEOUT
         max_error = float("inf")
         while time.monotonic() < deadline:
+            if goal_handle.is_cancel_requested:
+                self._hardware.stop_active_motion()
+                self._node.publish_arm_status()
+                goal_handle.canceled()
+                result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+                result.error_string = "canceled"
+                return False, 0.0
+            if self._hardware.state_machine != "TRAJ_RUNNING":
+                goal_handle.abort()
+                result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+                result.error_string = "preempted"
+                return False, 0.0
             actual = self._current_positions_for(joint_names)
             max_error = float(np.max(np.abs(actual - target)))
             if max_error <= goal_tolerance:

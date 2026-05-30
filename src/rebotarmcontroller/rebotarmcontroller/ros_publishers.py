@@ -82,7 +82,7 @@ class JointStatePublisher:
             gripper_msg = JointMotorState()
             gripper_msg.header = msg.header
             gripper_msg.joint_name = "gripper"
-            gripper_msg.position = float(g_pos)
+            gripper_msg.position = float(self._hardware.gripper_position_m())
             gripper_msg.velocity = float(g_vel)
             gripper_msg.torque = float(g_torque)
             gripper_msg.status_code = int(g_status)

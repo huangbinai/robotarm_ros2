@@ -13,7 +13,6 @@ class ExecutionState(str, Enum):
     IDLE = "idle"
     PREVIEW_READY = "preview_ready"
     EXECUTING = "executing"
-    ESTOPPED = "estopped"
 
 
 @dataclass(frozen=True)

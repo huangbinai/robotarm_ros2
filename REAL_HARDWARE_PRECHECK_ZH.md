@@ -133,44 +133,49 @@ ros2 service call /rebotarm/interactive_control/set_mode rebotarm_msgs/srv/SetMo
 
 如果切到 `real` 后仍然报 action 不可用，就停止后续动作测试。
 
-## 7. 先验证安全接口
+## 7. 先验证停止和失能接口
 
-### 7.1 急停
+当前不再推荐使用软件锁存式 `estop/reset_estop` 作为日常调试入口。实机危险情况优先使用实体急停或断电；ROS 侧主要验证下面三个接口。
+
+### 7.1 交互停止
 
 ```bash
-ros2 service call /rebotarm/interactive_control/estop std_srvs/srv/Trigger "{}"
+ros2 service call /rebotarm/interactive_control/stop std_srvs/srv/Trigger "{}"
 ```
 
 预期：
 
 - `success=True`
-- `message='interactive estop latched'`
+- `message` 类似 `interactive stop requested`
 
-### 7.2 复位急停
+语义：停止当前交互执行，并请求底层停止继续追踪轨迹；不是暂停/继续，也不是精确保持在某一个插补点。
+
+### 7.2 底层轨迹停止
 
 ```bash
-ros2 service call /rebotarm/interactive_control/reset_estop std_srvs/srv/Trigger "{}"
+ros2 service call /rebotarm/trajectory_stop std_srvs/srv/Trigger "{}"
 ```
 
 预期：
 
 - `success=True`
-- `message='interactive estop reset'`
+- `message` 类似 `trajectory stop requested`
 
-### 7.3 急停门控验证
+语义：只请求底层停止当前轨迹跟踪，不管理视觉/预览状态。
 
-触发急停后，再执行一次：
+### 7.3 软件失能
 
 ```bash
-ros2 service call /rebotarm/interactive_control/execute_preview std_srvs/srv/Trigger "{}"
+ros2 service call /rebotarm/disable std_srvs/srv/Trigger "{}"
 ```
 
 预期：
 
-- `success=False`
-- `message` 明确提示急停已锁定
+- `success=True`
 
-只有这一步通过，后面的小动作验证才有意义。
+语义：比 stop 更强，可能让电机不再保持力；不要把它当作平滑暂停。
+
+只有这些接口能正常返回，后面的小动作验证才有意义。
 
 ## 8. 第一条动作前的推荐检查
 

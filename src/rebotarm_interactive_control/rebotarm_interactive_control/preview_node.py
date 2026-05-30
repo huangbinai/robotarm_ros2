@@ -9,11 +9,12 @@ from moveit_msgs.msg import Constraints
 from moveit_msgs.msg import JointConstraint
 from moveit_msgs.srv import GetPositionIK
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
-from .command_models import PoseTarget
+from .command_models import PoseTarget, PreviewCommand
 from .message_codec import encode_preview_command, encode_status
 from .parameter_helpers import build_joint_limits, sensor_qos_kwargs
 from .pose_math import quaternion_to_rpy, rpy_to_quaternion
@@ -246,7 +247,15 @@ class PreviewNode(Node):
 
         error_code = int(response.error_code.val)
         if error_code != 1:
-            preview = self._preview_manager.preview_pose_target(pose_target)
+            preview = PreviewCommand(
+                command_type="pose",
+                reachable=False,
+                message=f"moveit preview failed: error_code={error_code}",
+                joint_names=self._preview_manager.joint_names,
+                joint_positions=self._preview_manager.current_positions,
+                pose_target=pose_target,
+            )
+            self._preview_manager._last_preview = preview  # noqa: SLF001
             self._publish_preview(preview)
             self._publish_status(f"moveit preview failed: error_code={error_code}")
             return
@@ -288,6 +297,9 @@ def main(args=None) -> None:
     node = PreviewNode()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

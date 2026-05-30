@@ -152,29 +152,28 @@ class InteractiveCoordinatorTests(unittest.TestCase):
         self.assertEqual(decision.request.joint_positions, (0.5, 0.0))
         self.assertEqual(coordinator.execution_state, ExecutionState.EXECUTING)
 
-    def test_real_execution_is_blocked_when_estop_is_latched(self) -> None:
+    def test_stop_execution_returns_to_idle_without_latching(self) -> None:
         coordinator = InteractiveCoordinator(
             preview_manager=self.preview_manager,
             default_mode=ControlMode.REAL,
         )
         coordinator.preview_joint_target({"joint2": -0.5})
-        coordinator.trigger_estop()
+        first_decision = coordinator.execute_preview(duration=2.0)
+        self.assertTrue(first_decision.accepted)
 
-        decision = coordinator.execute_preview(duration=2.0)
+        coordinator.stop_execution()
 
-        self.assertFalse(decision.accepted)
-        self.assertIn("estop", decision.message.lower())
-        self.assertIsNone(decision.request)
-        self.assertEqual(coordinator.execution_state, ExecutionState.ESTOPPED)
+        self.assertEqual(coordinator.execution_state, ExecutionState.IDLE)
 
-    def test_reset_estop_restores_idle_and_allows_real_execution(self) -> None:
+    def test_stop_does_not_require_reset_before_next_execution(self) -> None:
         coordinator = InteractiveCoordinator(
             preview_manager=self.preview_manager,
             default_mode=ControlMode.REAL,
         )
         coordinator.preview_joint_target({"joint1": -0.25})
-        coordinator.trigger_estop()
-        coordinator.reset_estop()
+        first_decision = coordinator.execute_preview(duration=1.0)
+        self.assertTrue(first_decision.accepted)
+        coordinator.stop_execution()
 
         decision = coordinator.execute_preview(duration=2.5)
 
@@ -185,6 +184,21 @@ class InteractiveCoordinatorTests(unittest.TestCase):
         self.assertEqual(decision.request.mode, ControlMode.REAL)
         self.assertEqual(decision.request.joint_positions, (-0.25, 0.0))
         self.assertEqual(coordinator.execution_state, ExecutionState.EXECUTING)
+
+    def test_execute_preview_rejects_when_execution_is_already_running(self) -> None:
+        coordinator = InteractiveCoordinator(
+            preview_manager=self.preview_manager,
+            default_mode=ControlMode.REAL,
+        )
+        coordinator.preview_joint_target({"joint1": 0.25})
+        first_decision = coordinator.execute_preview(duration=1.0)
+        self.assertTrue(first_decision.accepted)
+
+        second_decision = coordinator.execute_preview(duration=1.0)
+
+        self.assertFalse(second_decision.accepted)
+        self.assertIn("already in progress", second_decision.message)
+        self.assertIsNone(second_decision.request)
 
 
 class PoseMathTests(unittest.TestCase):

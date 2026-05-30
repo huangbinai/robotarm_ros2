@@ -407,13 +407,14 @@
         iyz="0.00000348"
         izz="0.00045353" />
     </inertial>
-    <visual>
+    <visual
+      name="gripper_base">
       <origin
         xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://rebotarm_bringup/description/meshes/end_link.STL" />
+          filename="package://rebotarm_bringup/description/meshes/gripper_base.stl" />
       </geometry>
       <material
         name="">
@@ -427,7 +428,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://rebotarm_bringup/description/meshes/end_link.STL" />
+          filename="package://rebotarm_bringup/description/meshes/gripper_base.stl" />
       </geometry>
     </collision>
   </link>
@@ -443,5 +444,95 @@
       link="end_link" />
     <axis
       xyz="0 0 0" />
+  </joint>
+  <link name="left_finger_link">
+    <visual
+      name="left_finger">
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://rebotarm_bringup/description/meshes/left_finger.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+      </material>
+    </visual>
+    <collision
+      name="left_finger_collision">
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://rebotarm_bringup/description/meshes/left_finger.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="left_finger_joint"
+    type="prismatic">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="end_link" />
+    <child
+      link="left_finger_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0.0"
+      upper="0.045"
+      effort="1.0"
+      velocity="0.2" />
+  </joint>
+  <link name="right_finger_link">
+    <visual
+      name="right_finger">
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://rebotarm_bringup/description/meshes/right_finger.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" />
+      </material>
+    </visual>
+    <collision
+      name="right_finger_collision">
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://rebotarm_bringup/description/meshes/right_finger.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="right_finger_joint"
+    type="prismatic">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="end_link" />
+    <child
+      link="right_finger_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-0.045"
+      upper="0.0"
+      effort="1.0"
+      velocity="0.2" />
   </joint>
 </robot>

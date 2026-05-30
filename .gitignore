@@ -8,3 +8,6 @@ __pycache__/
 *.egg-info/
 info
 third_party/
+.superpowers/
+teleop_records/
+large_test_v2.jsonl

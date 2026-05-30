@@ -29,6 +29,7 @@ class reBotArmController(Node):
         self.declare_parameter("cmd_arbitration", "reject")
         self.declare_parameter("frame_id", "base_link")
         self.declare_parameter("ee_frame_id", "end_link")
+        self.declare_parameter("shutdown_safe_home", True)
 
         arm_config = self.get_parameter("arm_config").value or None
         gripper_config = self.get_parameter("gripper_config").value or None
@@ -73,6 +74,15 @@ class reBotArmController(Node):
         self.joint_state_publisher.publish_status()
 
     def shutdown(self) -> None:
+        if bool(self.get_parameter("shutdown_safe_home").value) and self.hardware.connected:
+            try:
+                self.get_logger().warn("shutdown requested: running safe_home before disable")
+                self.hardware.stop_gravity_compensation()
+                self.hardware.ensure_pos_vel_control()
+                self.hardware.endpos_ctrl.safe_home()
+                self.get_logger().info("shutdown safe_home complete")
+            except Exception as exc:
+                self.get_logger().error(f"shutdown safe_home failed; disabling anyway: {exc}")
         self.hardware.shutdown()
 
 

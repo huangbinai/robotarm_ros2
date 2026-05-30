@@ -24,7 +24,6 @@ class InteractiveCoordinator:
         self._mode = default_mode
         self._execution_state = ExecutionState.IDLE
         self._last_preview: PreviewCommand | None = None
-        self._estop_latched = False
 
     @property
     def mode(self) -> ControlMode:
@@ -57,23 +56,17 @@ class InteractiveCoordinator:
         )
         return preview
 
-    def trigger_estop(self) -> None:
-        self._estop_latched = True
-        self._execution_state = ExecutionState.ESTOPPED
-
-    def reset_estop(self) -> None:
-        self._estop_latched = False
+    def stop_execution(self) -> None:
         self._execution_state = ExecutionState.IDLE
 
     def execution_finished(self) -> None:
         self._execution_state = ExecutionState.IDLE
 
     def execute_preview(self, *, duration: float) -> ExecutionDecision:
-        if self._estop_latched:
-            self._execution_state = ExecutionState.ESTOPPED
+        if self._execution_state == ExecutionState.EXECUTING:
             return ExecutionDecision(
                 accepted=False,
-                message="estop latched; reset before execution",
+                message="execution already in progress",
                 request=None,
             )
         if self._last_preview is None:

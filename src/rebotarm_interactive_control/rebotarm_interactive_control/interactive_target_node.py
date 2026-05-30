@@ -149,13 +149,8 @@ class InteractiveTargetNode(Node):
         )
         self.create_service(
             Trigger,
-            f"/{self._arm_namespace}/interactive_control/estop",
-            self._trigger_estop,
-        )
-        self.create_service(
-            Trigger,
-            f"/{self._arm_namespace}/interactive_control/reset_estop",
-            self._reset_estop,
+            f"/{self._arm_namespace}/interactive_control/stop",
+            self._stop_execution,
         )
         self.create_service(
             SetMode,
@@ -306,17 +301,10 @@ class InteractiveTargetNode(Node):
             self._publish_status(f"trajectory result retrieval failed: {exc}")
         self._sync_marker_to_current_pose_if_idle()
 
-    def _trigger_estop(self, _request, response):
-        self._coordinator.trigger_estop()
+    def _stop_execution(self, _request, response):
+        self._coordinator.stop_execution()
         response.success = True
-        response.message = "interactive estop latched"
-        self._publish_status(response.message)
-        return response
-
-    def _reset_estop(self, _request, response):
-        self._coordinator.reset_estop()
-        response.success = True
-        response.message = "interactive estop reset"
+        response.message = "interactive stop requested"
         self._publish_status(response.message)
         return response
 

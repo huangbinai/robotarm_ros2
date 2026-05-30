@@ -73,7 +73,11 @@ def generate_launch_description():
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(demo_launch),
-                launch_arguments={"use_rviz": use_rviz}.items(),
+                launch_arguments={
+                    "use_rviz": use_rviz,
+                    "arm_namespace": arm_namespace,
+                    "use_fake_joint_states": "false",
+                }.items(),
             ),
         ]
     )

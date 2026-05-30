@@ -19,7 +19,7 @@ from .preview_manager import PreviewManager
 
 
 class ExecutionNode(Node):
-    """Owns execute/estop/set_mode services using the latest preview output."""
+    """Owns execute/stop/set_mode services using the latest preview output."""
 
     def __init__(self) -> None:
         super().__init__("execution_node")
@@ -53,6 +53,7 @@ class ExecutionNode(Node):
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._default_duration = float(self.get_parameter("default_move_duration").value)
+        self._active_goal_handle = None
         self._moveit_group_name = str(self.get_parameter("moveit_group_name").value)
         self._moveit_planning_service = str(
             self.get_parameter("moveit_planning_service").value
@@ -97,6 +98,11 @@ class ExecutionNode(Node):
             f"/{self._arm_namespace}/follow_joint_trajectory",
             callback_group=self._callback_group,
         )
+        self._trajectory_stop_client = self.create_client(
+            Trigger,
+            f"/{self._arm_namespace}/trajectory_stop",
+            callback_group=self._callback_group,
+        )
         self._moveit_planner = MoveItMotionPlanner(
             self,
             group_name=self._moveit_group_name,
@@ -130,14 +136,8 @@ class ExecutionNode(Node):
         )
         self.create_service(
             Trigger,
-            f"/{self._arm_namespace}/interactive_control/estop",
-            self._trigger_estop,
-            callback_group=self._callback_group,
-        )
-        self.create_service(
-            Trigger,
-            f"/{self._arm_namespace}/interactive_control/reset_estop",
-            self._reset_estop,
+            f"/{self._arm_namespace}/interactive_control/stop",
+            self._stop_execution,
             callback_group=self._callback_group,
         )
         self.create_service(
@@ -171,11 +171,11 @@ class ExecutionNode(Node):
 
         request = decision.request
         if request.preview_only:
+            self._coordinator.execution_finished()
             self._publish_status(
                 "simulation preview accepted: "
                 + ", ".join(f"{v:.3f}" for v in request.joint_positions)
             )
-            self._coordinator.execution_finished()
             return response
 
         if not self._trajectory_client.wait_for_server(timeout_sec=1.0):
@@ -218,17 +218,12 @@ class ExecutionNode(Node):
         self._publish_status(response.message)
         return response
 
-    def _trigger_estop(self, _request, response):
-        self._coordinator.trigger_estop()
+    def _stop_execution(self, _request, response):
+        self._coordinator.stop_execution()
+        self._cancel_active_goal()
+        self._request_trajectory_stop()
         response.success = True
-        response.message = "interactive estop latched"
-        self._publish_status(response.message)
-        return response
-
-    def _reset_estop(self, _request, response):
-        self._coordinator.reset_estop()
-        response.success = True
-        response.message = "interactive estop reset"
+        response.message = "interactive stop requested"
         self._publish_status(response.message)
         return response
 
@@ -243,11 +238,13 @@ class ExecutionNode(Node):
             self._coordinator.execution_finished()
             self._publish_status("trajectory goal rejected")
             return
+        self._active_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._on_goal_result)
 
     def _on_goal_result(self, future) -> None:
         self._coordinator.execution_finished()
+        self._active_goal_handle = None
         try:
             wrapped_result = future.result()
             status = getattr(wrapped_result, "status", "unknown")
@@ -265,6 +262,26 @@ class ExecutionNode(Node):
             message=message,
         )
         self._status_pub.publish(msg)
+
+    def _cancel_active_goal(self) -> None:
+        goal_handle = self._active_goal_handle
+        if goal_handle is None:
+            return
+        try:
+            goal_handle.cancel_goal_async()
+        except Exception as exc:  # pragma: no cover
+            self._publish_status(f"failed to request trajectory cancel: {exc}")
+
+    def _request_trajectory_stop(self) -> None:
+        if not self._trajectory_stop_client.service_is_ready():
+            self._trajectory_stop_client.wait_for_service(timeout_sec=0.2)
+        if not self._trajectory_stop_client.service_is_ready():
+            self._publish_status("trajectory_stop service unavailable")
+            return
+        try:
+            self._trajectory_stop_client.call_async(Trigger.Request())
+        except Exception as exc:  # pragma: no cover
+            self._publish_status(f"failed to request trajectory_stop: {exc}")
 
 
 def main(args=None) -> None:

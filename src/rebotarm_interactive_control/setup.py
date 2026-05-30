@@ -27,6 +27,11 @@ setup(
             "MarkerServerNode = rebotarm_interactive_control.marker_server_node:main",
             "PreviewNode = rebotarm_interactive_control.preview_node:main",
             "ExecutionNode = rebotarm_interactive_control.execution_node:main",
+            "TeleopKeyboardNode = rebotarm_interactive_control.teleop_keyboard_node:main",
+            "TeachRecorderNode = rebotarm_interactive_control.teach_recorder_node:main",
+            "TeachReplayNode = rebotarm_interactive_control.teach_replay_node:main",
+            "TeleopStatusPanelNode = rebotarm_interactive_control.teleop_status_panel_node:main",
+            "GripperVisualJointStateNode = rebotarm_interactive_control.gripper_visual_joint_state_node:main",
         ],
     },
 )

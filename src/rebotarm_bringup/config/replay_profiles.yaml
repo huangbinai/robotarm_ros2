@@ -1,0 +1,92 @@
+default_profile: safe
+
+profiles:
+  safe:
+    dry_run: false
+    speed: 0.2
+    yellow_max_speed: 0.6
+    max_replay_velocity_rad_s: 1.5
+    max_replay_acceleration_rad_s2: 3.0
+    max_replay_jerk_rad_s3: 8.0
+    large_motion_span_rad: 0.8
+    large_motion_total_rad: 2.5
+    large_motion_max_speed: 0.2
+    start_hold_sec: 0.8
+    soft_start_duration: 1.0
+    soft_start_steps: 30
+    first_hold_sec: 0.3
+    final_hold_sec: 1.0
+    use_moveit_start_align: true
+    moveit_start_skip_threshold: 0.005
+    moveit_planning_time: 3.0
+    collision_check_enabled: true
+    collision_check_max_samples: 80
+    collision_check_timeout_sec: 2.0
+    smoothing_enabled: true
+    smoothing_window: 7
+    filter_enabled: true
+    filter_cutoff_hz: 5.0
+    filter_sample_rate_hz: 50.0
+    resample_enabled: true
+    resample_rate_hz: 100.0
+    max_prepared_jump_rad: 0.02
+
+  normal:
+    dry_run: false
+    speed: 0.4
+    yellow_max_speed: 0.6
+    max_replay_velocity_rad_s: 1.5
+    max_replay_acceleration_rad_s2: 3.0
+    max_replay_jerk_rad_s3: 8.0
+    large_motion_span_rad: 0.8
+    large_motion_total_rad: 2.5
+    large_motion_max_speed: 0.35
+    start_hold_sec: 0.8
+    soft_start_duration: 1.0
+    soft_start_steps: 30
+    first_hold_sec: 0.3
+    final_hold_sec: 1.0
+    use_moveit_start_align: true
+    moveit_start_skip_threshold: 0.005
+    moveit_planning_time: 3.0
+    collision_check_enabled: true
+    collision_check_max_samples: 80
+    collision_check_timeout_sec: 2.0
+    smoothing_enabled: true
+    smoothing_window: 7
+    filter_enabled: true
+    filter_cutoff_hz: 5.0
+    filter_sample_rate_hz: 50.0
+    resample_enabled: true
+    resample_rate_hz: 100.0
+    max_prepared_jump_rad: 0.02
+
+  large:
+    dry_run: false
+    speed: 0.25
+    yellow_max_speed: 0.6
+    max_replay_velocity_rad_s: 1.2
+    max_replay_acceleration_rad_s2: 2.2
+    max_replay_jerk_rad_s3: 6.0
+    large_motion_span_rad: 0.6
+    large_motion_total_rad: 1.8
+    large_motion_max_speed: 0.2
+    start_hold_sec: 1.0
+    soft_start_duration: 1.5
+    soft_start_steps: 45
+    first_hold_sec: 0.5
+    final_hold_sec: 1.2
+    use_moveit_start_align: true
+    moveit_start_skip_threshold: 0.005
+    moveit_planning_time: 5.0
+    collision_check_enabled: true
+    collision_check_max_samples: 120
+    collision_check_timeout_sec: 3.0
+    smoothing_enabled: true
+    smoothing_window: 9
+    filter_enabled: true
+    filter_cutoff_hz: 4.0
+    filter_sample_rate_hz: 50.0
+    resample_enabled: true
+    resample_rate_hz: 100.0
+    max_prepared_jump_rad: 0.018

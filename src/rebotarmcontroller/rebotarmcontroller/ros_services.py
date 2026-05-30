@@ -34,6 +34,12 @@ class ArmServices:
         )
         node.create_service(
             Trigger,
+            self._service("trajectory_stop"),
+            self.trajectory_stop,
+            callback_group=node.reentrant_group,
+        )
+        node.create_service(
+            Trigger,
             self._service("gravity_compensation/start"),
             self.start_gravity_compensation,
             callback_group=node.slow_group,
@@ -88,6 +94,17 @@ class ArmServices:
             self._hardware.disable()
             response.success = True
             response.message = "disabled"
+        except Exception as exc:
+            response.success = False
+            response.message = str(exc)
+        self._node.publish_arm_status()
+        return response
+
+    def trajectory_stop(self, _request, response):
+        try:
+            self._hardware.stop_active_motion()
+            response.success = True
+            response.message = "trajectory stop requested"
         except Exception as exc:
             response.success = False
             response.message = str(exc)

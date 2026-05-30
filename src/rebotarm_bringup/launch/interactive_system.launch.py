@@ -7,7 +7,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.actions import IncludeLaunchDescription
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -37,12 +37,12 @@ def generate_launch_description():
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
     interactive_config = LaunchConfiguration("interactive_config")
+    execution_mode = LaunchConfiguration("execution_mode")
+    start_interaction_nodes = LaunchConfiguration("start_interaction_nodes")
+    rviz_config = LaunchConfiguration("rviz_config")
 
     urdf_file = PathJoinSubstitution(
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
-    )
-    rviz_config = PathJoinSubstitution(
-        [bringup_share, "rviz", "interactive_system.rviz"]
     )
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
     moveit_config = (
@@ -86,6 +86,12 @@ def generate_launch_description():
             DeclareLaunchArgument("use_hardware", default_value="true"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
+            DeclareLaunchArgument("execution_mode", default_value="simulation"),
+            DeclareLaunchArgument("start_interaction_nodes", default_value="true"),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=PathJoinSubstitution([bringup_share, "rviz", "interactive_system.rviz"]),
+            ),
             DeclareLaunchArgument(
                 "interactive_config",
                 default_value=PathJoinSubstitution(
@@ -97,7 +103,13 @@ def generate_launch_description():
                     PathJoinSubstitution([moveit_share, "launch", "demo.launch.py"])
                 ),
                 condition=IfCondition(use_moveit_preview),
-                launch_arguments={"use_rviz": "false"}.items(),
+                launch_arguments={
+                    "use_rviz": "false",
+                    "arm_namespace": arm_namespace,
+                    "use_fake_joint_states": PythonExpression(
+                        ["'false' if '", use_hardware, "'.lower() == 'true' else 'true'"]
+                    ),
+                }.items(),
             ),
             Node(
                 package="rebotarmcontroller",
@@ -119,12 +131,20 @@ def generate_launch_description():
                 ],
             ),
             Node(
+                package="rebotarm_interactive_control",
+                executable="GripperVisualJointStateNode",
+                name="gripper_visual_joint_state_node",
+                output="screen",
+                parameters=[interactive_config, {"arm_namespace": arm_namespace}],
+                condition=UnlessCondition(use_moveit_preview),
+            ),
+            Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
-                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
                 condition=UnlessCondition(use_moveit_preview),
             ),
             Node(
@@ -138,7 +158,7 @@ def generate_launch_description():
                         "arm_namespace": arm_namespace,
                     },
                 ],
-                condition=IfCondition(use_moveit_preview),
+                condition=IfCondition(start_interaction_nodes),
             ),
             Node(
                 package="rebotarm_interactive_control",
@@ -152,7 +172,7 @@ def generate_launch_description():
                         "preview_backend": "moveit",
                     },
                 ],
-                condition=IfCondition(use_moveit_preview),
+                condition=IfCondition(start_interaction_nodes),
             ),
             Node(
                 package="rebotarm_interactive_control",
@@ -166,18 +186,19 @@ def generate_launch_description():
                         "preview_backend": "sdk",
                     },
                 ],
-                condition=UnlessCondition(use_moveit_preview),
+                condition=IfCondition(start_interaction_nodes),
             ),
             Node(
                 package="joint_state_publisher",
                 executable="joint_state_publisher",
                 name="interactive_joint_state_publisher",
                 output="screen",
-                condition=UnlessCondition(use_moveit_preview),
+                condition=UnlessCondition(use_hardware),
                 parameters=[
                     {"robot_description": robot_description},
                     {"rate": 30.0},
                 ],
+                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
             ),
             Node(
                 package="rebotarm_interactive_control",
@@ -188,8 +209,10 @@ def generate_launch_description():
                     interactive_config,
                     {
                         "arm_namespace": arm_namespace,
+                        "mode": execution_mode,
                     },
                 ],
+                condition=IfCondition(start_interaction_nodes),
             ),
             Node(
                 package="rviz2",

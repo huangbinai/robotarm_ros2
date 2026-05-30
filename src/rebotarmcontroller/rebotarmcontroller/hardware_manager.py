@@ -25,6 +25,14 @@ _GC_W_VEL_THRESHOLD = 0.08
 _GC_EE_FRAME = "end_link"
 _GC_KP = 7.0
 _GC_KD = 0.8
+_GC_TAU_SCALE = np.ones(6, dtype=np.float64)
+
+
+def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
+    scaled = np.array(tau, dtype=np.float64, copy=True)
+    if scaled.shape == _GC_TAU_SCALE.shape:
+        scaled *= _GC_TAU_SCALE
+    return scaled
 
 
 class HardwareManager:
@@ -151,6 +159,10 @@ class HardwareManager:
         return self._enabled
 
     @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
     def control_loop_active(self) -> bool:
         return bool(self._arm.control_loop_active)
 
@@ -187,10 +199,12 @@ class HardwareManager:
             return
         try:
             self._stop_gripper_loop()
-            gravity_comp_active = self._gravity_comp_active
             self.stop_gravity_compensation()
-            if gravity_comp_active:
-                self.ensure_pos_vel_control()
+            self._stop_control_loop()
+            try:
+                self._arm.disable()
+            except Exception:
+                pass
             if self._endpos_ctrl._running:
                 self._endpos_ctrl.end()
             else:
@@ -207,6 +221,12 @@ class HardwareManager:
         current = np.array(q, dtype=np.float64, copy=True)
         self._endpos_ctrl._q_target[:] = current
         return current
+
+    def stop_active_motion(self) -> None:
+        self._endpos_ctrl._stop_send.set()
+        self._endpos_ctrl._moving = False
+        self.hold_current_position()
+        self.set_state_machine("IDLE")
 
     def enable(self) -> None:
         from motorbridge import Mode
@@ -317,7 +337,7 @@ class HardwareManager:
             kp=np.full(self._arm.num_joints, _GC_KP, dtype=np.float64),
             kd=np.full(self._arm.num_joints, _GC_KD, dtype=np.float64),
         )
-        self._arm.fresh()
+        self._refresh_arm_feedback()
         self._gravity_comp_integral = np.zeros_like(self._gravity_comp_q_target)
         self._gravity_comp_lock_counter = 0
         self._gravity_comp_active = True
@@ -352,6 +372,17 @@ class HardwareManager:
             return None
         return self._gravity_comp_q_target.copy()
 
+    def _refresh_arm_feedback(self) -> None:
+        fresh = getattr(self._arm, "fresh", None)
+        if callable(fresh):
+            fresh()
+            return
+        request_and_poll = getattr(self._arm, "_request_and_poll", None)
+        if callable(request_and_poll):
+            request_and_poll()
+            return
+        self._arm.get_positions(request=True)
+
     @staticmethod
     def _angles_near_reference(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
         delta = values - reference
@@ -379,6 +410,7 @@ class HardwareManager:
         q = self._read_gravity_comp_positions()
         qd = arm.get_velocities()
         tau_g = self._gc_compute_generalized_gravity(q=q)
+        tau_g = apply_gravity_compensation_tau_scale(tau_g)
 
         q_error = self._gravity_comp_q_target - q
         if self._gravity_comp_integral is None:

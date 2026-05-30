@@ -20,6 +20,8 @@ def load_yaml(package_name, relative_path):
 
 def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
+    arm_namespace = LaunchConfiguration("arm_namespace")
+    use_fake_joint_states = LaunchConfiguration("use_fake_joint_states")
     moveit_share = FindPackageShare("rebotarm_moveit_config")
     rviz_config = PathJoinSubstitution([moveit_share, "rviz", "moveit.rviz"])
 
@@ -73,6 +75,8 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
+            DeclareLaunchArgument("use_fake_joint_states", default_value="true"),
             LogInfo(msg="move_group planning params:\n" + planning_debug_summary),
             Node(
                 package="tf2_ros",
@@ -82,19 +86,38 @@ def generate_launch_description():
                 arguments=["--frame-id", "world", "--child-frame-id", "base_link"],
             ),
             Node(
+                package="rebotarm_interactive_control",
+                executable="GripperVisualJointStateNode",
+                name="gripper_visual_joint_state_node",
+                output="screen",
+                parameters=[{"arm_namespace": arm_namespace}],
+            ),
+            Node(
+                package="joint_state_publisher",
+                executable="joint_state_publisher",
+                name="moveit_demo_joint_state_publisher",
+                output="screen",
+                condition=IfCondition(use_fake_joint_states),
+                parameters=[
+                    moveit_config.robot_description,
+                    {"rate": 30.0},
+                ],
+                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+            ),
+            Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[moveit_config.robot_description],
-                remappings=[("/joint_states", "/rebotarm/joint_states")],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
             ),
             Node(
                 package="moveit_ros_move_group",
                 executable="move_group",
                 name="move_group",
                 output="screen",
-                remappings=[("/joint_states", "/rebotarm/joint_states")],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
                 parameters=[
                     moveit_config.to_dict(),
                     ompl_planning_yaml,
@@ -108,7 +131,7 @@ def generate_launch_description():
                 name="rviz2",
                 output="screen",
                 arguments=["-d", rviz_config],
-                remappings=[("/joint_states", "/rebotarm/joint_states")],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
                 parameters=[
                     moveit_config.robot_description,
                     moveit_config.robot_description_semantic,

@@ -1,7 +1,9 @@
 # 该启动文件仅启动机器人状态发布器和RViz可视化，适用于需要查看机械臂状态和模型的场景。
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import Command, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -9,6 +11,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     bringup_share = FindPackageShare("rebotarm_bringup")
+    arm_namespace = LaunchConfiguration("arm_namespace")
     urdf_file = PathJoinSubstitution(
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
@@ -17,13 +20,21 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
+            Node(
+                package="rebotarm_interactive_control",
+                executable="GripperVisualJointStateNode",
+                name="gripper_visual_joint_state_node",
+                output="screen",
+                parameters=[{"arm_namespace": arm_namespace}],
+            ),
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
-                remappings=[("/joint_states", "/rebotarm/joint_states")],
+                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
             ),
             Node(
                 package="rviz2",

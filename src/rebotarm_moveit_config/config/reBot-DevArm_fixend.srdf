@@ -8,6 +8,19 @@
     <chain base_link="base_link" tip_link="end_link" />
   </group>
 
+  <!-- Parallel gripper group used for collision checking and future grasp planning. -->
+  <group name="gripper">
+    <joint name="left_finger_joint" />
+    <joint name="right_finger_joint" />
+  </group>
+
+  <group name="arm_with_gripper">
+    <group name="arm" />
+    <group name="gripper" />
+  </group>
+
+  <end_effector name="gripper" parent_link="end_link" group="gripper" parent_group="arm" />
+
   <!-- Initial named states for RViz / MoveIt testing. -->
   <group_state name="home" group="arm">
     <joint name="joint1" value="0.0" />
@@ -27,6 +40,16 @@
     <joint name="joint6" value="0.0" />
   </group_state>
 
+  <group_state name="open" group="gripper">
+    <joint name="left_finger_joint" value="0.045" />
+    <joint name="right_finger_joint" value="-0.045" />
+  </group_state>
+
+  <group_state name="closed" group="gripper">
+    <joint name="left_finger_joint" value="0.0" />
+    <joint name="right_finger_joint" value="0.0" />
+  </group_state>
+
   <!-- Adjacent links are expected to remain in contact or near-contact. -->
   <disable_collisions link1="base_link" link2="link1" reason="Adjacent" />
   <disable_collisions link1="link1" link2="link2" reason="Adjacent" />
@@ -35,4 +58,7 @@
   <disable_collisions link1="link4" link2="link5" reason="Adjacent" />
   <disable_collisions link1="link5" link2="link6" reason="Adjacent" />
   <disable_collisions link1="link6" link2="end_link" reason="Adjacent" />
+  <disable_collisions link1="end_link" link2="left_finger_link" reason="Adjacent" />
+  <disable_collisions link1="end_link" link2="right_finger_link" reason="Adjacent" />
+  <disable_collisions link1="left_finger_link" link2="right_finger_link" reason="Never" />
 </robot>

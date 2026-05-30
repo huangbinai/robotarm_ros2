@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+import rclpy
 from geometry_msgs.msg import PoseStamped
-from moveit_msgs.msg import Constraints, OrientationConstraint, PositionConstraint
+from moveit_msgs.msg import Constraints, JointConstraint, OrientationConstraint, PositionConstraint
 from moveit_msgs.srv import GetMotionPlan
 from rclpy.duration import Duration
 from shape_msgs.msg import SolidPrimitive
@@ -50,6 +51,51 @@ class MoveItMotionPlanner:
         self._goal_orientation_tolerance = float(goal_orientation_tolerance)
         self._client = node.create_client(GetMotionPlan, planning_service)
 
+    def plan_joint_positions(
+        self,
+        *,
+        joint_names: tuple[str, ...],
+        target_positions: tuple[float, ...],
+        tolerance: float = 0.005,
+        velocity_scaling: float = 0.1,
+        acceleration_scaling: float = 0.1,
+    ) -> MotionPlanResult:
+        if len(joint_names) != len(target_positions):
+            return MotionPlanResult(
+                success=False,
+                message="moveit joint target length mismatch",
+                trajectory=None,
+            )
+        if not self._client.wait_for_service(timeout_sec=0.5):
+            return MotionPlanResult(
+                success=False,
+                message="moveit planning service unavailable",
+                trajectory=None,
+            )
+
+        request = GetMotionPlan.Request()
+        motion_request = request.motion_plan_request
+        motion_request.group_name = self._group_name
+        motion_request.pipeline_id = self._planning_pipeline
+        motion_request.planner_id = self._planner_id
+        motion_request.num_planning_attempts = self._num_attempts
+        motion_request.allowed_planning_time = self._planning_time
+        motion_request.max_velocity_scaling_factor = min(max(float(velocity_scaling), 0.01), 1.0)
+        motion_request.max_acceleration_scaling_factor = min(max(float(acceleration_scaling), 0.01), 1.0)
+        motion_request.start_state.is_diff = True
+        constraints = Constraints()
+        tol = max(float(tolerance), 1e-5)
+        for name, position in zip(joint_names, target_positions):
+            joint_constraint = JointConstraint()
+            joint_constraint.joint_name = str(name)
+            joint_constraint.position = float(position)
+            joint_constraint.tolerance_above = tol
+            joint_constraint.tolerance_below = tol
+            joint_constraint.weight = 1.0
+            constraints.joint_constraints.append(joint_constraint)
+        motion_request.goal_constraints = [constraints]
+        return self._call_plan_service(request)
+
     def plan_preview(self, preview: PreviewCommand) -> MotionPlanResult:
         pose_target = preview.pose_target
         if pose_target is None:
@@ -78,6 +124,9 @@ class MoveItMotionPlanner:
         motion_request.start_state.is_diff = True
         motion_request.goal_constraints = [self._build_goal_constraints(preview)]
 
+        return self._call_plan_service(request)
+
+    def _call_plan_service(self, request: GetMotionPlan.Request) -> MotionPlanResult:
         future = self._client.call_async(request)
         self._spin_until_future(future)
         if not future.done():

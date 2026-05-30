@@ -46,10 +46,10 @@
     smoothing_window: 7
     filter_enabled: true
     filter_cutoff_hz: 5.0
-    filter_sample_rate_hz: 50.0
+    filter_sample_rate_hz: 150.0
     resample_enabled: true
-    resample_rate_hz: 100.0
-    sample_rate_hz: 50.0
+    resample_rate_hz: 150.0
+    sample_rate_hz: 150.0
     max_prepared_jump_rad: 0.02
     require_gravity_comp: true
     auto_start_gravity_comp: false

@@ -23,11 +23,13 @@ from .teach_recording import (
     analyze_teach_trajectory,
     build_replay_start_soft_points,
     classify_replay_start,
+    compute_auto_align_duration,
     load_teach_samples,
     prepare_teach_replay_samples,
     prepared_teach_replay_to_dict,
     retime_teach_samples,
     teach_trajectory_quality_to_dict,
+    write_prepared_teach_record,
 )
 from .moveit_planner import MoveItMotionPlanner
 
@@ -65,6 +67,10 @@ class TeachReplayNode(Node):
         self.declare_parameter("direct_threshold", 0.01)
         self.declare_parameter("align_threshold", 0.25)
         self.declare_parameter("align_duration", 3.0)
+        self.declare_parameter("align_duration_auto", True)
+        self.declare_parameter("align_target_speed_rad_s", 0.15)
+        self.declare_parameter("align_min_duration", 3.0)
+        self.declare_parameter("align_max_duration", 10.0)
         self.declare_parameter("align_steps", 30)
         self.declare_parameter("green_jump_rad", 0.03)
         self.declare_parameter("yellow_jump_rad", 0.05)
@@ -101,9 +107,9 @@ class TeachReplayNode(Node):
         self.declare_parameter("smoothing_window", 7)
         self.declare_parameter("filter_enabled", True)
         self.declare_parameter("filter_cutoff_hz", 5.0)
-        self.declare_parameter("filter_sample_rate_hz", 50.0)
+        self.declare_parameter("filter_sample_rate_hz", 150.0)
         self.declare_parameter("resample_enabled", True)
-        self.declare_parameter("resample_rate_hz", 100.0)
+        self.declare_parameter("resample_rate_hz", 150.0)
         self.declare_parameter("max_prepared_jump_rad", 0.02)
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._record_path = Path(str(self.get_parameter("record_path").value))
@@ -117,6 +123,7 @@ class TeachReplayNode(Node):
         self._trajectory_points = 0
         self._quality = None
         self._prepared_replay = None
+        self._prepared_record_path: Path | None = None
         self._goal_handle = None
         self._stop_requested = False
         self._stop_reason = ""
@@ -172,6 +179,24 @@ class TeachReplayNode(Node):
         )
         self.create_timer(0.2, self._maybe_start)
         self._publish_status("ready", f"waiting to replay {self._record_path}")
+
+    def _auto_align_duration_for_positions(
+        self,
+        current_positions: tuple[float, ...],
+        first_positions: tuple[float, ...],
+    ) -> float:
+        if not bool(self.get_parameter("align_duration_auto").value):
+            return float(self.get_parameter("align_duration").value)
+        max_error = max(
+            (abs(float(current) - float(first)) for current, first in zip(current_positions, first_positions)),
+            default=0.0,
+        )
+        return compute_auto_align_duration(
+            max_error,
+            target_speed_rad_s=float(self.get_parameter("align_target_speed_rad_s").value),
+            min_duration_sec=float(self.get_parameter("align_min_duration").value),
+            max_duration_sec=float(self.get_parameter("align_max_duration").value),
+        )
 
     def _on_joint_state(self, msg: JointState) -> None:
         self._latest_joint_state = msg
@@ -255,6 +280,10 @@ class TeachReplayNode(Node):
             large_motion_span_rad=float(self.get_parameter("large_motion_span_rad").value),
             large_motion_total_rad=float(self.get_parameter("large_motion_total_rad").value),
             large_motion_max_speed=float(self.get_parameter("large_motion_max_speed").value),
+        )
+        self._prepared_record_path = write_prepared_teach_record(
+            self._record_path,
+            self._prepared_replay,
         )
         speed = float(self.get_parameter("speed").value)
         yellow_max_speed = float(self.get_parameter("yellow_max_speed").value)
@@ -458,7 +487,7 @@ class TeachReplayNode(Node):
                 start_hold_sec=float(self.get_parameter("start_hold_sec").value),
                 soft_start_duration=float(self.get_parameter("soft_start_duration").value),
                 soft_start_steps=int(self.get_parameter("soft_start_steps").value),
-                align_duration=float(self.get_parameter("align_duration").value),
+                align_duration=self._auto_align_duration_for_positions(current_positions, first.positions),
                 align_steps=int(self.get_parameter("align_steps").value),
                 first_hold_sec=float(self.get_parameter("first_hold_sec").value),
             )
@@ -707,6 +736,8 @@ class TeachReplayNode(Node):
             payload["prepared_replay"] = prepared_teach_replay_to_dict(self._prepared_replay)
             payload["prepared_risk_level"] = self._prepared_replay.after_quality.risk_level
             payload["effective_risk_level"] = self._prepared_replay.after_quality.risk_level
+        if self._prepared_record_path is not None:
+            payload["prepared_record_path"] = str(self._prepared_record_path)
         if max_error is not None:
             payload["max_error"] = max_error
         elif self._max_error is not None:

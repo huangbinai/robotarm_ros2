@@ -71,9 +71,9 @@ def generate_launch_description():
             DeclareLaunchArgument("smoothing_window", default_value="7"),
             DeclareLaunchArgument("filter_enabled", default_value="true"),
             DeclareLaunchArgument("filter_cutoff_hz", default_value="5.0"),
-            DeclareLaunchArgument("filter_sample_rate_hz", default_value="50.0"),
+            DeclareLaunchArgument("filter_sample_rate_hz", default_value="150.0"),
             DeclareLaunchArgument("resample_enabled", default_value="true"),
-            DeclareLaunchArgument("resample_rate_hz", default_value="100.0"),
+            DeclareLaunchArgument("resample_rate_hz", default_value="150.0"),
             DeclareLaunchArgument("max_prepared_jump_rad", default_value="0.02"),
             DeclareLaunchArgument(
                 "teleop_config",

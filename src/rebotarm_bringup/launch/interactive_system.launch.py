@@ -79,7 +79,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("use_moveit_preview", default_value="false"),

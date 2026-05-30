@@ -27,6 +27,8 @@ def generate_launch_description():
     arm_namespace = LaunchConfiguration("arm_namespace")
     channel = LaunchConfiguration("channel")
     joint_state_rate = LaunchConfiguration("joint_state_rate")
+    teach_record_path = LaunchConfiguration("teach_record_path")
+    teach_record_rate_hz = LaunchConfiguration("teach_record_rate_hz")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
@@ -48,7 +50,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
+            DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
@@ -64,6 +68,8 @@ def generate_launch_description():
                         "gripper_config": gripper_config,
                         "channel": channel,
                         "joint_state_rate": joint_state_rate,
+                        "teach_record_path": teach_record_path,
+                        "teach_record_rate_hz": teach_record_rate_hz,
                         "cmd_arbitration": cmd_arbitration,
                         "arm_namespace": arm_namespace,
                         "frame_id": frame_id,

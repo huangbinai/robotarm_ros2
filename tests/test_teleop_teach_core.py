@@ -26,6 +26,7 @@ from rebotarm_interactive_control.teach_recording import (  # type: ignore[impor
     analyze_teach_trajectory,
     build_replay_start_soft_points,
     classify_replay_start,
+    compute_auto_align_duration,
     decode_teach_sample,
     encode_teach_sample,
     estimate_teach_replay,
@@ -33,8 +34,10 @@ from rebotarm_interactive_control.teach_recording import (  # type: ignore[impor
     inspect_teach_record,
     is_quit_key,
     list_teach_record_files,
+    load_teach_samples,
     normalize_teach_replay_settings,
     prepare_teach_replay_samples,
+    prepared_record_path,
     prepared_teach_replay_to_dict,
     retime_teach_samples,
     smooth_teach_samples,
@@ -43,6 +46,7 @@ from rebotarm_interactive_control.teach_recording import (  # type: ignore[impor
     validate_teach_dry_run_request,
     validate_teach_replay_execute_request,
     validate_teach_replay_stop_request,
+    write_prepared_teach_record,
 )
 from rebotarm_interactive_control.teleop_core import (  # type: ignore[import-not-found]
     KeyboardCommandMapper,
@@ -372,10 +376,15 @@ class TeachRecordingCoreTests(unittest.TestCase):
             final_hold_sec=-1.0,
         )
 
-        self.assertEqual(settings["replay_speed"], 3.0)
+        self.assertEqual(settings["replay_speed"], 1.5)
         self.assertEqual(settings["align_duration"], 1.0)
         self.assertEqual(settings["align_steps"], 2)
-        self.assertEqual(settings["final_hold_sec"], 0.0)
+        self.assertEqual(settings["final_hold_sec"], 1.0)
+
+    def test_auto_align_duration_scales_with_start_error(self) -> None:
+        self.assertAlmostEqual(compute_auto_align_duration(0.02), 3.0)
+        self.assertAlmostEqual(compute_auto_align_duration(0.9), 6.0)
+        self.assertAlmostEqual(compute_auto_align_duration(3.0), 10.0)
 
     def test_estimate_teach_replay_includes_alignment_when_needed(self) -> None:
         estimate = estimate_teach_replay(
@@ -387,8 +396,8 @@ class TeachRecordingCoreTests(unittest.TestCase):
             align_steps=30,
         )
 
-        self.assertEqual(estimate["trajectory_points"], 35)
-        self.assertAlmostEqual(estimate["estimated_duration_sec"], 5.0)
+        self.assertEqual(estimate["trajectory_points"], 36)
+        self.assertAlmostEqual(estimate["estimated_duration_sec"], 3.0 + 4.0 / 1.5 + 1.0)
 
     def test_estimate_teach_replay_includes_final_hold_when_requested(self) -> None:
         estimate = estimate_teach_replay(
@@ -402,7 +411,7 @@ class TeachRecordingCoreTests(unittest.TestCase):
         )
 
         self.assertEqual(estimate["trajectory_points"], 6)
-        self.assertAlmostEqual(estimate["estimated_duration_sec"], 3.0)
+        self.assertAlmostEqual(estimate["estimated_duration_sec"], 4.0 / 1.5 + 1.0)
         self.assertAlmostEqual(estimate["final_hold_sec"], 1.0)
 
     def test_build_replay_start_soft_points_holds_aligns_and_holds_first_pose(self) -> None:
@@ -491,6 +500,26 @@ class TeachRecordingCoreTests(unittest.TestCase):
 
         self.assertEqual(records[0]["path"], str(path))
         self.assertEqual(records[0]["samples"], 1)
+
+    def test_list_teach_record_files_hides_prepared_outputs(self) -> None:
+        sample = TeachSample(
+            stamp=1.0,
+            joint_names=("joint1",),
+            positions=(0.0,),
+            velocities=(0.0,),
+            efforts=(0.0,),
+            motor_status={},
+            arm_state="GRAVITY_COMP",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_path = Path(tmpdir) / "teach1.jsonl"
+            prepared_path = Path(tmpdir) / "teach1.prepared.jsonl"
+            raw_path.write_text(encode_teach_sample(sample) + "\n", encoding="utf-8")
+            prepared_path.write_text(encode_teach_sample(sample) + "\n", encoding="utf-8")
+
+            records = list_teach_record_files(tmpdir)
+
+        self.assertEqual([record["name"] for record in records], ["teach1.jsonl"])
 
     def test_teach_trajectory_quality_classifies_green_yellow_and_red_jumps(self) -> None:
         green = [
@@ -803,6 +832,44 @@ class TeachRecordingCoreTests(unittest.TestCase):
         self.assertAlmostEqual(prepared.requested_replay_speed, 1.0)
         self.assertAlmostEqual(prepared.effective_replay_speed, 0.4)
         self.assertAlmostEqual(payload["large_motion"]["effective_speed"], 0.4)
+
+    def test_write_prepared_teach_record_exports_retimed_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_path = Path(tmpdir) / "teach1.jsonl"
+            samples = [
+                TeachSample(0.0, ("joint1",), (0.0,), (), (), {}, "GRAVITY_COMP"),
+                TeachSample(0.05, ("joint1",), (0.12,), (), (), {}, "GRAVITY_COMP"),
+                TeachSample(0.10, ("joint1",), (0.13,), (), (), {}, "GRAVITY_COMP"),
+                TeachSample(0.15, ("joint1",), (0.14,), (), (), {}, "GRAVITY_COMP"),
+            ]
+            raw_path.write_text(
+                "\n".join(encode_teach_sample(sample) for sample in samples) + "\n",
+                encoding="utf-8",
+            )
+            prepared = prepare_teach_replay_samples(
+                samples,
+                filter_enabled=True,
+                filter_sample_rate_hz=100.0,
+                resample_enabled=True,
+                resample_rate_hz=100.0,
+                retime_enabled=True,
+                replay_speed=0.2,
+                max_velocity_rad_s=1.0,
+                max_acceleration_rad_s2=0.5,
+                max_jerk_rad_s3=8.0,
+            )
+
+            output_path = write_prepared_teach_record(raw_path, prepared)
+            exported = load_teach_samples(output_path)
+
+            self.assertEqual(output_path, prepared_record_path(raw_path))
+            self.assertEqual(output_path.name, "teach1.prepared.jsonl")
+            self.assertGreater(len(exported), len(samples))
+            self.assertTrue(all(sample.arm_state == "PREPARED_REPLAY" for sample in exported))
+            self.assertEqual(exported[0].stamp, 0.0)
+            self.assertTrue(all(a.stamp <= b.stamp for a, b in zip(exported, exported[1:])))
+            self.assertEqual(exported[0].joint_names, samples[0].joint_names)
+            self.assertTrue(output_path.exists())
 
     def test_interpolate_joint_positions_rejects_length_mismatch(self) -> None:
         with self.assertRaises(ValueError):

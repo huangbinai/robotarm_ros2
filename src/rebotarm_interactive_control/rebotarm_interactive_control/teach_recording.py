@@ -134,6 +134,55 @@ def load_teach_samples(path: str | Path) -> list[TeachSample]:
     return samples
 
 
+def prepared_record_path(raw_path: str | Path) -> Path:
+    path = Path(raw_path)
+    if path.suffix:
+        return path.with_name(f"{path.stem}.prepared{path.suffix}")
+    return path.with_name(f"{path.name}.prepared.jsonl")
+
+
+def write_prepared_teach_record(
+    raw_path: str | Path,
+    prepared: PreparedTeachReplay,
+    *,
+    output_path: str | Path | None = None,
+) -> Path:
+    target = Path(output_path) if output_path is not None else prepared_record_path(raw_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    samples: list[TeachSample]
+    if prepared.retimed_points:
+        joint_names = prepared.samples[0].joint_names if prepared.samples else ()
+        samples = [
+            TeachSample(
+                stamp=float(point.time_from_start),
+                joint_names=joint_names,
+                positions=point.positions,
+                velocities=point.velocities,
+                efforts=(),
+                motor_status={},
+                arm_state="PREPARED_REPLAY",
+            )
+            for point in prepared.retimed_points
+        ]
+    else:
+        samples = [
+            TeachSample(
+                stamp=float(index) / max(float(prepared.resample_rate_hz), 1.0),
+                joint_names=sample.joint_names,
+                positions=sample.positions,
+                velocities=sample.velocities,
+                efforts=sample.efforts,
+                motor_status=sample.motor_status,
+                arm_state="PREPARED_REPLAY",
+            )
+            for index, sample in enumerate(prepared.samples)
+        ]
+    with target.open("w", encoding="utf-8") as handle:
+        for sample in samples:
+            handle.write(encode_teach_sample(sample) + "\n")
+    return target
+
+
 class ReplayStartBand(str, Enum):
     DIRECT = "direct"
     ALIGN = "align"
@@ -312,6 +361,22 @@ def _max_position_delta(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     if len(a) != len(b):
         return float("inf")
     return max((abs(float(current) - float(last)) for current, last in zip(a, b)), default=0.0)
+
+
+def compute_auto_align_duration(
+    max_error_rad: float | None,
+    *,
+    target_speed_rad_s: float = 0.15,
+    min_duration_sec: float = 3.0,
+    max_duration_sec: float = 10.0,
+) -> float:
+    try:
+        error = abs(float(max_error_rad))
+    except (TypeError, ValueError):
+        error = 0.0
+    speed = max(float(target_speed_rad_s), 0.01)
+    duration = error / speed if error > 0.0 else float(min_duration_sec)
+    return min(max(duration, float(min_duration_sec)), float(max_duration_sec))
 
 
 def _motion_scope(samples: list[TeachSample]) -> tuple[float, float]:
@@ -1188,6 +1253,8 @@ def list_teach_record_files(directory: str | Path) -> list[dict]:
         return []
     records: list[dict] = []
     for path in sorted(base.glob("*.jsonl")):
+        if path.name.endswith(".prepared.jsonl"):
+            continue
         stat = path.stat()
         info = teach_record_info_to_dict(inspect_teach_record(path))
         records.append(
@@ -1335,10 +1402,10 @@ def normalize_teach_replay_settings(
     final_hold_sec: float = 1.0,
 ) -> dict[str, float | int]:
     return {
-        "replay_speed": min(max(float(replay_speed), 0.1), 3.0),
+        "replay_speed": min(max(float(replay_speed), 0.1), 1.5),
         "align_duration": min(max(float(align_duration), 1.0), 10.0),
         "align_steps": min(max(int(align_steps), 2), 200),
-        "final_hold_sec": min(max(float(final_hold_sec), 0.0), 5.0),
+        "final_hold_sec": 1.0,
     }
 
 

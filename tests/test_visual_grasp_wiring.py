@@ -188,11 +188,56 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert 'id="teach-record-name"' in panel_text
     assert "Start Teach" in panel_text
     assert "Check Trajectory" in panel_text
-    assert ">Replay<" in panel_text
+    assert ">Replay Prepared<" in panel_text
+    assert panel_text.index("1. Record") < panel_text.index('id="teach-record-name"')
+    assert panel_text.index("2. Check") < panel_text.index('id="teach-record-select"')
+    assert 'Choose recorded file' in panel_text
+    assert '<details class="teach-step" id="teach-record-step">' in panel_text
+    assert '<details class="teach-step" id="teach-check-step" open>' in panel_text
+    assert '<details class="teach-step" id="teach-replay-step" open>' in panel_text
+    assert '<option value="" disabled selected>Choose recorded file</option>' in panel_text
+    assert "#teach-record-select:invalid" in panel_text
+    assert 'Default file' not in panel_text
+    assert 'id="teach-replay-speed" type="range" min="0.1" max="1.5"' in panel_text
+    assert 'id="teach-align-duration"' not in panel_text
+    assert 'id="teach-final-hold"' not in panel_text
+    assert "Align Time" in panel_text
+    assert "Final Hold', '1.0 s'" not in panel_text
+    assert "Auto Align Time" in panel_text
+    replay_params_body = panel_text.split("const renderReplayParams = (info) => {", 1)[1].split("const addReplayEvent", 1)[0]
+    assert "Replay Speed" in replay_params_body
+    assert "Estimated Duration" in replay_params_body
+    assert "Trajectory Points" in replay_params_body
+    assert "Hardware Mode" not in replay_params_body
+    assert "Panel Mode" not in replay_params_body
+    assert "Direct Threshold" not in replay_params_body
+    assert "Align Threshold" not in replay_params_body
+    assert "Execution Gate" not in replay_params_body
+    assert "Final Hold" not in replay_params_body
+    assert "轨迹不平滑点" in panel_text
+    assert "不平滑点详情" not in panel_text
+    assert "自动限速平滑后回放" in panel_text
     assert "Teach JSONL Schema" not in panel_text
     assert "Replay Checklist Details" not in panel_text
     assert "Recording / Gravity" not in panel_text
     assert "Default record_path" not in panel_text
+    assert 'id="expand-teach-trajectory"' not in panel_text
+    assert "toggleTeachTrajectoryChart" not in panel_text
+    assert 'id="teach-trajectory-frame"' not in panel_text
+    assert "previewTeachTrajectoryFrame" not in panel_text
+    assert "Trajectory Limits" not in panel_text
+    assert "Prepared Risk" in panel_text
+    precheck_body = panel_text.split("const renderReplayPrecheckSummary = (info) => {", 1)[1].split("const replayEstimate", 1)[0]
+    assert "Playback Quality" in precheck_body
+    assert "Raw Risk" not in precheck_body
+    assert "Prepared Jump" in precheck_body
+    assert "Prepared Velocity" in precheck_body
+    assert "effective_risk_level" in precheck_body
+    assert "prepared_risk_level" in precheck_body
+    assert "prepared_replay?.after_quality" in precheck_body
+    assert "teachMetric('Risk'" not in precheck_body
+    assert "prepared_record_path" in panel_text
+    assert "preparedPoints.length" not in panel_text
 
 
 def test_status_panel_throttles_heavy_browser_rendering():
@@ -288,6 +333,8 @@ def test_status_panel_uses_workbench_cards_for_teleop_ui():
 
 def test_teach_recorder_exposes_service_controlled_start_stop():
     recorder_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_recorder_node.py")
+    controller_text = _read("src/rebotarmcontroller/rebotarmcontroller/rebotarm_controller.py")
+    controller_recorder_text = _read("src/rebotarmcontroller/rebotarmcontroller/teach_recorder.py")
     teleop_launch_text = _read("src/rebotarm_bringup/launch/teleop_system.launch.py")
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     cmake_text = _read("src/rebotarm_msgs/CMakeLists.txt")
@@ -304,8 +351,32 @@ def test_teach_recorder_exposes_service_controlled_start_stop():
     assert '"srv/SetTeachRecordPath.srv"' in cmake_text
     assert "def _handle_start_recording" in recorder_text
     assert "def _handle_stop_recording" in recorder_text
+    assert "InternalTeachRecorder" in controller_text
+    assert 'self.declare_parameter("teach_record_rate_hz", 150.0)' in controller_text
+    assert 'f"/{namespace}/teleop/teach_record/start"' in controller_recorder_text
+    assert 'f"/{namespace}/teleop/teach_record/stop"' in controller_recorder_text
+    assert 'f"/{namespace}/teleop/teach_record/set_path"' in controller_recorder_text
+    assert 'f"/{namespace}/teleop/recording_status"' in controller_recorder_text
+    assert "hardware.get_joint_state()" in controller_recorder_text
+    assert "hardware.get_joint_status_codes()" in controller_recorder_text
     assert '"start_on_launch": False' in teleop_launch_text
-    assert '"keyboard_quit_enabled": False' in teleop_launch_text
+    assert "UnlessCondition(use_hardware)" in teleop_launch_text
+
+
+def test_teach_replay_prepared_pipeline_defaults_to_150hz():
+    replay_launch_text = _read("src/rebotarm_bringup/launch/teach_replay.launch.py")
+    replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    profiles_text = _read("src/rebotarm_bringup/config/replay_profiles.yaml")
+
+    assert 'DeclareLaunchArgument("filter_sample_rate_hz", default_value="150.0")' in replay_launch_text
+    assert 'DeclareLaunchArgument("resample_rate_hz", default_value="150.0")' in replay_launch_text
+    assert 'self.declare_parameter("filter_sample_rate_hz", 150.0)' in replay_node_text
+    assert 'self.declare_parameter("resample_rate_hz", 150.0)' in replay_node_text
+    assert 'self.declare_parameter("filter_sample_rate_hz", 150.0)' in panel_text
+    assert 'self.declare_parameter("resample_rate_hz", 150.0)' in panel_text
+    assert "filter_sample_rate_hz: 150.0" in profiles_text
+    assert "resample_rate_hz: 150.0" in profiles_text
 
 
 def test_moveit_demo_standalone_publishes_fake_visual_joint_state_source():

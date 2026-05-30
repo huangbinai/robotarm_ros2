@@ -15,6 +15,8 @@ def generate_launch_description():
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
     joint_state_rate = LaunchConfiguration("joint_state_rate")
+    teach_record_path = LaunchConfiguration("teach_record_path")
+    teach_record_rate_hz = LaunchConfiguration("teach_record_rate_hz")
     teleop_config = LaunchConfiguration("teleop_config")
     keyboard_prefix = LaunchConfiguration("keyboard_prefix")
     bringup_share = FindPackageShare("rebotarm_bringup")
@@ -31,7 +33,9 @@ def generate_launch_description():
             DeclareLaunchArgument("use_hardware", default_value="false"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
+            DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
             DeclareLaunchArgument(
                 "keyboard_prefix",
                 default_value="bash -lc 'exec \"$0\" \"$@\" < /dev/tty'",
@@ -62,6 +66,8 @@ def generate_launch_description():
                         "gripper_config": gripper_config,
                         "channel": channel,
                         "joint_state_rate": joint_state_rate,
+                        "teach_record_path": teach_record_path,
+                        "teach_record_rate_hz": teach_record_rate_hz,
                         "arm_namespace": arm_namespace,
                     }
                 ],

@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -47,6 +47,7 @@ def generate_launch_description():
                     "arm_namespace": arm_namespace,
                     "use_hardware": use_hardware,
                     "use_local_rviz": use_local_rviz,
+                    "teach_record_path": record_path,
                     "teleop_config": teleop_config,
                     "keyboard_prefix": keyboard_prefix,
                 }.items(),
@@ -56,6 +57,7 @@ def generate_launch_description():
                 executable="TeachRecorderNode",
                 name="teach_recorder_node",
                 output="screen",
+                condition=UnlessCondition(use_hardware),
                 parameters=[
                     teleop_config,
                     {

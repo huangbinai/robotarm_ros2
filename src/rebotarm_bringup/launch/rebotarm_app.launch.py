@@ -101,24 +101,6 @@ def _keyboard_node(*, teleop_config, arm_namespace: str, keyboard_prefix: str):
     )
 
 
-def _idle_recorder_node(*, teleop_config, arm_namespace: str, record_path: str):
-    return Node(
-        package="rebotarm_interactive_control",
-        executable="TeachRecorderNode",
-        name="teach_recorder_node",
-        output="screen",
-        parameters=[
-            teleop_config,
-            {
-                "arm_namespace": arm_namespace,
-                "record_path": record_path,
-                "start_on_launch": False,
-                "keyboard_quit_enabled": False,
-            },
-        ],
-    )
-
-
 def _launch_setup(context, *args, **kwargs):
     mode = LaunchConfiguration("mode").perform(context).strip().lower()
     profile_name = LaunchConfiguration("profile").perform(context).strip().lower()
@@ -173,6 +155,7 @@ def _launch_setup(context, *args, **kwargs):
                     "arm_namespace": arm_namespace,
                     "channel": channel,
                     "use_rviz": use_rviz,
+                    "teach_record_path": record_path,
                 }.items(),
             ),
             _keyboard_node(
@@ -180,11 +163,7 @@ def _launch_setup(context, *args, **kwargs):
                 arm_namespace=arm_namespace,
                 keyboard_prefix=keyboard_prefix,
             ),
-            _idle_recorder_node(
-                teleop_config=teleop_config,
-                arm_namespace=arm_namespace,
-                record_path=record_path,
-            ),
+            LogInfo(msg="teach recording services are provided by the controller internal recorder"),
         ]
         if panel == "true":
             actions.append(
@@ -221,6 +200,7 @@ def _launch_setup(context, *args, **kwargs):
                 "arm_namespace": arm_namespace,
                 "channel": channel,
                 "use_rviz": use_rviz,
+                "teach_record_path": record_path,
             }.items(),
         ),
     ]
@@ -239,20 +219,11 @@ def _launch_setup(context, *args, **kwargs):
 
     if mode == "record":
         actions.append(
-            Node(
-                package="rebotarm_interactive_control",
-                executable="TeachRecorderNode",
-                name="teach_recorder_node",
-                output="screen",
-                prefix=keyboard_prefix,
-                parameters=[
-                    teleop_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                        "record_path": record_path,
-                        "auto_start_gravity_comp": True,
-                    },
-                ],
+            LogInfo(
+                msg=(
+                    "record mode uses the controller internal recorder; "
+                    "start/stop recording from the web Teach Trajectory card"
+                )
             )
         )
     elif mode == "check":

@@ -31,6 +31,7 @@ from .teleop_core import validate_web_keyboard_command
 from .teach_recording import (
     ReplayStartBand,
     build_replay_start_soft_points,
+    compute_auto_align_duration,
     estimate_teach_replay,
     inspect_teach_record,
     list_teach_record_files,
@@ -44,6 +45,7 @@ from .teach_recording import (
     validate_teach_dry_run_request,
     validate_teach_replay_execute_request,
     validate_teach_replay_stop_request,
+    write_prepared_teach_record,
 )
 from .moveit_planner import MoveItMotionPlanner
 from .web_robot_assets import (
@@ -425,6 +427,29 @@ HTML_PAGE = r"""<!doctype html>
       font-weight: 700;
       border-top: 1px solid var(--line);
     }
+    .teach-step {
+      border-top: 1px solid var(--line);
+      padding: 0;
+    }
+    .teach-step > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 10px 12px;
+      color: var(--text);
+      font-weight: 700;
+      user-select: none;
+    }
+    .teach-step > summary::-webkit-details-marker { display: none; }
+    .teach-step > summary::after {
+      content: "+";
+      float: right;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .teach-step[open] > summary::after { content: "-"; }
+    #teach-record-select:invalid { color: var(--muted); }
+    #teach-record-select option { color: var(--text); }
+    #teach-record-select option[value=""] { color: var(--muted); }
     .execute-button {
       border-color: #9f3a32;
       background: #c24135;
@@ -659,26 +684,27 @@ HTML_PAGE = r"""<!doctype html>
       min-width: 0;
     }
     .trajectory-view { padding: 12px; display: grid; gap: 10px; }
+    .trajectory-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
     .trajectory-canvas-wrap {
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #ffffff;
-      min-height: 240px;
+      min-height: 320px;
     }
     #teach-trajectory-canvas {
       display: block;
       width: 100%;
-      height: 240px;
+      height: 320px;
     }
     .trajectory-controls {
-      display: grid;
-      grid-template-columns: 96px minmax(0, 1fr) auto;
+      display: flex;
+      justify-content: flex-end;
       gap: 10px;
       align-items: center;
-    }
-    .trajectory-controls input[type="range"] {
-      width: 100%;
-      accent-color: var(--info);
     }
     .empty { color: var(--muted); padding: 14px; }
     @media (max-width: 980px) {
@@ -690,11 +716,13 @@ HTML_PAGE = r"""<!doctype html>
       .slider-grid { grid-template-columns: 1fr; }
       #robot-view { height: 340px; }
       .viewer-body { min-height: 340px; }
+      #teach-trajectory-canvas { height: 340px; }
     }
     @media (max-width: 560px) {
       .joint-slider { grid-template-columns: 1fr; gap: 4px; }
       .joint-values { text-align: left; }
       .teach-grid { grid-template-columns: 1fr; }
+      .trajectory-summary { grid-template-columns: 1fr; }
       .precheck-strip { grid-template-columns: 1fr; }
       .compact-grid { grid-template-columns: 1fr; }
       .teach-wide { grid-column: span 1; }
@@ -806,74 +834,68 @@ HTML_PAGE = r"""<!doctype html>
         <section class="panel teach-panel collapsible-card collapsed" id="teach-trajectory-card">
           <div class="card-header"><div class="panel-title">Teach Trajectory</div><button class="card-toggle" type="button" data-card-toggle="teach-trajectory-card" aria-label="Toggle Teach Trajectory"></button></div>
           <div class="card-body">
-          <div class="record-toolbar">
-            <select id="teach-record-select">
-              <option value="">Default file</option>
-            </select>
-            <button class="tool-button" id="refresh-teach-records" type="button">Refresh Files</button>
-          </div>
-          <div class="teach-section-title">1. Record</div>
-          <div class="execute-settings">
-            <div class="execute-setting wide">
-              <label for="teach-record-name">File Name</label>
-              <input id="teach-record-name" type="text" value="teach_record.jsonl" autocomplete="off">
+          <details class="teach-step" id="teach-record-step">
+            <summary>1. Record</summary>
+            <div class="execute-settings">
+              <div class="execute-setting wide">
+                <label for="teach-record-name">File Name</label>
+                <input id="teach-record-name" type="text" value="teach_record.jsonl" autocomplete="off">
+              </div>
             </div>
-          </div>
-          <div class="command-grid">
-            <button class="tool-button execute-button" id="start-teach-record" type="button">Start Teach</button>
-            <button class="tool-button stop-button" id="stop-teach-record" type="button" disabled>Stop Teach</button>
-          </div>
-          <div class="teach-grid compact-grid" id="teach-record-summary">
-            <div class="empty">Choose a file name, then start recording.</div>
-          </div>
-          <div class="teach-section-title">2. Check</div>
-          <div class="precheck-strip" id="replay-precheck-summary">
-            <div class="empty">No valid teach trajectory</div>
-          </div>
-          <button class="tool-button" id="run-teach-dry-run" type="button" disabled>Check Trajectory</button>
-          <div class="teach-section-title">3. Replay</div>
-          <div class="execute-row">
-            <div class="execute-status" id="teach-dry-run-status">Check first. Replay stays blocked until safety checks pass.</div>
-            <div>
-              <button class="tool-button execute-button" id="run-teach-replay" type="button" disabled>Replay</button>
-              <button class="tool-button stop-button" id="stop-teach-replay" type="button" disabled>Stop Replay</button>
+            <div class="command-grid">
+              <button class="tool-button execute-button" id="start-teach-record" type="button">Start Teach</button>
+              <button class="tool-button stop-button" id="stop-teach-record" type="button" disabled>Stop Teach</button>
             </div>
-          </div>
-          <div class="teach-controls">
-            <div class="teach-control">
-              <label for="teach-replay-speed">Replay Speed</label>
-              <input id="teach-replay-speed" type="range" min="0.1" max="3.0" step="0.1" value="1.0">
-              <input id="teach-replay-speed-number" type="number" min="0.1" max="3.0" step="0.1" value="1.0">
+            <div class="teach-grid compact-grid" id="teach-record-summary">
+              <div class="empty">Choose a file name, then start recording.</div>
             </div>
-            <div class="teach-control">
-              <label for="teach-align-duration">Align Duration</label>
-              <input id="teach-align-duration" type="range" min="1.0" max="10.0" step="0.5" value="3.0">
-              <input id="teach-align-duration-number" type="number" min="1.0" max="10.0" step="0.5" value="3.0">
+          </details>
+          <details class="teach-step" id="teach-check-step" open>
+            <summary>2. Check</summary>
+            <div class="record-toolbar">
+              <select id="teach-record-select" required>
+                <option value="" disabled selected>Choose recorded file</option>
+              </select>
+              <button class="tool-button" id="refresh-teach-records" type="button">Refresh Files</button>
             </div>
-            <div class="teach-control">
-              <label for="teach-final-hold">Final Hold</label>
-              <input id="teach-final-hold" type="range" min="0.0" max="5.0" step="0.1" value="1.0">
-              <input id="teach-final-hold-number" type="number" min="0.0" max="5.0" step="0.1" value="1.0">
+            <div class="precheck-strip" id="replay-precheck-summary">
+              <div class="empty">No valid teach trajectory</div>
             </div>
-          </div>
-          <div class="teach-grid compact-grid" id="teach-params-details">
-            <div class="empty">Waiting for replay estimate</div>
-          </div>
+            <button class="tool-button" id="run-teach-dry-run" type="button" disabled>Check Trajectory</button>
+          </details>
+          <details class="teach-step" id="teach-replay-step" open>
+            <summary>3. Replay</summary>
+            <div class="execute-row">
+              <div class="execute-status" id="teach-dry-run-status">Check first. Replay stays blocked until safety checks pass.</div>
+              <div>
+                <button class="tool-button execute-button" id="run-teach-replay" type="button" disabled>Replay Prepared</button>
+                <button class="tool-button stop-button" id="stop-teach-replay" type="button" disabled>Stop Replay</button>
+              </div>
+            </div>
+            <div class="teach-controls">
+              <div class="teach-control">
+                <label for="teach-replay-speed">Replay Speed</label>
+                <input id="teach-replay-speed" type="range" min="0.1" max="1.5" step="0.1" value="1.0">
+                <input id="teach-replay-speed-number" type="number" min="0.1" max="1.5" step="0.1" value="1.0">
+              </div>
+            </div>
+            <div class="teach-grid compact-grid" id="teach-params-details">
+              <div class="empty">Waiting for replay estimate</div>
+            </div>
+          </details>
           <details class="panel teach-panel" id="teach-file-details-panel">
             <summary>Trajectory File And Curve</summary>
             <div class="teach-grid" id="teach-file-details">
               <div class="empty">Waiting for teach record file</div>
             </div>
             <div class="trajectory-view">
-              <div class="teach-grid" id="teach-trajectory-details">
-                <div class="empty">Load a teach record to inspect trajectory quality</div>
+              <div class="trajectory-summary" id="teach-trajectory-details">
+                <div class="empty">Load a teach record to draw trajectory curve</div>
               </div>
-              <div class="trajectory-canvas-wrap">
+              <div class="trajectory-canvas-wrap" id="teach-trajectory-canvas-wrap">
                 <canvas id="teach-trajectory-canvas"></canvas>
               </div>
               <div class="trajectory-controls">
-                <label class="label" for="teach-trajectory-frame">Frame</label>
-                <input id="teach-trajectory-frame" type="range" min="0" max="0" step="1" value="0" disabled>
                 <button class="tool-button" id="load-teach-trajectory" type="button">Load Trajectory</button>
               </div>
             </div>
@@ -1097,6 +1119,13 @@ HTML_PAGE = r"""<!doctype html>
       if (!Number.isFinite(Number(total))) return String(shown || 0);
       return truncated ? `${shown}/${total}` : String(total);
     };
+    const replayPolicyText = (policy) => {
+      const value = String(policy || '').toLowerCase();
+      if (value.includes('safe retiming')) return '自动限速平滑后回放';
+      if (value.includes('blocked')) return '禁止真机回放';
+      if (value.includes('direct')) return '可检查后回放';
+      return text(policy);
+    };
     const renderTeachFileInfo = (info) => {
       if (!info || typeof info !== 'object') {
         return '<div class="empty">Teach record file check unavailable</div>';
@@ -1116,12 +1145,11 @@ HTML_PAGE = r"""<!doctype html>
         teachMetric('Start Positions', formatJointMap(info.start_positions), { wide: true }),
         teachMetric('End Positions', formatJointMap(info.end_positions), { wide: true }),
         teachMetric('Current To Start Error', formatJointMap(info.per_joint_error), { wide: true }),
-        teachMetric('Anomalies', Array.isArray(info.anomalies) && info.anomalies.length ? `${info.anomalies.join(' | ')}${info.anomalies_truncated ? ' ...' : ''}` : 'none', { wide: true }),
-        teachMetric('Anomaly Count', countLabel(Array.isArray(info.anomalies) ? info.anomalies.length : 0, info.anomalies_total, info.anomalies_truncated)),
-        teachMetric('Trajectory Risk', info.quality?.risk_level ? `<span class="chip ${classFor(info.quality.risk_level)}">${escapeHtml(info.quality.risk_level)}</span>` : '-', { raw: true }),
-        teachMetric('Max Jump', Number.isFinite(info.quality?.max_jump_rad) ? `${fmt(info.quality.max_jump_rad)} rad` : '-'),
-        teachMetric('Max Velocity', Number.isFinite(info.quality?.max_velocity_rad_s) ? `${fmt(info.quality.max_velocity_rad_s)} rad/s` : '-'),
-        teachMetric('Replay Policy', text(info.quality?.replay_policy), { wide: true }),
+        teachMetric('轨迹不平滑点', countLabel(Array.isArray(info.anomalies) ? info.anomalies.length : 0, info.anomalies_total, info.anomalies_truncated)),
+        teachMetric('轨迹风险', info.quality?.risk_level ? `<span class="chip ${classFor(info.quality.risk_level)}">${escapeHtml(info.quality.risk_level)}</span>` : '-', { raw: true }),
+        teachMetric('最大单帧跳变', Number.isFinite(info.quality?.max_jump_rad) ? `${fmt(info.quality.max_jump_rad)} rad` : '-'),
+        teachMetric('原始最大速度', Number.isFinite(info.quality?.max_velocity_rad_s) ? `${fmt(info.quality.max_velocity_rad_s)} rad/s` : '-'),
+        teachMetric('回放策略', replayPolicyText(info.quality?.replay_policy), { wide: true }),
       ].join('');
     };
     const renderTeachRecordSummary = (info, recordingValue) => {
@@ -1138,66 +1166,13 @@ HTML_PAGE = r"""<!doctype html>
         return `<div class="empty">${escapeHtml(payload?.message || 'Teach trajectory unavailable')}</div>`;
       }
       const q = payload.quality || {};
-      const prepared = payload.prepared_replay || {};
-      const collision = payload.collision_precheck || {};
-      const after = prepared.after_quality || {};
-      const raw = prepared.raw_quality || q;
-      const filtered = prepared.filtered_quality || {};
-      const retimed = prepared.retimed_quality || after;
-      const large = prepared.large_motion || {};
-      const limitState = (value, limit) => {
-        if (!Number.isFinite(Number(value)) || !Number.isFinite(Number(limit))) return '-';
-        return Number(value) <= Number(limit) ? 'PASS' : 'BLOCK';
-      };
-      const limitChip = (state) => state === '-'
-        ? '-'
-        : `<span class="chip ${state === 'PASS' ? 'pass' : 'red'}">${state}</span>`;
-      const limitRows = [
-        ['Jump', raw.max_jump_rad, filtered.max_jump_rad, retimed.max_jump_rad, panelConfig.teach?.max_prepared_jump_rad, 'rad'],
-        ['Velocity', raw.max_velocity_rad_s, filtered.max_velocity_rad_s, retimed.max_velocity_rad_s, panelConfig.teach?.max_replay_velocity_rad_s, 'rad/s'],
-        ['Acceleration', raw.max_acceleration_rad_s2, filtered.max_acceleration_rad_s2, retimed.max_acceleration_rad_s2, panelConfig.teach?.max_replay_acceleration_rad_s2, 'rad/s2'],
-        ['Jerk', raw.max_jerk_rad_s3, filtered.max_jerk_rad_s3, retimed.max_jerk_rad_s3, panelConfig.teach?.max_replay_jerk_rad_s3, 'rad/s3'],
-      ].map(([name, rawValue, filteredValue, retimedValue, limit, unit]) => {
-        const state = limitState(retimedValue, limit);
-        return `<tr><td>${name}</td><td>${fmt(Number(rawValue))}</td><td>${fmt(Number(filteredValue))}</td><td>${fmt(Number(retimedValue))}</td><td>${fmt(Number(limit))} ${unit}</td><td>${limitChip(state)}</td></tr>`;
-      }).join('');
-      const limitsTable = `
-        <div class="teach-metric teach-wide">
-          <span>Trajectory Limits</span>
-          <strong>
-            <table class="mini-limit-table">
-              <thead><tr><th>Metric</th><th>Raw</th><th>Filtered</th><th>Retimed</th><th>Limit</th><th>State</th></tr></thead>
-              <tbody>${limitRows}</tbody>
-            </table>
-          </strong>
-        </div>`;
       return [
-        teachMetric('Raw Risk', `<span class="chip ${classFor(raw.risk_level)}">${escapeHtml(raw.risk_level || '-')}</span>`, { raw: true }),
-        teachMetric('Filtered Risk', filtered.risk_level ? `<span class="chip ${classFor(filtered.risk_level)}">${escapeHtml(filtered.risk_level)}</span>` : '-', { raw: true }),
-        teachMetric('Retimed Risk', retimed.risk_level ? `<span class="chip ${classFor(retimed.risk_level)}">${escapeHtml(retimed.risk_level)}</span>` : '-', { raw: true }),
-        teachMetric('Raw Samples', Number.isFinite(payload.raw_samples) ? payload.raw_samples : '-'),
-        teachMetric('Shown Samples', Number.isFinite(payload.returned_samples) ? payload.returned_samples : '-'),
-        teachMetric('Prepared Samples', Number.isFinite(prepared.prepared_samples) ? prepared.prepared_samples : '-'),
-        teachMetric('Retimed Points', Number.isFinite(prepared.retimed_points) ? prepared.retimed_points : '-'),
+        teachMetric('Prepared File', text(payload.prepared_record_path || payload.path || latestTeachFileInfo?.path), { wide: true }),
+        teachMetric('Samples', Number.isFinite(payload.raw_samples) ? payload.raw_samples : (Number.isFinite(payload.returned_samples) ? payload.returned_samples : '-')),
         teachMetric('Duration', Number.isFinite(payload.duration_sec) ? `${fmt(payload.duration_sec, 2)} s` : '-'),
-        teachMetric('Raw Max Jump', Number.isFinite(raw.max_jump_rad) ? `${fmt(raw.max_jump_rad)} rad` : '-'),
-        teachMetric('Retimed Max Jump', Number.isFinite(retimed.max_jump_rad) ? `${fmt(retimed.max_jump_rad)} rad` : '-'),
-        teachMetric('Retimed Max Acc', Number.isFinite(retimed.max_acceleration_rad_s2) ? `${fmt(retimed.max_acceleration_rad_s2)} rad/s2` : '-'),
-        teachMetric('Retimed Max Jerk', Number.isFinite(retimed.max_jerk_rad_s3) ? `${fmt(retimed.max_jerk_rad_s3)} rad/s3` : '-'),
-        teachMetric('Large Motion', large.enabled ? 'true' : 'false'),
-        teachMetric('Effective Speed', Number.isFinite(large.effective_speed) ? `${fmt(large.effective_speed, 2)} x` : '-'),
-        teachMetric('Collision', collision.state ? `<span class="chip ${classFor(collision.state)}">${escapeHtml(collision.state)}</span>` : '-', { raw: true }),
-        teachMetric('Collision Samples', Number.isFinite(collision.checked_samples) ? `${collision.checked_samples}/${collision.requested_samples || '-'}` : '-'),
-        teachMetric('Jump Gate', Number.isFinite(panelConfig.teach?.max_prepared_jump_rad) ? `${fmt(panelConfig.teach.max_prepared_jump_rad)} rad` : '-'),
-        teachMetric('Accel Gate', Number.isFinite(panelConfig.teach?.max_replay_acceleration_rad_s2) ? `${fmt(panelConfig.teach.max_replay_acceleration_rad_s2)} rad/s2` : '-'),
-        teachMetric('Jerk Gate', Number.isFinite(panelConfig.teach?.max_replay_jerk_rad_s3) ? `${fmt(panelConfig.teach.max_replay_jerk_rad_s3)} rad/s3` : '-'),
-        teachMetric('Worst Sample', Number.isFinite(q.worst_sample) ? q.worst_sample : '-'),
-        teachMetric('Worst Joint', text(q.worst_joint)),
-        teachMetric('Smoothing', prepared.smoothing_applied ? `window ${prepared.smoothing_window}` : 'off'),
-        teachMetric('Filter', prepared.filter_applied ? `${fmt(prepared.filter_cutoff_hz, 1)} Hz` : 'off'),
-        teachMetric('Resampling', prepared.resample_applied ? `${fmt(prepared.resample_rate_hz, 1)} Hz` : 'off'),
-        teachMetric('Policy', text(q.replay_policy), { wide: true }),
-        limitsTable,
+        teachMetric('Prepared Risk', q.risk_level ? `<span class="chip ${classFor(q.risk_level)}">${escapeHtml(q.risk_level)}</span>` : '-', { raw: true }),
+        teachMetric('Max Jump', Number.isFinite(q.max_jump_rad) ? `${fmt(q.max_jump_rad)} rad` : '-'),
+        teachMetric('Max Velocity', Number.isFinite(q.max_velocity_rad_s) ? `${fmt(q.max_velocity_rad_s)} rad/s` : '-'),
       ].join('');
     };
     const drawTeachTrajectoryChart = (payload) => {
@@ -1253,11 +1228,7 @@ HTML_PAGE = r"""<!doctype html>
         });
         ctx.globalAlpha = 1.0;
       };
-      drawSeries(points, 0.35, 1.0);
-      const preparedPoints = Array.isArray(payload.prepared_points) ? payload.prepared_points : [];
-      if (preparedPoints.length) {
-        drawSeries(preparedPoints, 1.0, 1.8);
-      }
+      drawSeries(points, 1.0, 1.8);
       (payload.events || []).forEach((event) => {
         const point = points.find((item) => item.sample === event.sample);
         if (!point) return;
@@ -1273,16 +1244,6 @@ HTML_PAGE = r"""<!doctype html>
       ctx.fillText(`${fmt(yMin)} rad`, 6, height - bottom);
       ctx.fillText(`${fmt(tMax, 2)} s`, width - right - 42, height - 8);
     };
-    const previewTeachTrajectoryFrame = (index) => {
-      const points = Array.isArray(latestTeachTrajectory?.points) ? latestTeachTrajectory.points : [];
-      const point = points[Math.min(Math.max(Number(index) || 0, 0), Math.max(points.length - 1, 0))];
-      if (!point || !point.positions) return;
-      const joints = {};
-      Object.entries(point.positions).forEach(([name, position]) => {
-        joints[name] = { position: Number(position) };
-      });
-      updateRobotViewer(joints);
-    };
     const loadTeachTrajectory = async () => {
       try {
         const suffix = selectedTeachRecordPath ? `?path=${encodeURIComponent(selectedTeachRecordPath)}&max_points=500` : '?max_points=500';
@@ -1291,11 +1252,6 @@ HTML_PAGE = r"""<!doctype html>
         latestTeachTrajectory = payload;
         document.getElementById('teach-trajectory-details').innerHTML = renderTeachTrajectoryDetails(payload);
         drawTeachTrajectoryChart(payload);
-        const frame = document.getElementById('teach-trajectory-frame');
-        const count = Array.isArray(payload.points) ? payload.points.length : 0;
-        frame.max = Math.max(count - 1, 0);
-        frame.value = 0;
-        frame.disabled = count === 0;
       } catch (error) {
         document.getElementById('teach-trajectory-details').innerHTML =
           `<div class="empty">Teach trajectory load failed: ${escapeHtml(error.message)}</div>`;
@@ -1304,29 +1260,44 @@ HTML_PAGE = r"""<!doctype html>
     const renderReplayPrecheckSummary = (info) => {
       const band = String(info?.start_band || 'unknown').toLowerCase();
       const quality = info?.quality || {};
-      const risk = String(quality.risk_level || '-').toLowerCase();
       const estimate = replayEstimate(info);
       const replay = statusObj(previewState.latestTeleop?.replay);
+      const preparedQuality = replay.prepared_replay?.after_quality || {};
+      const playbackRisk = String(
+        replay.effective_risk_level ||
+        replay.prepared_risk_level ||
+        preparedQuality.risk_level ||
+        quality.risk_level ||
+        '-'
+      ).toLowerCase();
+      const preparedJump = Number.isFinite(preparedQuality.max_jump_rad)
+        ? preparedQuality.max_jump_rad
+        : replay.prepared_max_jump_rad;
+      const preparedVelocity = Number.isFinite(preparedQuality.max_velocity_rad_s)
+        ? preparedQuality.max_velocity_rad_s
+        : undefined;
       const moveit = replay.moveit_start_align || {};
       const collision = replay.collision_precheck || {};
       return [
         teachMetric('Start', `<span class="chip ${classFor(band)}">${escapeHtml(band || 'unknown')}</span>`, { raw: true }),
-        teachMetric('Risk', `<span class="chip ${classFor(risk)}">${escapeHtml(risk || '-')}</span>`, { raw: true }),
+        teachMetric('Playback Quality', `<span class="chip ${classFor(playbackRisk)}">${escapeHtml(playbackRisk || '-')}</span>`, { raw: true }),
         teachMetric('MoveIt', moveit.state ? `<span class="chip ${classFor(moveit.state)}">${escapeHtml(moveit.state)}</span>` : '-', { raw: true }),
         teachMetric('Collision', collision.state ? `<span class="chip ${classFor(collision.state)}">${escapeHtml(collision.state)}</span>` : '-', { raw: true }),
         teachMetric('Start Error', Number.isFinite(info?.max_error) ? `${fmt(info.max_error)} rad` : '-'),
         teachMetric('Worst Joint', text(info?.worst_joint)),
-        teachMetric('Max Jump', Number.isFinite(quality.max_jump_rad) ? `${fmt(quality.max_jump_rad)} rad` : '-'),
-        teachMetric('Max Velocity', Number.isFinite(quality.max_velocity_rad_s) ? `${fmt(quality.max_velocity_rad_s)} rad/s` : '-'),
+        teachMetric('Prepared Jump', Number.isFinite(preparedJump) ? `${fmt(preparedJump)} rad` : '-'),
+        teachMetric('Prepared Velocity', Number.isFinite(preparedVelocity) ? `${fmt(preparedVelocity)} rad/s` : '-'),
+        teachMetric('Auto Align Time', `${fmt(estimate.alignDuration, 1)} s`),
         teachMetric('Estimated Time', `${fmt(estimate.estimatedDuration, 1)} s`),
         teachMetric('Points', estimate.trajectoryPoints),
       ].join('');
     };
     const replayEstimate = (info) => {
-      const speed = Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 3.0);
-      const alignDuration = Math.min(Math.max(Number(teachReplaySettings.alignDuration), 1.0), 10.0);
+      const speed = Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 1.5);
+      const maxError = Number(info?.max_error);
+      const alignDuration = Math.min(Math.max(Number.isFinite(maxError) && maxError > 0 ? maxError / 0.15 : 3.0, 3.0), 10.0);
       const alignSteps = Math.min(Math.max(Math.round(Number(teachReplaySettings.alignSteps)), 2), 200);
-      const finalHold = Math.min(Math.max(Number(teachReplaySettings.finalHold), 0.0), 5.0);
+      const finalHold = 1.0;
       const useAlign = String(info?.start_band || '').toLowerCase() === 'align';
       const recordDuration = Number(info?.duration_sec);
       const replayDuration = Number.isFinite(recordDuration) ? recordDuration / Math.max(speed, 0.01) : NaN;
@@ -1341,27 +1312,17 @@ HTML_PAGE = r"""<!doctype html>
       };
     };
     const replaySettingsPayload = () => ({
-      replay_speed: Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 3.0),
-      align_duration: Math.min(Math.max(Number(teachReplaySettings.alignDuration), 1.0), 10.0),
+      replay_speed: Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 1.5),
+      align_duration: replayEstimate(latestTeachFileInfo).alignDuration,
       align_steps: Math.min(Math.max(Math.round(Number(teachReplaySettings.alignSteps)), 2), 200),
-      final_hold_sec: Math.min(Math.max(Number(teachReplaySettings.finalHold), 0.0), 5.0),
+      final_hold_sec: 1.0,
     });
     const renderReplayParams = (info) => {
       const estimate = replayEstimate(info);
       return [
-        teachMetric('Hardware Mode', panelConfig.teach?.use_hardware ? 'true' : 'false'),
-        teachMetric('Panel Mode', panelMode),
-        teachMetric('Web Execute', webExecuteEnabled ? 'enabled' : 'disabled'),
         teachMetric('Replay Speed', `${fmt(estimate.speed, 1)} x`),
-        teachMetric('Direct Threshold', `${fmt(Number(panelConfig.teach?.direct_threshold), 4)} rad`),
-        teachMetric('Align Threshold', `${fmt(Number(panelConfig.teach?.align_threshold), 4)} rad`),
-        teachMetric('Align Duration', `${fmt(estimate.alignDuration, 1)} s`),
-        teachMetric('Align Steps', estimate.alignSteps),
-        teachMetric('Final Hold', `${fmt(estimate.finalHold, 1)} s`),
-        teachMetric('Will Align', estimate.useAlign ? 'true' : 'false'),
         teachMetric('Estimated Duration', `${fmt(estimate.estimatedDuration, 1)} s`),
-        teachMetric('Estimated Points', estimate.trajectoryPoints),
-        teachMetric('Execution Gate', isCheckMode ? 'check mode is read-only' : (webExecuteEnabled ? 'real replay button allowed after dry-run' : 'real replay hidden by web_execute_enabled=false'), { wide: true }),
+        teachMetric('Trajectory Points', estimate.trajectoryPoints),
       ].join('');
     };
     const addReplayEvent = (message) => {
@@ -1439,7 +1400,7 @@ HTML_PAGE = r"""<!doctype html>
         const select = document.getElementById('teach-record-select');
         const current = selectedTeachRecordPath || '';
         const records = (payload.records || []).slice(0, 10);
-        select.innerHTML = '<option value="">Default file</option>' +
+        select.innerHTML = '<option value="" disabled selected>Choose recorded file</option>' +
           records.map((record) => `<option value="${escapeHtml(record.path)}">${escapeHtml(record.name || record.path)}</option>`).join('');
         select.value = current;
       } catch (error) {
@@ -1457,8 +1418,8 @@ HTML_PAGE = r"""<!doctype html>
       document.getElementById('teach-dry-run-status').textContent =
         selectedTeachRecordPath
           ? `Selected teach record: ${selectedTeachRecordPath}`
-          : 'Using default record_path. Run dry-run before real replay.';
-      addReplayEvent(selectedTeachRecordPath ? `selected record: ${selectedTeachRecordPath}` : 'selected default record_path');
+          : 'Choose a recorded file before checking trajectory.';
+      addReplayEvent(selectedTeachRecordPath ? `selected record: ${selectedTeachRecordPath}` : 'record selection cleared');
       await refreshTeachFileInfo();
     };
     const previewState = {
@@ -1489,9 +1450,7 @@ HTML_PAGE = r"""<!doctype html>
     };
     const teachReplaySettings = {
       replaySpeed: Number(panelConfig.teach?.replay_speed) || 1.0,
-      alignDuration: Number(panelConfig.teach?.align_duration) || 3.0,
       alignSteps: Number(panelConfig.teach?.align_steps) || 30,
-      finalHold: Number.isFinite(Number(panelConfig.teach?.final_hold_sec)) ? Number(panelConfig.teach.final_hold_sec) : 1.0,
     };
     const clamp = (value, min, max) => Math.min(Math.max(Number(value), min), max);
     const makeSlider = (name, mode = 'live') => {
@@ -2008,7 +1967,8 @@ HTML_PAGE = r"""<!doctype html>
         `File check: ${band}\n` +
         `Max start error: ${fmt(Number(latestTeachFileInfo?.max_error))} rad\n` +
         `Replay speed: ${fmt(Number(teachReplaySettings.replaySpeed), 1)}x\n` +
-        `Final hold: ${fmt(Number(teachReplaySettings.finalHold), 1)}s\n` +
+        `Align: auto (${fmt(replayEstimate(latestTeachFileInfo).alignDuration, 1)}s)\n` +
+        `Final hold: 1.0s\n` +
         `Estimated duration: ${fmt(replayEstimate(latestTeachFileInfo).estimatedDuration, 1)}s\n` +
         `Estimated points: ${replayEstimate(latestTeachFileInfo).trajectoryPoints}\n` +
         `Record: ${latestTeachFileInfo?.path || '-'}`
@@ -2236,9 +2196,7 @@ HTML_PAGE = r"""<!doctype html>
     bindExecuteSetting('execute-speed', 'maxSpeed', 0.1, 1.5);
     bindKeyboardSetting('keyboard-step-number', 'stepRad', keyboardSettings.minStepRad, keyboardSettings.maxStepRad, 3);
     bindKeyboardSetting('keyboard-speed-number', 'maxSpeed', 0.1, executeSettings.maxSpeed, 1);
-    bindTeachReplaySetting('teach-replay-speed', 'teach-replay-speed-number', 'replaySpeed', 0.1, 3.0, 1);
-    bindTeachReplaySetting('teach-align-duration', 'teach-align-duration-number', 'alignDuration', 1.0, 10.0, 1);
-    bindTeachReplaySetting('teach-final-hold', 'teach-final-hold-number', 'finalHold', 0.0, 5.0, 1);
+    bindTeachReplaySetting('teach-replay-speed', 'teach-replay-speed-number', 'replaySpeed', 0.1, 1.5, 1);
     sliderNames.forEach((name) => {
       document.getElementById(`preview-${name}`).addEventListener('input', (event) => {
         const [min, max] = jointLimits[name] || [-3.1416, 3.1416];
@@ -2290,9 +2248,6 @@ HTML_PAGE = r"""<!doctype html>
     document.getElementById('run-teach-replay').addEventListener('click', runTeachReplay);
     document.getElementById('stop-teach-replay').addEventListener('click', stopTeachReplay);
     document.getElementById('load-teach-trajectory').addEventListener('click', loadTeachTrajectory);
-    document.getElementById('teach-trajectory-frame').addEventListener('input', (event) => {
-      previewTeachTrajectoryFrame(event.target.value);
-    });
     document.getElementById('refresh-teach-records').addEventListener('click', async () => {
       await refreshTeachRecords();
       await refreshTeachFileInfo();
@@ -2376,6 +2331,10 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("direct_threshold", 0.01)
         self.declare_parameter("align_threshold", 0.25)
         self.declare_parameter("align_duration", 3.0)
+        self.declare_parameter("align_duration_auto", True)
+        self.declare_parameter("align_target_speed_rad_s", 0.15)
+        self.declare_parameter("align_min_duration", 3.0)
+        self.declare_parameter("align_max_duration", 10.0)
         self.declare_parameter("align_steps", 30)
         self.declare_parameter("replay_speed", 1.0)
         self.declare_parameter("green_jump_rad", 0.03)
@@ -2413,9 +2372,9 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("smoothing_window", 7)
         self.declare_parameter("filter_enabled", True)
         self.declare_parameter("filter_cutoff_hz", 5.0)
-        self.declare_parameter("filter_sample_rate_hz", 50.0)
+        self.declare_parameter("filter_sample_rate_hz", 150.0)
         self.declare_parameter("resample_enabled", True)
-        self.declare_parameter("resample_rate_hz", 100.0)
+        self.declare_parameter("resample_rate_hz", 150.0)
         self.declare_parameter("max_prepared_jump_rad", 0.02)
         self.declare_parameter("use_hardware", False)
         self.declare_parameter("panel_mode", "control")
@@ -2831,6 +2790,10 @@ class TeleopStatusPanelNode(Node):
                 "direct_threshold": float(self.get_parameter("direct_threshold").value),
                 "align_threshold": float(self.get_parameter("align_threshold").value),
                 "align_duration": float(self.get_parameter("align_duration").value),
+                "align_duration_auto": bool(self.get_parameter("align_duration_auto").value),
+                "align_target_speed_rad_s": float(self.get_parameter("align_target_speed_rad_s").value),
+                "align_min_duration": float(self.get_parameter("align_min_duration").value),
+                "align_max_duration": float(self.get_parameter("align_max_duration").value),
                 "align_steps": int(self.get_parameter("align_steps").value),
                 "replay_speed": float(self.get_parameter("replay_speed").value),
                 "green_jump_rad": float(self.get_parameter("green_jump_rad").value),
@@ -3133,16 +3096,16 @@ class TeleopStatusPanelNode(Node):
                 "path": str(path),
                 "points": [],
             }
-        payload = teach_trajectory_preview_to_dict(samples, max_points=max_points)
         prepared = self._prepare_teach_replay_samples(samples)
+        prepared_path = write_prepared_teach_record(path, prepared)
+        preview_samples = load_teach_samples(prepared_path)
+        payload = teach_trajectory_preview_to_dict(preview_samples, max_points=max_points)
         payload["prepared_replay"] = prepared_teach_replay_to_dict(prepared)
-        payload["collision_precheck"] = self._collision_precheck(prepared.samples)
-        payload["prepared_points"] = teach_trajectory_preview_to_dict(
-            prepared.samples,
-            max_points=max_points,
-        )["points"]
+        payload["collision_precheck"] = self._collision_precheck(preview_samples)
         payload["accepted"] = True
-        payload["path"] = str(path)
+        payload["path"] = str(prepared_path)
+        payload["raw_record_path"] = str(path)
+        payload["prepared_record_path"] = str(prepared_path)
         payload["info"] = self._teach_record_info(str(path))
         return payload
 
@@ -3158,11 +3121,15 @@ class TeleopStatusPanelNode(Node):
 
     def _handle_teach_dry_run(self, payload: dict) -> dict:
         record_path = payload.get("record_path")
-        settings = self._teach_replay_settings_from_payload(payload)
         info_payload = self._teach_record_info(str(record_path) if record_path else None)
+        settings = self._teach_replay_settings_from_payload(
+            payload,
+            max_error=info_payload.get("max_error"),
+        )
         quality = info_payload.get("quality") if isinstance(info_payload.get("quality"), dict) else {}
         decision = validate_teach_dry_run_request(str(info_payload.get("start_band", "")))
         prepared_payload = {}
+        prepared_record_path = ""
         collision_precheck = {"state": "unknown", "message": "collision precheck not run"}
         moveit_align = self._moveit_align_summary(info_payload)
         samples_for_precheck = []
@@ -3170,6 +3137,7 @@ class TeleopStatusPanelNode(Node):
         try:
             samples_for_precheck = load_teach_samples(str(info_payload.get("path", "")))
             prepared = self._prepare_teach_replay_samples(samples_for_precheck, settings)
+            prepared_record_path = str(write_prepared_teach_record(str(info_payload.get("path", "")), prepared))
             prepared_payload = prepared_teach_replay_to_dict(prepared)
             moveit_align = self._moveit_align_summary(info_payload, samples_for_precheck, plan=decision.accepted)
             if decision.accepted and str(moveit_align.get("state", "")).lower() not in ("failed", "unavailable", "unknown"):
@@ -3206,6 +3174,7 @@ class TeleopStatusPanelNode(Node):
                 else decision.message
             ),
             "record_path": str(info_payload.get("path", "")),
+            "prepared_record_path": prepared_record_path,
             "start_band": str(info_payload.get("start_band", "")),
             "max_error": info_payload.get("max_error"),
             "worst_joint": str(info_payload.get("worst_joint", "")),
@@ -3240,17 +3209,22 @@ class TeleopStatusPanelNode(Node):
             self._store.update_teleop_status("replay", {"state": "blocked", "message": message})
             return {"accepted": False, "state": "blocked", "message": message}
         record_path = payload.get("record_path")
-        settings = self._teach_replay_settings_from_payload(payload)
         info_payload = self._teach_record_info(str(record_path) if record_path else None)
+        settings = self._teach_replay_settings_from_payload(
+            payload,
+            max_error=info_payload.get("max_error"),
+        )
         quality = info_payload.get("quality") if isinstance(info_payload.get("quality"), dict) else {}
         prepared_payload = {}
         prepared_quality = {}
+        prepared_record_path = ""
         collision_precheck = {"state": "unknown", "message": "collision precheck not run"}
         moveit_align = self._moveit_align_summary(info_payload)
         trajectory = None
         try:
             source_samples = load_teach_samples(str(info_payload.get("path", "")))
             prepared = self._prepare_teach_replay_samples(source_samples, settings)
+            prepared_record_path = str(write_prepared_teach_record(str(info_payload.get("path", "")), prepared))
             prepared_payload = prepared_teach_replay_to_dict(prepared)
             prepared_quality = prepared_payload.get("after_quality") if isinstance(prepared_payload.get("after_quality"), dict) else {}
             moveit_align = self._moveit_align_summary(info_payload, source_samples, plan=False)
@@ -3316,6 +3290,7 @@ class TeleopStatusPanelNode(Node):
                 "state": decision.state,
                 "message": decision.message,
                 "record_path": str(info_payload.get("path", "")),
+                "prepared_record_path": prepared_record_path,
                 "start_band": str(info_payload.get("start_band", "")),
                 "max_error": info_payload.get("max_error"),
                 "quality": quality,
@@ -3347,6 +3322,7 @@ class TeleopStatusPanelNode(Node):
                 "state": "blocked",
                 "message": "failed to build replay trajectory",
                 "record_path": str(info_payload.get("path", "")),
+                "prepared_record_path": prepared_record_path,
                 "start_band": str(info_payload.get("start_band", "")),
                 "moveit_start_align": moveit_align,
                 "collision_precheck": collision_precheck,
@@ -3366,6 +3342,7 @@ class TeleopStatusPanelNode(Node):
             "state": "replaying",
             "message": decision.message,
             "record_path": str(info_payload.get("path", "")),
+            "prepared_record_path": prepared_record_path,
             "start_band": str(info_payload.get("start_band", "")),
             "max_error": info_payload.get("max_error"),
             "worst_joint": str(info_payload.get("worst_joint", "")),
@@ -3573,13 +3550,31 @@ class TeleopStatusPanelNode(Node):
         self._store.update_teleop_status("recording", result)
         return result
 
-    def _teach_replay_settings_from_payload(self, payload: dict) -> dict[str, float | int]:
+    def _auto_align_duration_from_error(self, max_error: float | None) -> float:
+        if bool(self.get_parameter("align_duration_auto").value):
+            return compute_auto_align_duration(
+                max_error,
+                target_speed_rad_s=float(self.get_parameter("align_target_speed_rad_s").value),
+                min_duration_sec=float(self.get_parameter("align_min_duration").value),
+                max_duration_sec=float(self.get_parameter("align_max_duration").value),
+            )
+        return float(self.get_parameter("align_duration").value)
+
+    def _teach_replay_settings_from_payload(
+        self,
+        payload: dict,
+        *,
+        max_error: float | None = None,
+    ) -> dict[str, float | int]:
         values = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+        align_duration = self._auto_align_duration_from_error(max_error)
+        if not bool(self.get_parameter("align_duration_auto").value):
+            align_duration = float(values.get("align_duration", align_duration))
         return normalize_teach_replay_settings(
             replay_speed=float(values.get("replay_speed", self.get_parameter("replay_speed").value)),
-            align_duration=float(values.get("align_duration", self.get_parameter("align_duration").value)),
+            align_duration=align_duration,
             align_steps=int(values.get("align_steps", self.get_parameter("align_steps").value)),
-            final_hold_sec=float(values.get("final_hold_sec", self.get_parameter("final_hold_sec").value)),
+            final_hold_sec=1.0,
         )
 
     def _build_teach_replay_trajectory(self, samples, start_band: str, settings: dict[str, float | int]) -> JointTrajectory:

@@ -20,8 +20,10 @@ def test_rebotarm_app_launch_exposes_simple_modes_and_profiles() -> None:
     assert 'DeclareLaunchArgument("name", default_value="teach_record")' in launch_text
     assert "teleop_system.launch.py" in launch_text
     assert "moveit_hardware.launch.py" in launch_text
-    assert 'executable="TeachRecorderNode"' in launch_text
+    assert 'executable="TeachRecorderNode"' not in launch_text
     assert 'executable="TeachReplayNode"' in launch_text
+    assert "_idle_recorder_node(" not in launch_text
+    assert "controller internal recorder" in launch_text
     assert "mode must be one of: app, teleop, record, check, replay" in launch_text
     assert "def _as_bool" in launch_text
     assert '"dry_run": _as_bool(dry_run)' in launch_text
@@ -35,7 +37,6 @@ def test_rebotarm_app_launch_exposes_simple_modes_and_profiles() -> None:
     assert 'if mode == "app":' in launch_text
     assert "full MoveIt + web teleop workbench" in launch_text
     assert "_keyboard_node(" in launch_text
-    assert "_idle_recorder_node(" in launch_text
     assert 'safe_name = os.path.basename(safe_name.replace("\\\\", "/")) or "teach_record"' in launch_text
     assert 'return f"teleop_records/{safe_name}"' in launch_text
 
@@ -60,6 +61,31 @@ def test_replay_profiles_keep_safe_defaults_in_config() -> None:
     large = profiles["profiles"]["large"]
     assert large["speed"] <= profiles["profiles"]["normal"]["speed"]
     assert large["large_motion_max_speed"] <= large["speed"]
+
+
+def test_teach_recording_uses_higher_sampling_defaults() -> None:
+    teleop_config = yaml.safe_load(
+        _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
+    )
+    params = teleop_config["/**"]["ros__parameters"]
+
+    assert params["sample_rate_hz"] == 150.0
+    assert params["filter_sample_rate_hz"] == 150.0
+    assert params["resample_rate_hz"] == 150.0
+
+    for launch_path in (
+        "src/rebotarm_bringup/launch/moveit_hardware.launch.py",
+        "src/rebotarm_bringup/launch/driver_only.launch.py",
+        "src/rebotarm_bringup/launch/interactive_system.launch.py",
+        "src/rebotarm_bringup/launch/bringup.launch.py",
+        "src/rebotarm_bringup/launch/interactive_basic.launch.py",
+        "src/rebotarm_bringup/launch/teleop_keyboard.launch.py",
+    ):
+        launch_text = _read(launch_path)
+        assert 'DeclareLaunchArgument("joint_state_rate", default_value="200.0")' in launch_text
+
+    driver_params = yaml.safe_load(_read("src/rebotarm_bringup/config/driver_params.yaml"))
+    assert driver_params["reBotArmController"]["ros__parameters"]["joint_state_rate"] == 200.0
 
 
 def test_common_commands_document_recommends_one_entrypoint() -> None:

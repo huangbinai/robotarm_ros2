@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetZero.srv"
   "srv/SetTeachRecordPath.srv"
   "srv/MoveToPoseIK.srv"
+  "srv/ExecutePose.srv"
   "srv/SetGripper.srv"
   "action/ExecuteGrasp.action"
   "action/MoveToPose.action"

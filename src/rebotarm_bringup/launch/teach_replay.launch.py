@@ -37,7 +37,14 @@ def generate_launch_description():
     filter_sample_rate_hz = LaunchConfiguration("filter_sample_rate_hz")
     resample_enabled = LaunchConfiguration("resample_enabled")
     resample_rate_hz = LaunchConfiguration("resample_rate_hz")
+    time_parameterization_method = LaunchConfiguration("time_parameterization_method")
     max_prepared_jump_rad = LaunchConfiguration("max_prepared_jump_rad")
+    replay_monitor_enabled = LaunchConfiguration("replay_monitor_enabled")
+    replay_monitor_period_sec = LaunchConfiguration("replay_monitor_period_sec")
+    replay_monitor_start_grace_sec = LaunchConfiguration("replay_monitor_start_grace_sec")
+    replay_monitor_violation_grace_sec = LaunchConfiguration("replay_monitor_violation_grace_sec")
+    max_tracking_error_rad = LaunchConfiguration("max_tracking_error_rad")
+    max_live_velocity_rad_s = LaunchConfiguration("max_live_velocity_rad_s")
     teleop_config = LaunchConfiguration("teleop_config")
     interactive_share = FindPackageShare("rebotarm_interactive_control")
 
@@ -48,12 +55,12 @@ def generate_launch_description():
             DeclareLaunchArgument("dry_run", default_value="true"),
             DeclareLaunchArgument("speed", default_value="1.0"),
             DeclareLaunchArgument("yellow_max_speed", default_value="0.6"),
-            DeclareLaunchArgument("max_replay_velocity_rad_s", default_value="1.5"),
-            DeclareLaunchArgument("max_replay_acceleration_rad_s2", default_value="3.0"),
-            DeclareLaunchArgument("max_replay_jerk_rad_s3", default_value="8.0"),
+            DeclareLaunchArgument("max_replay_velocity_rad_s", default_value="3.0"),
+            DeclareLaunchArgument("max_replay_acceleration_rad_s2", default_value="5.0"),
+            DeclareLaunchArgument("max_replay_jerk_rad_s3", default_value="20.0"),
             DeclareLaunchArgument("large_motion_span_rad", default_value="0.8"),
             DeclareLaunchArgument("large_motion_total_rad", default_value="2.5"),
-            DeclareLaunchArgument("large_motion_max_speed", default_value="0.4"),
+            DeclareLaunchArgument("large_motion_max_speed", default_value="1.0"),
             DeclareLaunchArgument("start_hold_sec", default_value="0.8"),
             DeclareLaunchArgument("soft_start_duration", default_value="1.0"),
             DeclareLaunchArgument("soft_start_steps", default_value="30"),
@@ -74,7 +81,14 @@ def generate_launch_description():
             DeclareLaunchArgument("filter_sample_rate_hz", default_value="150.0"),
             DeclareLaunchArgument("resample_enabled", default_value="true"),
             DeclareLaunchArgument("resample_rate_hz", default_value="150.0"),
+            DeclareLaunchArgument("time_parameterization_method", default_value="auto"),
             DeclareLaunchArgument("max_prepared_jump_rad", default_value="0.02"),
+            DeclareLaunchArgument("replay_monitor_enabled", default_value="true"),
+            DeclareLaunchArgument("replay_monitor_period_sec", default_value="0.05"),
+            DeclareLaunchArgument("replay_monitor_start_grace_sec", default_value="1.0"),
+            DeclareLaunchArgument("replay_monitor_violation_grace_sec", default_value="0.30"),
+            DeclareLaunchArgument("max_tracking_error_rad", default_value="0.25"),
+            DeclareLaunchArgument("max_live_velocity_rad_s", default_value="3.0"),
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
@@ -120,7 +134,14 @@ def generate_launch_description():
                         "filter_sample_rate_hz": filter_sample_rate_hz,
                         "resample_enabled": resample_enabled,
                         "resample_rate_hz": resample_rate_hz,
+                        "time_parameterization_method": time_parameterization_method,
                         "max_prepared_jump_rad": max_prepared_jump_rad,
+                        "replay_monitor_enabled": replay_monitor_enabled,
+                        "replay_monitor_period_sec": replay_monitor_period_sec,
+                        "replay_monitor_start_grace_sec": replay_monitor_start_grace_sec,
+                        "replay_monitor_violation_grace_sec": replay_monitor_violation_grace_sec,
+                        "max_tracking_error_rad": max_tracking_error_rad,
+                        "max_live_velocity_rad_s": max_live_velocity_rad_s,
                     },
                 ],
             ),

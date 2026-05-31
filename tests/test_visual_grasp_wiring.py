@@ -8,6 +8,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(relative: str) -> str:
+    if relative == "src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py":
+        return "\n".join(
+            [
+                _read_file(relative),
+                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_page.py"),
+                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_http.py"),
+                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_assets/index.html"),
+            ]
+        )
+    return _read_file(relative)
+
+
+def _read_file(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
@@ -25,6 +38,37 @@ def _console_scripts(setup_relative: str) -> set[str]:
             scripts = entry_points.get("console_scripts", [])
             return {script.split("=", 1)[0].strip() for script in scripts}
     raise AssertionError(f"setup() entry_points not found in {setup_relative}")
+
+
+def test_status_panel_page_is_split_from_ros_node():
+    panel_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    page_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_page.py")
+    html_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_assets/index.html")
+    setup_text = _read_file("src/rebotarm_interactive_control/setup.py")
+
+    assert "from .status_panel_page import HTML_PAGE" in panel_text
+    assert "HTML_PAGE = r\"\"\"" not in panel_text
+    assert "importlib.resources" in page_text
+    assert "status_panel_assets" in page_text
+    assert "HTML_PAGE = " in page_text
+    assert "HTML_PAGE = r\"\"\"" not in page_text
+    assert 'id="robot-view"' in html_text
+    assert 'id="arm-safe-home"' in html_text
+    assert '"rebotarm_interactive_control.status_panel_assets": ["index.html"]' in setup_text
+
+
+def test_status_panel_http_server_is_split_from_ros_node():
+    panel_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    http_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_http.py")
+
+    assert "from .status_panel_http import create_status_panel_server" in panel_text
+    assert "BaseHTTPRequestHandler" not in panel_text
+    assert "ThreadingHTTPServer" not in panel_text
+    assert "def do_POST" not in panel_text
+    assert "create_status_panel_server(" in panel_text
+    assert "class StatusPanelRequestHandler" in http_text
+    assert "dispatch_post_request" in http_text
+    assert "encode_sse_event" in http_text
 
 
 def test_rebotarm_vision_exposes_grasp_console_entrypoints():
@@ -152,16 +196,100 @@ def test_status_panel_exposes_arm_service_buttons():
     assert 'id="arm-safe-home"' in panel_text
     assert 'id="arm-enable"' in panel_text
     assert 'id="arm-disable"' in panel_text
-    assert '"/api/arm_safe_home"' in panel_text
-    assert '"/api/arm_enable"' in panel_text
-    assert '"/api/arm_disable"' in panel_text
+    assert 'id="arm-command-state"' in panel_text
     assert 'f"/{self._arm_namespace}/safe_home"' in panel_text
     assert 'f"/{self._arm_namespace}/enable"' in panel_text
     assert 'f"/{self._arm_namespace}/disable"' in panel_text
     assert "def _handle_arm_service_command" in panel_text
+    assert panel_text.count("const runArmCommand = async") == 1
+    assert "statusObj(data.teleop.arm_command).state" in panel_text
     assert "self._store.update_arm_status(" in panel_text
     assert "if command == \"disable\":" in panel_text
     assert "enabled = False" in panel_text
+
+
+def test_status_panel_surfaces_gripper_motor_state():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    motor_body = panel_text.split("const updateMotorRows = (joints) => {", 1)[1].split(
+        "const previewArmTargets = () => {", 1
+    )[0]
+    status_body = panel_text.split("source.addEventListener('status', (event) => {", 1)[1].split(
+        "const replayStatus =", 1
+    )[0]
+
+    assert 'id="gripper-command-state"' in panel_text
+    assert "joint7" in motor_body
+    assert "电机7 / endjoint / gripper" not in motor_body
+    assert "source.gripper = { missing: true }" in motor_body
+    assert "motorOrder" in motor_body
+    assert "statusObj(data.teleop.web_gripper).state" in status_body
+
+
+def test_web_execute_returns_to_live_feedback_after_sending_gripper():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    execute_body = panel_text.split("const executePreviewAndGripper = async () => {", 1)[1].split(
+        "const runTeachDryRun = async () => {", 1
+    )[0]
+
+    assert "const gripperResult = await setGripper({ confirm: false })" in execute_body
+    assert "exitPreviewToLive" in execute_body
+    assert "const exitPreviewToLive =" in panel_text
+    assert "previewState.active = false" in panel_text
+    assert "左侧模型和滑条改为跟随实时反馈" in execute_body
+    assert "updateRobotViewer(previewState.latestJoints)" in panel_text
+
+
+def test_gripper_action_aborts_when_target_is_not_reached():
+    actions_text = _read("src/rebotarmcontroller/rebotarmcontroller/ros_actions.py")
+    gripper_body = actions_text.split("def execute_gripper_command(self, goal_handle):", 1)[1].split(
+        "\n    def ", 1
+    )[0]
+
+    assert "result.reached_goal = self._hardware.gripper_reached_target()" in gripper_body
+    assert "if result.reached_goal:" in gripper_body
+    assert "goal_handle.succeed()" in gripper_body
+    assert "goal_handle.abort()" in gripper_body
+
+
+def test_arm_service_buttons_are_interlocked_during_replay():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    run_body = panel_text.split("const runArmCommand = async (command, label) => {", 1)[1].split(
+        "const bindTeachReplaySetting", 1
+    )[0]
+    status_body = panel_text.split("source.addEventListener('status', (event) => {", 1)[1].split(
+        "attachControlCardToggles();", 1
+    )[0]
+    backend_body = panel_text.split("def _handle_arm_service_command(self, command: str) -> dict:", 1)[1].split(
+        "\n    def _handle_teach_record_start", 1
+    )[0]
+
+    assert "isReplayArmCommandLocked()" in run_body
+    assert "teach replay is still stopping; arm commands are locked" in run_body
+    assert "isReplayArmCommandLocked(replayStatus)" in status_body
+    assert "arm_command_is_replay_locked(replay_state)" in backend_body
+    assert "arm command blocked during teach replay" in backend_body
+    assert "restoreArmButtons" in run_body
+    assert "const result = await response.json()" in run_body
+    assert "should_stop_trajectory_before_arm_command(command)" in backend_body
+    assert "trajectory_stop_requested" in backend_body
+    assert "exitPreviewToLive(`${label}" in run_body
+
+
+def test_safety_stop_allows_operator_recovery_controls():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    lock_body = panel_text.split("const isReplayArmCommandLocked =", 1)[1].split("const addReplayEvent", 1)[0]
+    dry_run_button_body = panel_text.split("const updateTeachDryRunButton = (info) => {", 1)[1].split(
+        "const refreshTeachFileInfo", 1
+    )[0]
+    backend_body = panel_text.split("def _handle_arm_service_command(self, command: str) -> dict:", 1)[1].split(
+        "\n    def _handle_teach_record_start", 1
+    )[0]
+
+    assert "['replaying', 'cancel_requested', 'stop_requested'].includes(state)" in lock_body
+    assert "safety_stop" not in lock_body
+    assert "['replaying', 'cancel_requested', 'safety_stop'].includes(replayState)" in dry_run_button_body
+    assert "arm_command_is_replay_locked(replay_state)" in backend_body
+    assert '"safety_stop"' not in backend_body.split("arm_command_is_replay_locked(replay_state)", 1)[0]
 
 
 def test_status_panel_defaults_cards_collapsed_and_removes_keyboard_sliders():
@@ -186,37 +314,38 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert panel_text.index('id="teach-trajectory-card"') < panel_text.index('id="keyboard-teleop-card"')
     assert panel_text.index('id="robot-view"') < panel_text.index('id="arm-safe-home"')
     assert 'id="teach-record-name"' in panel_text
-    assert "Start Teach" in panel_text
-    assert "Check Trajectory" in panel_text
-    assert ">Replay Prepared<" in panel_text
-    assert panel_text.index("1. Record") < panel_text.index('id="teach-record-name"')
-    assert panel_text.index("2. Check") < panel_text.index('id="teach-record-select"')
-    assert 'Choose recorded file' in panel_text
+    assert "开始示教" in panel_text
+    assert "检查轨迹" in panel_text
+    assert ">回放优化轨迹<" in panel_text
+    assert panel_text.index("1. 录制") < panel_text.index('id="teach-record-name"')
+    assert panel_text.index("2. 检查") < panel_text.index('id="teach-record-select"')
+    assert '选择已录制文件' in panel_text
     assert '<details class="teach-step" id="teach-record-step">' in panel_text
-    assert '<details class="teach-step" id="teach-check-step" open>' in panel_text
-    assert '<details class="teach-step" id="teach-replay-step" open>' in panel_text
-    assert '<option value="" disabled selected>Choose recorded file</option>' in panel_text
+    assert '<details class="teach-step" id="teach-check-step">' in panel_text
+    assert '<details class="teach-step" id="teach-replay-step">' in panel_text
+    assert '<details class="teach-step" id="teach-check-step" open>' not in panel_text
+    assert '<details class="teach-step" id="teach-replay-step" open>' not in panel_text
+    assert '<option value="" disabled selected>选择已录制文件</option>' in panel_text
     assert "#teach-record-select:invalid" in panel_text
     assert 'Default file' not in panel_text
-    assert 'id="teach-replay-speed" type="range" min="0.1" max="1.5"' in panel_text
+    assert 'id="teach-replay-speed" type="range" min="0.1" max="1.0"' in panel_text
     assert 'id="teach-align-duration"' not in panel_text
     assert 'id="teach-final-hold"' not in panel_text
-    assert "Align Time" in panel_text
     assert "Final Hold', '1.0 s'" not in panel_text
-    assert "Auto Align Time" in panel_text
+    assert "自动对齐时间" in panel_text
     replay_params_body = panel_text.split("const renderReplayParams = (info) => {", 1)[1].split("const addReplayEvent", 1)[0]
-    assert "Replay Speed" in replay_params_body
-    assert "Estimated Duration" in replay_params_body
-    assert "Trajectory Points" in replay_params_body
+    assert "回放倍率" in replay_params_body
+    assert "预计时长" in replay_params_body
+    assert "轨迹点" in replay_params_body
     assert "Hardware Mode" not in replay_params_body
     assert "Panel Mode" not in replay_params_body
     assert "Direct Threshold" not in replay_params_body
     assert "Align Threshold" not in replay_params_body
     assert "Execution Gate" not in replay_params_body
     assert "Final Hold" not in replay_params_body
-    assert "轨迹不平滑点" in panel_text
+    assert "轨迹异常点" in panel_text
     assert "不平滑点详情" not in panel_text
-    assert "自动限速平滑后回放" in panel_text
+    assert "安全重定时后可回放" in panel_text
     assert "Teach JSONL Schema" not in panel_text
     assert "Replay Checklist Details" not in panel_text
     assert "Recording / Gravity" not in panel_text
@@ -226,18 +355,66 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert 'id="teach-trajectory-frame"' not in panel_text
     assert "previewTeachTrajectoryFrame" not in panel_text
     assert "Trajectory Limits" not in panel_text
-    assert "Prepared Risk" in panel_text
+    file_info_body = panel_text.split("const renderTeachFileInfo = (info) => {", 1)[1].split(
+        "const renderTeachRecordSummary", 1
+    )[0]
+    assert "Playback Quality" not in file_info_body
+    assert "Trajectory Risk" not in file_info_body
+    assert "轨迹风险" not in file_info_body
+    assert "Direct Threshold" not in file_info_body
+    assert "Align Threshold" not in file_info_body
+    assert "Max Jump" not in file_info_body
+    assert "Max Velocity" not in file_info_body
     precheck_body = panel_text.split("const renderReplayPrecheckSummary = (info) => {", 1)[1].split("const replayEstimate", 1)[0]
-    assert "Playback Quality" in precheck_body
+    assert "回放质量" in precheck_body
     assert "Raw Risk" not in precheck_body
-    assert "Prepared Jump" in precheck_body
-    assert "Prepared Velocity" in precheck_body
+    assert "优化跳变" in precheck_body
+    assert "优化速度" in precheck_body
+    assert "实际倍率" in precheck_body
+    assert "请求倍率" in precheck_body
+    assert "大范围轨迹" in precheck_body
+    assert "优化加速度" in precheck_body
+    assert "优化加加速度" in precheck_body
+    assert "跟踪保护" in precheck_body
+    assert "large_motion?.effective_speed" in precheck_body
+    assert "large_motion?.enabled" in precheck_body
+    assert "lastTeachDryRun?.prepared_replay?.after_quality" in precheck_body
+    assert "lastTeachDryRun?.effective_risk_level" in precheck_body
+    trajectory_body = panel_text.split("const renderTeachTrajectoryDetails = (payload) => {", 1)[1].split("const drawTeachTrajectoryChart", 1)[0]
+    assert "Prepared Risk" not in trajectory_body
+    assert "Max Jump" not in trajectory_body
+    assert "Max Velocity" not in trajectory_body
     assert "effective_risk_level" in precheck_body
     assert "prepared_risk_level" in precheck_body
     assert "prepared_replay?.after_quality" in precheck_body
     assert "teachMetric('Risk'" not in precheck_body
     assert "prepared_record_path" in panel_text
     assert "preparedPoints.length" not in panel_text
+    assert "检查结果有效，可以发送优化后的真实回放轨迹。" in panel_text
+    assert "await refreshTeachFileInfo({ force: true })" in panel_text
+    assert "setHtml('replay-precheck-summary', renderReplayPrecheckSummary(latestTeachFileInfo));" in panel_text
+
+
+def test_teach_replay_dry_run_token_survives_live_start_error_drift():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+
+    button_body = panel_text.split("const updateTeachDryRunButton = (info) => {", 1)[1].split(
+        "const refreshTeachFileInfo", 1
+    )[0]
+    execute_body = panel_text.split("def _handle_teach_replay_execute(self, payload: dict) -> dict:", 1)[1].split(
+        "\n        decision = validate_teach_replay_execute_request", 1
+    )[0]
+
+    assert "lastTeachDryRun?.record_path === info?.path" in button_body
+    assert "lastTeachDryRun?.accepted === true" in button_body
+    assert "dryRunErrorMatches" not in button_body
+    assert "lastTeachDryRun?.max_error" not in button_body
+
+    assert 'str(token.get("record_path", "")) == str(info_payload.get("path", ""))' in execute_body
+    assert 'token.get("settings") == settings' in execute_body
+    assert "error_matches" not in execute_body
+    assert 'token.get("worst_joint"' not in execute_body
+    assert 'token.get("risk_level"' not in execute_body
 
 
 def test_status_panel_throttles_heavy_browser_rendering():
@@ -302,8 +479,8 @@ def test_status_panel_check_mode_is_read_only_for_teach_actions():
     assert 'self.declare_parameter("panel_mode", "control")' in panel_text
     assert '"panel_mode": str(self.get_parameter("panel_mode").value)' in panel_text
     assert "const isCheckMode = panelMode === 'check';" in panel_text
-    assert "Check mode uses automatic system dry-run" in panel_text
-    assert "check mode is read-only" in panel_text
+    assert "检查模式会自动 dry-run" in panel_text
+    assert "检查模式只读" in panel_text
 
 
 def test_status_panel_uses_workbench_cards_for_teleop_ui():
@@ -317,9 +494,9 @@ def test_status_panel_uses_workbench_cards_for_teleop_ui():
     assert "keyboard-teleop-card" in panel_text
     assert "teach-trajectory-card" in panel_text
     assert "motor-state-card" in panel_text
-    assert "No key input" in panel_text
-    assert "No valid teach trajectory" in panel_text
-    assert "Execute Joints + Gripper" in panel_text
+    assert "无按键输入" in panel_text
+    assert "暂无有效示教轨迹" in panel_text
+    assert "执行关节 + 夹爪" in panel_text
     assert "/api/keyboard_enable" in panel_text
     assert "/api/keyboard_disable" in panel_text
     assert "/api/keyboard_key" in panel_text
@@ -377,6 +554,86 @@ def test_teach_replay_prepared_pipeline_defaults_to_150hz():
     assert 'self.declare_parameter("resample_rate_hz", 150.0)' in panel_text
     assert "filter_sample_rate_hz: 150.0" in profiles_text
     assert "resample_rate_hz: 150.0" in profiles_text
+    assert "time_parameterization_method: auto" in profiles_text
+    assert 'self.declare_parameter("time_parameterization_method", "auto")' in replay_node_text
+    assert 'self.declare_parameter("time_parameterization_method", "auto")' in panel_text
+
+
+def test_moveit_ompl_uses_ruckig_response_adapter_with_jerk_limits():
+    ompl_text = _read("src/rebotarm_moveit_config/config/ompl_planning.yaml")
+    joint_limits_text = _read("src/rebotarm_moveit_config/config/joint_limits.yaml")
+    assert "default_planning_response_adapters/AddTimeOptimalParameterization" in ompl_text
+    assert "default_planning_response_adapters/AddRuckigTrajectorySmoothing" in ompl_text
+    assert ompl_text.index("default_planning_response_adapters/AddRuckigTrajectorySmoothing") < ompl_text.index(
+        "default_planning_response_adapters/AddTimeOptimalParameterization"
+    )
+    assert "has_jerk_limits: true" in joint_limits_text
+    assert "max_jerk: 20.0" in joint_limits_text
+
+
+def test_teach_replay_executes_prepared_retimed_points_directly():
+    replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
+
+    assert "def _append_prepared_replay_points(" in replay_node_text
+    assert "for retimed in self._prepared_replay.retimed_points:" in replay_node_text
+    assert "self._append_prepared_replay_points(trajectory, elapsed=elapsed)" in replay_node_text
+
+
+def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
+    replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    config_text = _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
+
+    for text in (replay_node_text, panel_text):
+        assert "evaluate_replay_tracking" in text
+        assert 'self.declare_parameter("replay_monitor_enabled", True)' in text
+        assert 'self.declare_parameter("max_tracking_error_rad", 0.25)' in text
+        assert 'self.declare_parameter("max_live_velocity_rad_s", 3.0)' in text
+        assert "def _check_active_replay_tracking" in text
+        assert "self._request_controller_trajectory_stop" in text
+        assert "tracking_error" in text
+        assert "live_velocity" in text
+
+    assert "replay_monitor_enabled: true" in config_text
+    assert "max_tracking_error_rad: 0.25" in config_text
+    assert "max_live_velocity_rad_s: 3.0" in config_text
+
+
+def test_status_panel_preserves_runtime_safety_stop_result_reason():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    result_body = panel_text.split("def _on_teach_replay_result", 1)[1].split(
+        "\n    def _check_active_replay_tracking", 1
+    )[0]
+
+    assert "previous_replay = self._store.snapshot().teleop.get(\"replay\", {})" in result_body
+    assert "self._teach_replay_monitor_stop_requested" in result_body
+    assert "state = \"safety_stop\"" in result_body
+    assert "action canceled after runtime monitor stop" in result_body
+
+
+def test_status_panel_surfaces_time_parameterization_summary():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+
+    assert "时间参数化" in panel_text
+    assert "time_parameterization?.used_method" in panel_text
+    assert "MoveIt 对齐" in panel_text
+
+
+def test_teach_trajectory_curve_card_shows_prepared_curve_without_duplicate_check_metrics():
+    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    details_body = panel_text.split("const renderTeachTrajectoryDetails = (payload) => {", 1)[1].split(
+        "const drawTeachTrajectoryChart = (payload) => {", 1
+    )[0]
+    backend_body = panel_text.split("def _teach_trajectory(", 1)[1].split("\n    def _teach_records", 1)[0]
+
+    assert "曲线来源" in details_body
+    assert "优化轨迹点" in details_body
+    assert "原始文件" in details_body
+    assert "Prepared Risk" not in details_body
+    assert "Max Jump" not in details_body
+    assert "Max Velocity" not in details_body
+    assert 'payload["curve_source"] = "prepared"' in backend_body
+    assert "preview_samples = load_teach_samples(prepared_path)" in backend_body
 
 
 def test_moveit_demo_standalone_publishes_fake_visual_joint_state_source():
@@ -397,6 +654,7 @@ def test_controller_shutdown_runs_safe_home_before_disable_by_default():
     hardware_text = _read("src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py")
 
     assert 'self.declare_parameter("shutdown_safe_home", True)' in controller_text
+    assert "and self.hardware.enabled" in controller_text
     assert "self.hardware.endpos_ctrl.safe_home()" in controller_text
     assert "self.hardware.shutdown()" in controller_text
     assert "def connected(self) -> bool:" in hardware_text

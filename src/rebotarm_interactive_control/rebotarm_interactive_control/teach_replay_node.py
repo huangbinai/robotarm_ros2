@@ -31,6 +31,7 @@ from .teach_recording import (
     teach_trajectory_quality_to_dict,
     write_prepared_teach_record,
 )
+from .trajectory_safety_monitor import evaluate_replay_tracking
 from .moveit_planner import MoveItMotionPlanner
 
 
@@ -75,12 +76,16 @@ class TeachReplayNode(Node):
         self.declare_parameter("green_jump_rad", 0.03)
         self.declare_parameter("yellow_jump_rad", 0.05)
         self.declare_parameter("yellow_max_speed", 0.6)
-        self.declare_parameter("max_replay_velocity_rad_s", 1.5)
-        self.declare_parameter("max_replay_acceleration_rad_s2", 3.0)
-        self.declare_parameter("max_replay_jerk_rad_s3", 8.0)
+        self.declare_parameter("max_replay_velocity_rad_s", 3.0)
+        self.declare_parameter(
+            "max_replay_velocity_rad_s_by_joint",
+            [3.0, 3.0, 3.0, 1.8, 1.8, 1.8],
+        )
+        self.declare_parameter("max_replay_acceleration_rad_s2", 5.0)
+        self.declare_parameter("max_replay_jerk_rad_s3", 20.0)
         self.declare_parameter("large_motion_span_rad", 0.8)
         self.declare_parameter("large_motion_total_rad", 2.5)
-        self.declare_parameter("large_motion_max_speed", 0.4)
+        self.declare_parameter("large_motion_max_speed", 1.0)
         self.declare_parameter("start_hold_sec", 0.8)
         self.declare_parameter("soft_start_duration", 1.0)
         self.declare_parameter("soft_start_steps", 30)
@@ -110,7 +115,14 @@ class TeachReplayNode(Node):
         self.declare_parameter("filter_sample_rate_hz", 150.0)
         self.declare_parameter("resample_enabled", True)
         self.declare_parameter("resample_rate_hz", 150.0)
+        self.declare_parameter("time_parameterization_method", "auto")
         self.declare_parameter("max_prepared_jump_rad", 0.02)
+        self.declare_parameter("replay_monitor_enabled", True)
+        self.declare_parameter("replay_monitor_period_sec", 0.05)
+        self.declare_parameter("replay_monitor_start_grace_sec", 1.0)
+        self.declare_parameter("replay_monitor_violation_grace_sec", 0.30)
+        self.declare_parameter("max_tracking_error_rad", 0.25)
+        self.declare_parameter("max_live_velocity_rad_s", 3.0)
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._record_path = Path(str(self.get_parameter("record_path").value))
         self._dry_run = bool(self.get_parameter("dry_run").value)
@@ -125,6 +137,10 @@ class TeachReplayNode(Node):
         self._prepared_replay = None
         self._prepared_record_path: Path | None = None
         self._goal_handle = None
+        self._active_replay_trajectory: JointTrajectory | None = None
+        self._active_replay_started_at: float | None = None
+        self._tracking_violation_since: float | None = None
+        self._monitor_stop_requested = False
         self._stop_requested = False
         self._stop_reason = ""
         self._moveit_align_message = ""
@@ -178,7 +194,18 @@ class TeachReplayNode(Node):
             sensor_qos,
         )
         self.create_timer(0.2, self._maybe_start)
+        self.create_timer(
+            max(float(self.get_parameter("replay_monitor_period_sec").value), 0.02),
+            self._check_active_replay_tracking,
+        )
         self._publish_status("ready", f"waiting to replay {self._record_path}")
+
+    def _max_replay_velocity_limits(self, joint_names: tuple[str, ...]):
+        scalar_limit = float(self.get_parameter("max_replay_velocity_rad_s").value)
+        values = self.get_parameter("max_replay_velocity_rad_s_by_joint").value
+        if isinstance(values, (list, tuple)) and len(values) == len(joint_names):
+            return tuple(float(value) for value in values)
+        return scalar_limit
 
     def _auto_align_duration_for_positions(
         self,
@@ -259,7 +286,7 @@ class TeachReplayNode(Node):
             self._samples,
             green_jump_rad=float(self.get_parameter("green_jump_rad").value),
             yellow_jump_rad=float(self.get_parameter("yellow_jump_rad").value),
-            max_velocity_rad_s=float(self.get_parameter("max_replay_velocity_rad_s").value),
+            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(self._samples[0].joint_names)),
             max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
             max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
         )
@@ -274,9 +301,10 @@ class TeachReplayNode(Node):
             resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
             retime_enabled=True,
             replay_speed=float(self.get_parameter("speed").value),
-            max_velocity_rad_s=float(self.get_parameter("max_replay_velocity_rad_s").value),
+            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(self._samples[0].joint_names)),
             max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
             max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
+            time_parameterization_method=str(self.get_parameter("time_parameterization_method").value),
             large_motion_span_rad=float(self.get_parameter("large_motion_span_rad").value),
             large_motion_total_rad=float(self.get_parameter("large_motion_total_rad").value),
             large_motion_max_speed=float(self.get_parameter("large_motion_max_speed").value),
@@ -390,9 +418,9 @@ class TeachReplayNode(Node):
         goal = FollowJointTrajectory.Goal()
         goal.trajectory = trajectory
         future = self._action_client.send_goal_async(goal)
-        future.add_done_callback(self._on_goal_response)
+        future.add_done_callback(lambda fut: self._on_goal_response(fut, trajectory))
 
-    def _on_goal_response(self, future) -> None:
+    def _on_goal_response(self, future, trajectory: JointTrajectory) -> None:
         try:
             goal_handle = future.result()
         except Exception as exc:
@@ -402,6 +430,10 @@ class TeachReplayNode(Node):
             self._publish_status("rejected", "replay trajectory goal rejected")
             return
         self._goal_handle = goal_handle
+        self._active_replay_trajectory = trajectory
+        self._active_replay_started_at = time.monotonic()
+        self._tracking_violation_since = None
+        self._monitor_stop_requested = False
         self._publish_status("replaying", "trajectory goal accepted")
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._on_replay_result)
@@ -428,6 +460,10 @@ class TeachReplayNode(Node):
             f"replay result status={status}, error_code={error_code}: {error_string}",
         )
         self._goal_handle = None
+        self._active_replay_trajectory = None
+        self._active_replay_started_at = None
+        self._tracking_violation_since = None
+        self._monitor_stop_requested = False
 
     def request_stop(self, reason: str) -> None:
         self._stop_requested = True
@@ -453,6 +489,47 @@ class TeachReplayNode(Node):
             with suppress(Exception, KeyboardInterrupt):
                 rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=timeout_sec)
         return stop_requested or cancel_requested
+
+    def _check_active_replay_tracking(self) -> None:
+        if not bool(self.get_parameter("replay_monitor_enabled").value):
+            return
+        if self._dry_run or self._goal_handle is None or self._active_replay_trajectory is None:
+            return
+        if self._latest_joint_state is None or self._active_replay_started_at is None:
+            return
+        now = time.monotonic()
+        elapsed = now - self._active_replay_started_at
+        if elapsed < float(self.get_parameter("replay_monitor_start_grace_sec").value):
+            return
+        result = evaluate_replay_tracking(
+            self._active_replay_trajectory,
+            joint_names=tuple(self._latest_joint_state.name),
+            positions=tuple(float(v) for v in self._latest_joint_state.position),
+            velocities=tuple(float(v) for v in self._latest_joint_state.velocity),
+            elapsed_sec=elapsed,
+            max_tracking_error_rad=float(self.get_parameter("max_tracking_error_rad").value),
+            max_live_velocity_rad_s=float(self.get_parameter("max_live_velocity_rad_s").value),
+        )
+        if result.ok:
+            self._tracking_violation_since = None
+            return
+        if self._tracking_violation_since is None:
+            self._tracking_violation_since = now
+            return
+        if now - self._tracking_violation_since < float(self.get_parameter("replay_monitor_violation_grace_sec").value):
+            return
+        if self._monitor_stop_requested:
+            return
+        self._monitor_stop_requested = True
+        self._publish_status(
+            "safety_stop",
+            f"runtime replay monitor stopped trajectory: {result.message}",
+        )
+        self._request_controller_trajectory_stop(timeout_sec=0.2)
+        try:
+            self._goal_handle.cancel_goal_async()
+        except Exception as exc:
+            self._publish_status("failed", f"failed to cancel after runtime monitor stop: {exc}")
 
     def _request_controller_trajectory_stop(self, *, timeout_sec: float) -> bool:
         try:
@@ -499,28 +576,31 @@ class TeachReplayNode(Node):
                 trajectory.points.append(point)
             if start_points:
                 elapsed = start_points[-1].time_from_start
-        speed = max(float(self.get_parameter("speed").value), 0.01)
-        if self._prepared_replay is not None:
-            speed = max(float(self._prepared_replay.effective_replay_speed), 0.01)
-        replay_quality = self._prepared_replay.after_quality if self._prepared_replay is not None else self._quality
-        if replay_quality is not None and replay_quality.risk_level == "yellow":
-            speed = min(speed, float(self.get_parameter("yellow_max_speed").value))
-        replay_samples = self._prepared_replay.samples if self._prepared_replay is not None else self._samples
-        for retimed in retime_teach_samples(
-            replay_samples,
-            replay_speed=speed,
-            max_velocity_rad_s=float(self.get_parameter("max_replay_velocity_rad_s").value),
-            max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-            initial_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
-            boundary_zero_velocity=True,
-        ):
-            point = JointTrajectoryPoint()
-            point.positions = [float(v) for v in retimed.positions]
-            if retimed.velocities:
-                point.velocities = [float(v) for v in retimed.velocities]
-            _set_duration(point.time_from_start, elapsed + retimed.time_from_start)
-            trajectory.points.append(point)
+        if self._prepared_replay is not None and self._prepared_replay.retimed_points:
+            self._append_prepared_replay_points(trajectory, elapsed=elapsed)
+        else:
+            speed = max(float(self.get_parameter("speed").value), 0.01)
+            if self._prepared_replay is not None:
+                speed = max(float(self._prepared_replay.effective_replay_speed), 0.01)
+            replay_quality = self._prepared_replay.after_quality if self._prepared_replay is not None else self._quality
+            if replay_quality is not None and replay_quality.risk_level == "yellow":
+                speed = min(speed, float(self.get_parameter("yellow_max_speed").value))
+            replay_samples = self._prepared_replay.samples if self._prepared_replay is not None else self._samples
+            for retimed in retime_teach_samples(
+                replay_samples,
+                replay_speed=speed,
+                max_velocity_rad_s=self._max_replay_velocity_limits(tuple(replay_samples[0].joint_names)),
+                max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
+                max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
+                initial_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
+                boundary_zero_velocity=True,
+            ):
+                point = JointTrajectoryPoint()
+                point.positions = [float(v) for v in retimed.positions]
+                if retimed.velocities:
+                    point.velocities = [float(v) for v in retimed.velocities]
+                _set_duration(point.time_from_start, elapsed + retimed.time_from_start)
+                trajectory.points.append(point)
         self._append_final_hold(trajectory)
         return trajectory
 
@@ -631,6 +711,25 @@ class TeachReplayNode(Node):
         _set_duration(hold_point.time_from_start, last_time + final_hold)
         trajectory.points.append(hold_point)
 
+    def _append_prepared_replay_points(
+        self,
+        trajectory: JointTrajectory,
+        *,
+        elapsed: float,
+    ) -> None:
+        if self._prepared_replay is None:
+            return
+        initial_delay = max(float(self.get_parameter("initial_replay_delay_sec").value), 0.0)
+        for retimed in self._prepared_replay.retimed_points:
+            point = JointTrajectoryPoint()
+            point.positions = [float(v) for v in retimed.positions]
+            if retimed.velocities:
+                point.velocities = [float(v) for v in retimed.velocities]
+            else:
+                point.velocities = [0.0 for _ in point.positions]
+            _set_duration(point.time_from_start, elapsed + initial_delay + float(retimed.time_from_start))
+            trajectory.points.append(point)
+
     def _append_moveit_start_alignment(
         self,
         trajectory: JointTrajectory,
@@ -728,6 +827,8 @@ class TeachReplayNode(Node):
             "filter_enabled": bool(self.get_parameter("filter_enabled").value),
             "filter_cutoff_hz": float(self.get_parameter("filter_cutoff_hz").value),
             "filter_sample_rate_hz": float(self.get_parameter("filter_sample_rate_hz").value),
+            "resample_rate_hz": float(self.get_parameter("resample_rate_hz").value),
+            "time_parameterization_method": str(self.get_parameter("time_parameterization_method").value),
         }
         if self._quality is not None:
             payload["quality"] = teach_trajectory_quality_to_dict(self._quality)

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from .trajectory_time_parameterization import parameterize_teach_samples
+
 
 @dataclass(frozen=True)
 class TeachSample:
@@ -79,7 +81,10 @@ class PreparedTeachReplay:
     total_joint_motion_rad: float = 0.0
     requested_replay_speed: float = 1.0
     effective_replay_speed: float = 1.0
-    large_motion_max_speed: float = 0.4
+    large_motion_max_speed: float = 1.0
+    time_parameterization_requested_method: str = "auto"
+    time_parameterization_used_method: str = "current_jerk_retime"
+    time_parameterization_message: str = ""
 
     @property
     def before_quality(self) -> TeachTrajectoryQuality:
@@ -406,12 +411,35 @@ def _motion_scope(samples: list[TeachSample]) -> tuple[float, float]:
     return max_span, total
 
 
+def _velocity_limits_for_joints(
+    max_velocity_rad_s,
+    joint_names: tuple[str, ...],
+) -> tuple[float, ...]:
+    if isinstance(max_velocity_rad_s, dict):
+        fallback = float(max_velocity_rad_s.get("*", 2.0))
+        return tuple(max(float(max_velocity_rad_s.get(name, fallback)), 0.01) for name in joint_names)
+    if isinstance(max_velocity_rad_s, (list, tuple)):
+        if len(max_velocity_rad_s) != len(joint_names):
+            raise ValueError("max_velocity_rad_s length must match joint_names")
+        return tuple(max(float(value), 0.01) for value in max_velocity_rad_s)
+    return tuple(max(float(max_velocity_rad_s), 0.01) for _ in joint_names)
+
+
+def _velocity_limit_summary(max_velocity_rad_s) -> float:
+    if isinstance(max_velocity_rad_s, dict):
+        values = [float(value) for value in max_velocity_rad_s.values()]
+        return max(values, default=0.0)
+    if isinstance(max_velocity_rad_s, (list, tuple)):
+        return max((float(value) for value in max_velocity_rad_s), default=0.0)
+    return float(max_velocity_rad_s)
+
+
 def analyze_teach_trajectory(
     samples: list[TeachSample],
     *,
     green_jump_rad: float = 0.03,
     yellow_jump_rad: float = 0.05,
-    max_velocity_rad_s: float = 1.5,
+    max_velocity_rad_s: float = 2.0,
     max_acceleration_rad_s2: float = 999.0,
     max_jerk_rad_s3: float = 999.0,
 ) -> TeachTrajectoryQuality:
@@ -440,12 +468,13 @@ def analyze_teach_trajectory(
             events=(),
             green_jump_rad=float(green_jump_rad),
             yellow_jump_rad=float(yellow_jump_rad),
-            velocity_limit_rad_s=float(max_velocity_rad_s),
+            velocity_limit_rad_s=_velocity_limit_summary(max_velocity_rad_s),
             acceleration_limit_rad_s2=float(max_acceleration_rad_s2),
             jerk_limit_rad_s3=float(max_jerk_rad_s3),
         )
     expected_joints = samples[0].joint_names
     expected_len = len(expected_joints)
+    velocity_limits = _velocity_limits_for_joints(max_velocity_rad_s, expected_joints)
     previous = samples[0]
     previous_velocities = tuple(0.0 for _ in range(expected_len))
     previous_accelerations = tuple(0.0 for _ in range(expected_len))
@@ -504,7 +533,8 @@ def analyze_teach_trajectory(
                 message = f"{joint_name} jump {delta:.4f} rad at sample {index}"
                 if risk_level != "red":
                     risk_level = "yellow"
-            if velocity is not None and velocity > float(max_velocity_rad_s):
+            velocity_limit = velocity_limits[joint_index]
+            if velocity is not None and velocity > velocity_limit:
                 velocity_message = f"{joint_name} velocity {velocity:.4f} rad/s at sample {index}"
                 if not message:
                     message = velocity_message
@@ -566,7 +596,7 @@ def analyze_teach_trajectory(
         events=tuple(events),
         green_jump_rad=float(green_jump_rad),
         yellow_jump_rad=float(yellow_jump_rad),
-        velocity_limit_rad_s=float(max_velocity_rad_s),
+        velocity_limit_rad_s=max(velocity_limits, default=0.0),
         acceleration_limit_rad_s2=float(max_acceleration_rad_s2),
         jerk_limit_rad_s3=float(max_jerk_rad_s3),
     )
@@ -626,7 +656,7 @@ def retime_teach_samples(
         if len(sample.positions) != expected_len:
             raise ValueError(f"positions length mismatch at sample {index}")
     speed = max(float(replay_speed), 0.01)
-    velocity_limit = max(float(max_velocity_rad_s), 0.01)
+    velocity_limits = _velocity_limits_for_joints(max_velocity_rad_s, expected_joints)
     acceleration_limit = max(float(max_acceleration_rad_s2), 0.01)
     jerk_limit = max(float(max_jerk_rad_s3), 0.01)
     zero_velocity = tuple(0.0 for _ in samples[0].positions)
@@ -644,7 +674,13 @@ def retime_teach_samples(
     elapsed = retimed[0].time_from_start
     for index, sample in enumerate(samples[1:], start=1):
         recorded_dt = max(0.0, float(sample.stamp) - float(previous.stamp)) / speed
-        min_velocity_dt = _max_position_delta(sample.positions, previous.positions) / velocity_limit
+        min_velocity_dt = max(
+            (
+                abs(float(current) - float(last)) / velocity_limit
+                for current, last, velocity_limit in zip(sample.positions, previous.positions, velocity_limits)
+            ),
+            default=0.0,
+        )
         dt = max(recorded_dt, min_velocity_dt, 0.001)
         delta = tuple(
             float(current) - float(last)
@@ -894,19 +930,20 @@ def prepare_teach_replay_samples(
     retime_enabled: bool = False,
     replay_speed: float = 1.0,
     max_velocity_rad_s: float = 1.5,
-    max_acceleration_rad_s2: float = 3.0,
-    max_jerk_rad_s3: float = 8.0,
+    max_acceleration_rad_s2: float = 5.0,
+    max_jerk_rad_s3: float = 20.0,
+    time_parameterization_method: str = "auto",
     large_motion_span_rad: float = 0.8,
     large_motion_total_rad: float = 2.5,
-    large_motion_max_speed: float = 0.4,
+    large_motion_max_speed: float = 1.0,
 ) -> PreparedTeachReplay:
     max_joint_span, total_joint_motion = _motion_scope(samples)
-    requested_speed = max(float(replay_speed), 0.01)
+    requested_speed = min(max(float(replay_speed), 0.01), 1.0)
     large_motion = (
         max_joint_span >= float(large_motion_span_rad)
         or total_joint_motion >= float(large_motion_total_rad)
     )
-    effective_speed = min(requested_speed, max(float(large_motion_max_speed), 0.01)) if large_motion else requested_speed
+    effective_speed = requested_speed
     raw_quality = analyze_teach_trajectory(
         samples,
         max_velocity_rad_s=max_velocity_rad_s,
@@ -939,8 +976,10 @@ def prepare_teach_replay_samples(
         resample_applied = len(prepared) != len(samples)
     retimed_points: list[RetimedTeachPoint] = []
     if retime_enabled and not _has_structural_teach_anomaly(filtered_quality):
-        retimed_points = retime_teach_samples(
+        time_parameterization = parameterize_teach_samples(
             prepared,
+            method=time_parameterization_method,
+            fallback_retime=retime_teach_samples,
             replay_speed=effective_speed,
             max_velocity_rad_s=max_velocity_rad_s,
             max_acceleration_rad_s2=max_acceleration_rad_s2,
@@ -948,7 +987,10 @@ def prepare_teach_replay_samples(
             initial_delay_sec=0.0,
             boundary_zero_velocity=True,
         )
+        retimed_points = time_parameterization.points
         retime_applied = len(retimed_points) > 0
+    else:
+        time_parameterization = None
     retimed_samples = [
         TeachSample(
             stamp=point.time_from_start,
@@ -987,6 +1029,15 @@ def prepare_teach_replay_samples(
         requested_replay_speed=requested_speed,
         effective_replay_speed=effective_speed,
         large_motion_max_speed=max(float(large_motion_max_speed), 0.01),
+        time_parameterization_requested_method=(
+            time_parameterization.requested_method if time_parameterization is not None else str(time_parameterization_method or "auto")
+        ),
+        time_parameterization_used_method=(
+            time_parameterization.used_method if time_parameterization is not None else "none"
+        ),
+        time_parameterization_message=(
+            time_parameterization.message if time_parameterization is not None else "retime disabled"
+        ),
     )
 
 
@@ -1002,6 +1053,11 @@ def prepared_teach_replay_to_dict(prepared: PreparedTeachReplay) -> dict:
         "resample_rate_hz": prepared.resample_rate_hz,
         "prepared_samples": len(prepared.samples),
         "retimed_points": len(prepared.retimed_points),
+        "time_parameterization": {
+            "requested_method": prepared.time_parameterization_requested_method,
+            "used_method": prepared.time_parameterization_used_method,
+            "message": prepared.time_parameterization_message,
+        },
         "before_quality": teach_trajectory_quality_to_dict(prepared.before_quality),
         "after_quality": teach_trajectory_quality_to_dict(prepared.after_quality),
         "raw_quality": teach_trajectory_quality_to_dict(prepared.raw_quality),
@@ -1300,9 +1356,9 @@ def validate_teach_replay_execute_request(
     prepared_max_jump_rad: float | None = None,
     max_prepared_jump_rad: float = 0.02,
     retimed_max_acceleration_rad_s2: float | None = None,
-    max_replay_acceleration_rad_s2: float = 3.0,
+    max_replay_acceleration_rad_s2: float = 5.0,
     retimed_max_jerk_rad_s3: float | None = None,
-    max_replay_jerk_rad_s3: float = 8.0,
+    max_replay_jerk_rad_s3: float = 20.0,
     replay_speed: float = 1.0,
     yellow_max_speed: float = 0.6,
 ) -> TeachDryRunDecision:
@@ -1402,7 +1458,7 @@ def normalize_teach_replay_settings(
     final_hold_sec: float = 1.0,
 ) -> dict[str, float | int]:
     return {
-        "replay_speed": min(max(float(replay_speed), 0.1), 1.5),
+        "replay_speed": min(max(float(replay_speed), 0.1), 1.0),
         "align_duration": min(max(float(align_duration), 1.0), 10.0),
         "align_steps": min(max(int(align_steps), 2), 200),
         "final_hold_sec": 1.0,

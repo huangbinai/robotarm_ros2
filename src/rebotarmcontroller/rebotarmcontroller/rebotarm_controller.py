@@ -92,7 +92,11 @@ class reBotArmController(Node):
 
     def shutdown(self) -> None:
         self.teach_recorder.shutdown()
-        if bool(self.get_parameter("shutdown_safe_home").value) and self.hardware.connected:
+        if (
+            bool(self.get_parameter("shutdown_safe_home").value)
+            and self.hardware.connected
+            and self.hardware.enabled
+        ):
             try:
                 self.get_logger().warn("shutdown requested: running safe_home before disable")
                 self.hardware.stop_gravity_compensation()

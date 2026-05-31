@@ -5,12 +5,13 @@ profiles:
     dry_run: false
     speed: 0.2
     yellow_max_speed: 0.6
-    max_replay_velocity_rad_s: 1.5
-    max_replay_acceleration_rad_s2: 3.0
-    max_replay_jerk_rad_s3: 8.0
+    max_replay_velocity_rad_s: 3.0
+    max_replay_velocity_rad_s_by_joint: [3.0, 3.0, 3.0, 1.8, 1.8, 1.8]
+    max_replay_acceleration_rad_s2: 5.0
+    max_replay_jerk_rad_s3: 20.0
     large_motion_span_rad: 0.8
     large_motion_total_rad: 2.5
-    large_motion_max_speed: 0.2
+    large_motion_max_speed: 1.0
     start_hold_sec: 0.8
     soft_start_duration: 1.0
     soft_start_steps: 30
@@ -29,18 +30,26 @@ profiles:
     filter_sample_rate_hz: 150.0
     resample_enabled: true
     resample_rate_hz: 150.0
+    time_parameterization_method: auto
     max_prepared_jump_rad: 0.02
+    replay_monitor_enabled: true
+    replay_monitor_period_sec: 0.05
+    replay_monitor_start_grace_sec: 1.0
+    replay_monitor_violation_grace_sec: 0.30
+    max_tracking_error_rad: 0.25
+    max_live_velocity_rad_s: 3.0
 
   normal:
     dry_run: false
     speed: 0.4
     yellow_max_speed: 0.6
-    max_replay_velocity_rad_s: 1.5
-    max_replay_acceleration_rad_s2: 3.0
-    max_replay_jerk_rad_s3: 8.0
+    max_replay_velocity_rad_s: 3.0
+    max_replay_velocity_rad_s_by_joint: [3.0, 3.0, 3.0, 1.8, 1.8, 1.8]
+    max_replay_acceleration_rad_s2: 5.0
+    max_replay_jerk_rad_s3: 20.0
     large_motion_span_rad: 0.8
     large_motion_total_rad: 2.5
-    large_motion_max_speed: 0.35
+    large_motion_max_speed: 1.0
     start_hold_sec: 0.8
     soft_start_duration: 1.0
     soft_start_steps: 30
@@ -59,18 +68,26 @@ profiles:
     filter_sample_rate_hz: 150.0
     resample_enabled: true
     resample_rate_hz: 150.0
+    time_parameterization_method: auto
     max_prepared_jump_rad: 0.02
+    replay_monitor_enabled: true
+    replay_monitor_period_sec: 0.05
+    replay_monitor_start_grace_sec: 1.0
+    replay_monitor_violation_grace_sec: 0.30
+    max_tracking_error_rad: 0.25
+    max_live_velocity_rad_s: 3.0
 
   large:
     dry_run: false
     speed: 0.25
     yellow_max_speed: 0.6
-    max_replay_velocity_rad_s: 1.2
-    max_replay_acceleration_rad_s2: 2.2
-    max_replay_jerk_rad_s3: 6.0
+    max_replay_velocity_rad_s: 3.0
+    max_replay_velocity_rad_s_by_joint: [3.0, 3.0, 3.0, 1.8, 1.8, 1.8]
+    max_replay_acceleration_rad_s2: 5.0
+    max_replay_jerk_rad_s3: 20.0
     large_motion_span_rad: 0.6
     large_motion_total_rad: 1.8
-    large_motion_max_speed: 0.2
+    large_motion_max_speed: 1.0
     start_hold_sec: 1.0
     soft_start_duration: 1.5
     soft_start_steps: 45
@@ -89,4 +106,11 @@ profiles:
     filter_sample_rate_hz: 150.0
     resample_enabled: true
     resample_rate_hz: 150.0
+    time_parameterization_method: auto
     max_prepared_jump_rad: 0.018
+    replay_monitor_enabled: true
+    replay_monitor_period_sec: 0.05
+    replay_monitor_start_grace_sec: 1.0
+    replay_monitor_violation_grace_sec: 0.35
+    max_tracking_error_rad: 0.25
+    max_live_velocity_rad_s: 2.6

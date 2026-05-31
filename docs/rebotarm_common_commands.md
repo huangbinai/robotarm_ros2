@@ -378,3 +378,87 @@ python3 -m pytest tests/test_rebotarm_app_launch.py tests/test_teleop_teach_core
 ```text
 passed
 ```
+
+## 11. MoveIt + Ruckig teach replay
+
+Current teach replay route:
+
+```text
+raw JSONL
+-> prepared trajectory
+-> filter / resample / jerk-aware retime
+-> MoveIt start alignment
+-> MoveIt collision precheck
+-> /rebotarm/follow_joint_trajectory
+```
+
+Important:
+
+```text
+1. Real replay executes prepared retimed points. It no longer sends raw teach points directly.
+2. MoveIt Ruckig is wired into the MoveIt planning pipeline for MoveIt-planned start alignment paths.
+3. Prepared replay currently reports the real time-parameterization method. If Python waypoint Ruckig is not implemented/available, it reports current_jerk_retime instead of pretending to be Ruckig.
+4. In the web Check result, read:
+   - Time Parameterization: the prepared replay trajectory method
+   - MoveIt Ruckig: whether the MoveIt start-alignment path is handled by the MoveIt pipeline
+5. Real replay now has a runtime monitor. During replay it compares live `/rebotarm/joint_states` with the active trajectory and requests `trajectory_stop` if tracking error or live velocity stays over the safety limit.
+```
+
+Daily full app startup:
+
+```bash
+cd ~/robotarm_ros2
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 launch rebotarm_bringup rebotarm_app.launch.py \
+  use_hardware:=true \
+  channel:=/dev/ttyACM0 \
+  web_execute_enabled:=true
+```
+
+Web workflow:
+
+```text
+1. Open http://127.0.0.1:8088/
+2. Teach Trajectory -> Record a new file or choose an existing file.
+3. Check -> Check Trajectory.
+4. Confirm Playback Quality is not red, Collision is not collision, and MoveIt is not unavailable.
+5. Replay -> Replay Prepared.
+6. If motion is wrong, press Stop Replay first.
+```
+
+Runtime replay monitor defaults:
+
+```text
+replay_monitor_enabled: true
+max_tracking_error_rad: 0.25
+max_live_velocity_rad_s: 3.0
+replay_monitor_start_grace_sec: 1.0
+replay_monitor_violation_grace_sec: 0.30
+```
+
+If replay is stopped by the monitor, the replay status will show:
+
+```text
+state: safety_stop
+runtime replay monitor stopped trajectory
+reason: tracking_error or live_velocity
+```
+
+MoveIt + Ruckig no-hardware smoke test:
+
+```bash
+cd ~/robotarm_ros2
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+timeout 25s ros2 launch rebotarm_moveit_config demo.launch.py use_rviz:=false
+```
+
+Expected log:
+
+```text
+Loaded adapter 'default_planning_response_adapters/AddRuckigTrajectorySmoothing'
+You can start planning now!
+```

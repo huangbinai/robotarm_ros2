@@ -5,9 +5,7 @@ import math
 import threading
 import time
 from contextlib import suppress
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
 
 from ament_index_python.packages import get_package_share_directory
 from control_msgs.action import FollowJointTrajectory, GripperCommand
@@ -24,9 +22,18 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from .arm_command_api import (
+    arm_command_is_replay_locked,
+    arm_command_timeout_sec,
+    normalize_arm_command,
+    should_stop_trajectory_before_arm_command,
+    status_state,
+)
 from .parameter_helpers import build_joint_limits
 from .parameter_helpers import sensor_qos_kwargs
-from .status_panel_state import TeleopStatusStore, encode_sse_event
+from .status_panel_http import create_status_panel_server
+from .status_panel_page import HTML_PAGE
+from .status_panel_state import TeleopStatusStore
 from .teleop_core import validate_web_keyboard_command
 from .teach_recording import (
     ReplayStartBand,
@@ -47,6 +54,7 @@ from .teach_recording import (
     validate_teach_replay_stop_request,
     write_prepared_teach_record,
 )
+from .trajectory_safety_monitor import evaluate_replay_tracking
 from .moveit_planner import MoveItMotionPlanner
 from .web_robot_assets import (
     DEFAULT_GRIPPER_LIMITS_M,
@@ -55,8 +63,6 @@ from .web_robot_assets import (
     load_urdf_joint_limits,
     merge_velocity_limits,
     merge_joint_limits,
-    rewrite_package_mesh_uris,
-    safe_mesh_path,
 )
 from .web_execute import (
     WebExecuteDecision,
@@ -139,2185 +145,6 @@ def _keyboard_decision_response(decision) -> dict:
     }
 
 
-HTML_PAGE = r"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>reBot Teleop Status</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f5f7f9;
-      --panel: #ffffff;
-      --line: #d8dee6;
-      --text: #17202a;
-      --muted: #667085;
-      --good: #188a4d;
-      --warn: #b7791f;
-      --bad: #c24135;
-      --info: #2563a8;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: "Segoe UI", Arial, sans-serif;
-      font-size: 14px;
-      letter-spacing: 0;
-    }
-    .shell { max-width: 1440px; margin: 0 auto; padding: 16px; }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 14px;
-    }
-    h1 { margin: 0; font-size: 22px; font-weight: 650; }
-    .timestamp { color: var(--muted); font-variant-numeric: tabular-nums; }
-    .teleop-workbench {
-      display: grid;
-      grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
-      gap: 12px;
-      align-items: start;
-    }
-    .robot-workspace,
-    .control-cards {
-      display: grid;
-      gap: 12px;
-      min-width: 0;
-    }
-    .control-cards {
-      align-content: start;
-      max-height: calc(100vh - 86px);
-      overflow-y: auto;
-      padding-right: 2px;
-    }
-    .card-note {
-      color: var(--muted);
-      line-height: 1.4;
-      padding: 0 12px 10px;
-      overflow-wrap: anywhere;
-    }
-    .label {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.2;
-      margin-bottom: 8px;
-    }
-    .value {
-      font-size: 20px;
-      font-weight: 650;
-      line-height: 1.2;
-      overflow-wrap: anywhere;
-    }
-    .value.small { font-size: 15px; font-weight: 600; }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-    .panel-title {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      font-weight: 650;
-    }
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      font-weight: 650;
-    }
-    .card-header .panel-title {
-      padding: 0;
-      border-bottom: 0;
-    }
-    .card-toggle {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #ffffff;
-      min-width: 30px;
-      min-height: 26px;
-      color: var(--muted);
-      font: inherit;
-      cursor: pointer;
-    }
-    .card-toggle:hover { background: #f3f6f9; }
-    .collapsible-card.collapsed .card-body { display: none; }
-    .collapsible-card.collapsed .card-header { border-bottom: 0; }
-    .collapsible-card.collapsed .card-toggle::after { content: "+"; }
-    .collapsible-card:not(.collapsed) .card-toggle::after { content: "-"; }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      table-layout: fixed;
-    }
-    th, td {
-      border-bottom: 1px solid #edf0f3;
-      padding: 9px 10px;
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-    }
-    th {
-      color: var(--muted);
-      background: #fafbfc;
-      font-size: 12px;
-      font-weight: 650;
-    }
-    th:first-child, td:first-child { text-align: left; width: 110px; }
-    tr:last-child td { border-bottom: 0; }
-    .robot-viewer { margin-bottom: 0; }
-    .viewer-body {
-      position: relative;
-      min-height: min(72vh, 720px);
-      background: #101820;
-    }
-    #robot-view {
-      display: block;
-      width: 100%;
-      height: min(72vh, 720px);
-    }
-    .viewer-status {
-      position: absolute;
-      left: 12px;
-      bottom: 12px;
-      max-width: calc(100% - 24px);
-      padding: 6px 8px;
-      border-radius: 6px;
-      background: rgba(255,255,255,0.88);
-      color: #26313d;
-      font-size: 12px;
-      overflow-wrap: anywhere;
-    }
-    .viewer-tools {
-      position: absolute;
-      right: 12px;
-      top: 12px;
-      display: flex;
-      gap: 8px;
-    }
-    .slider-panel { margin-bottom: 0; }
-    .aux-hidden { display: none; }
-    .slider-grid {
-      padding: 12px;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px 14px;
-    }
-    .joint-slider {
-      display: grid;
-      grid-template-columns: 76px minmax(0, 1fr) 132px;
-      gap: 10px;
-      align-items: center;
-      min-height: 34px;
-    }
-    .joint-name { font-weight: 650; font-variant-numeric: tabular-nums; }
-    .joint-slider input[type="range"] {
-      width: 100%;
-      accent-color: var(--info);
-    }
-    .joint-slider input[disabled] { opacity: 0.72; }
-    .joint-values {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-    .joint-values strong {
-      color: var(--text);
-      font-weight: 650;
-    }
-    .joint-limit {
-      margin-top: 2px;
-      font-size: 11px;
-      color: var(--muted);
-    }
-    .preview-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .preview-toolbar .panel-title {
-      padding: 0;
-      border-bottom: 0;
-    }
-    .slider-pane[hidden] { display: none; }
-    .tool-button {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #ffffff;
-      color: var(--text);
-      min-height: 30px;
-      padding: 5px 10px;
-      font: inherit;
-      cursor: pointer;
-    }
-    .tool-button:hover { background: #f3f6f9; }
-    .preview-active input[type="range"] { accent-color: var(--warn); }
-    .execute-row {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      align-items: center;
-    }
-    .execute-status {
-      color: var(--muted);
-      line-height: 1.35;
-      overflow-wrap: anywhere;
-    }
-    .execute-settings {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .execute-setting {
-      display: grid;
-      grid-template-columns: 92px minmax(0, 1fr);
-      gap: 8px;
-      align-items: center;
-      min-height: 34px;
-    }
-    .execute-setting label {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.2;
-    }
-    .execute-setting input[type="number"] {
-      width: 100%;
-      min-height: 30px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 6px;
-      font: inherit;
-      font-variant-numeric: tabular-nums;
-    }
-    .execute-setting input[type="text"] {
-      width: 100%;
-      min-height: 30px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 6px;
-      font: inherit;
-    }
-    .execute-setting.wide { grid-column: 1 / -1; }
-    .robot-command-row {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      display: flex;
-      gap: 8px;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-    }
-    .teach-section-title {
-      padding: 10px 12px 6px;
-      color: var(--text);
-      font-weight: 700;
-      border-top: 1px solid var(--line);
-    }
-    .teach-step {
-      border-top: 1px solid var(--line);
-      padding: 0;
-    }
-    .teach-step > summary {
-      cursor: pointer;
-      list-style: none;
-      padding: 10px 12px;
-      color: var(--text);
-      font-weight: 700;
-      user-select: none;
-    }
-    .teach-step > summary::-webkit-details-marker { display: none; }
-    .teach-step > summary::after {
-      content: "+";
-      float: right;
-      color: var(--muted);
-      font-weight: 700;
-    }
-    .teach-step[open] > summary::after { content: "-"; }
-    #teach-record-select:invalid { color: var(--muted); }
-    #teach-record-select option { color: var(--text); }
-    #teach-record-select option[value=""] { color: var(--muted); }
-    .execute-button {
-      border-color: #9f3a32;
-      background: #c24135;
-      color: #ffffff;
-      font-weight: 650;
-    }
-    .execute-button:hover { background: #a9362e; }
-    .execute-button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-      background: #ffffff;
-      color: var(--muted);
-      border-color: var(--line);
-    }
-    .stop-button {
-      border-color: #44515f;
-      background: #44515f;
-      color: #ffffff;
-      font-weight: 650;
-    }
-    .stop-button:hover { background: #303b46; }
-    .stop-button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-      background: #ffffff;
-      color: var(--muted);
-      border-color: var(--line);
-    }
-    .gripper-button {
-      border-color: #2563a8;
-      background: #2563a8;
-      color: #ffffff;
-      font-weight: 650;
-    }
-    .gripper-button:hover { background: #1e4f86; }
-    .gripper-button:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-      background: #ffffff;
-      color: var(--muted);
-      border-color: var(--line);
-    }
-    .status-list { padding: 10px 12px; display: grid; gap: 10px; }
-    .status-row {
-      display: grid;
-      grid-template-columns: 96px minmax(0, 1fr);
-      gap: 8px;
-      align-items: start;
-    }
-    .status-key { color: var(--muted); font-size: 12px; padding-top: 3px; }
-    .status-main { min-width: 0; }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      max-width: 100%;
-      min-height: 24px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      background: #eef4ff;
-      color: var(--info);
-      font-weight: 650;
-      overflow-wrap: anywhere;
-    }
-    .chip.good { background: #e8f6ee; color: var(--good); }
-    .chip.warn { background: #fff6df; color: var(--warn); }
-    .chip.bad { background: #fdecea; color: var(--bad); }
-    .chip.pass { background: #e8f6ee; color: var(--good); }
-    .chip.red { background: #fdecea; color: var(--bad); }
-    .detail {
-      margin-top: 5px;
-      color: var(--muted);
-      line-height: 1.35;
-      overflow-wrap: anywhere;
-    }
-    .teach-panel { margin-bottom: 0; }
-    .precheck-strip {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      background: #fbfcfd;
-    }
-    .teach-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      padding: 12px;
-    }
-    .teach-metric {
-      min-height: 70px;
-      border: 1px solid #edf0f3;
-      border-radius: 6px;
-      padding: 9px 10px;
-      background: #fafbfc;
-      min-width: 0;
-    }
-    .teach-metric strong {
-      display: block;
-      font-size: 16px;
-      line-height: 1.25;
-      overflow-wrap: anywhere;
-    }
-    .compact-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      padding: 10px 12px;
-      gap: 8px;
-    }
-    .compact-grid .teach-metric {
-      min-height: 58px;
-      padding: 8px 9px;
-    }
-    .compact-grid .teach-metric strong { font-size: 14px; }
-    .teach-wide { grid-column: span 2; }
-    .mini-limit-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      font-weight: 500;
-      table-layout: fixed;
-    }
-    .mini-limit-table th,
-    .mini-limit-table td {
-      border-bottom: 1px solid var(--line);
-      padding: 5px 4px;
-      text-align: left;
-      vertical-align: middle;
-      overflow-wrap: anywhere;
-    }
-    .mini-limit-table th { color: var(--muted); font-weight: 650; }
-    .teach-controls {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
-    }
-    .teach-control {
-      display: grid;
-      grid-template-columns: 110px minmax(0, 1fr) 72px;
-      gap: 8px;
-      align-items: center;
-    }
-    .teach-control label {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .teach-control input[type="range"] {
-      width: 100%;
-      accent-color: var(--info);
-    }
-    .teach-control input[type="number"] {
-      width: 100%;
-      min-height: 30px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 6px;
-      font: inherit;
-      font-variant-numeric: tabular-nums;
-    }
-    .event-log {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      display: grid;
-      gap: 6px;
-      color: var(--muted);
-      font-size: 12px;
-      font-variant-numeric: tabular-nums;
-    }
-    .event-item { overflow-wrap: anywhere; }
-    details.panel {
-      display: block;
-      margin-bottom: 12px;
-    }
-    details.panel > summary {
-      cursor: pointer;
-      list-style: none;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      font-weight: 650;
-      user-select: none;
-    }
-    details.panel > summary::-webkit-details-marker { display: none; }
-    details.panel > summary::after {
-      content: "+";
-      float: right;
-      color: var(--muted);
-      font-weight: 650;
-    }
-    details.panel[open] > summary::after { content: "-"; }
-    .details-body {
-      border-top: 1px solid var(--line);
-    }
-    .record-toolbar {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 10px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .command-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      padding: 10px 12px;
-      border-top: 1px solid var(--line);
-    }
-    .keymap-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 6px;
-      padding: 0 12px 10px;
-    }
-    .keycap {
-      border: 1px solid #edf0f3;
-      border-radius: 6px;
-      padding: 6px 7px;
-      background: #fafbfc;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .keycap strong {
-      color: var(--text);
-      font-weight: 650;
-    }
-    .record-toolbar select {
-      min-height: 32px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 4px 8px;
-      font: inherit;
-      min-width: 0;
-    }
-    .trajectory-view { padding: 12px; display: grid; gap: 10px; }
-    .trajectory-summary {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .trajectory-canvas-wrap {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #ffffff;
-      min-height: 320px;
-    }
-    #teach-trajectory-canvas {
-      display: block;
-      width: 100%;
-      height: 320px;
-    }
-    .trajectory-controls {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      align-items: center;
-    }
-    .empty { color: var(--muted); padding: 14px; }
-    @media (max-width: 980px) {
-      .teleop-workbench { grid-template-columns: 1fr; }
-      .control-cards { max-height: none; overflow: visible; padding-right: 0; }
-      .precheck-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .teach-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .teach-controls { grid-template-columns: 1fr; }
-      .slider-grid { grid-template-columns: 1fr; }
-      #robot-view { height: 340px; }
-      .viewer-body { min-height: 340px; }
-      #teach-trajectory-canvas { height: 340px; }
-    }
-    @media (max-width: 560px) {
-      .joint-slider { grid-template-columns: 1fr; gap: 4px; }
-      .joint-values { text-align: left; }
-      .teach-grid { grid-template-columns: 1fr; }
-      .trajectory-summary { grid-template-columns: 1fr; }
-      .precheck-strip { grid-template-columns: 1fr; }
-      .compact-grid { grid-template-columns: 1fr; }
-      .teach-wide { grid-column: span 1; }
-      .keymap-grid { grid-template-columns: 1fr; }
-      .command-grid { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <main class="shell">
-    <div class="topbar">
-      <h1>reBot Teleop Status</h1>
-      <div class="timestamp" id="updated">Waiting for data</div>
-    </div>
-    <section class="teleop-workbench">
-      <div class="robot-workspace">
-        <section class="panel robot-viewer">
-          <div class="panel-title">Web 3D Robot View</div>
-          <div class="viewer-body">
-            <canvas id="robot-view"></canvas>
-            <div class="viewer-status" id="robot-view-status">Loading Three.js robot view</div>
-            <div class="viewer-tools">
-              <button class="tool-button" id="toggle-grid" type="button">Grid</button>
-            </div>
-          </div>
-          <div class="button-row robot-command-row">
-            <button class="tool-button execute-button" id="arm-safe-home" type="button">Safe Home</button>
-            <button class="tool-button" id="arm-enable" type="button">Enable</button>
-            <button class="tool-button stop-button" id="arm-disable" type="button">Disable</button>
-          </div>
-        </section>
-      </div>
-      <aside class="control-cards">
-        <section class="panel collapsible-card collapsed" id="arm-status-card">
-          <div class="card-header"><div class="panel-title">Arm Status</div><button class="card-toggle" type="button" data-card-toggle="arm-status-card" aria-label="Toggle Arm Status"></button></div>
-          <div class="card-body">
-          <div class="status-list">
-            <div class="status-row">
-              <div class="status-key">Mode</div>
-              <div class="status-main"><div class="value small" id="mode">-</div></div>
-            </div>
-            <div class="status-row">
-              <div class="status-key">State</div>
-              <div class="status-main"><div class="value small" id="state">-</div></div>
-            </div>
-            <div class="status-row">
-              <div class="status-key">Enabled</div>
-              <div class="status-main"><div class="value small" id="enabled">-</div></div>
-            </div>
-            <div class="status-row">
-              <div class="status-key">Recording</div>
-              <div class="status-main"><div class="value small" id="recording-state">-</div></div>
-            </div>
-            <div class="status-row">
-              <div class="status-key">Replay</div>
-              <div class="status-main"><div class="value small" id="replay-state">-</div></div>
-            </div>
-          </div>
-          <div class="panel-title">Arm Errors</div>
-          <div class="status-list" id="errors"><div class="empty">No errors</div></div>
-          </div>
-        </section>
-
-        <section class="panel collapsible-card collapsed" id="motor-state-card">
-          <div class="card-header"><div class="panel-title">Motor State</div><button class="card-toggle" type="button" data-card-toggle="motor-state-card" aria-label="Toggle Motor State"></button></div>
-          <div class="card-body">
-          <table>
-            <thead><tr><th>Joint</th><th>Position rad</th><th>Velocity</th><th>Torque</th><th>Status</th></tr></thead>
-            <tbody id="joints"><tr><td colspan="5" class="empty">Waiting for joint state</td></tr></tbody>
-          </table>
-          </div>
-        </section>
-
-        <section class="panel slider-panel collapsible-card collapsed" id="web-teleop-card">
-          <div class="card-header"><div class="panel-title">Web Teleop</div><button class="card-toggle" type="button" data-card-toggle="web-teleop-card" aria-label="Toggle Web Teleop"></button></div>
-          <div class="card-body">
-          <div class="preview-toolbar">
-            <button class="tool-button" id="sync-preview" type="button">Sync Live</button>
-          </div>
-          <div class="card-note">Preview sliders move the left 3D model first. Execute sends joint targets and the gripper target with one confirmation.</div>
-          <div class="aux-hidden" id="joint-sliders"></div>
-          <div class="slider-pane" id="preview-slider-pane">
-            <div class="slider-grid" id="preview-sliders"></div>
-          </div>
-          <div class="execute-settings">
-            <div class="execute-setting">
-              <label for="execute-max-delta">Max Delta</label>
-              <input id="execute-max-delta" type="number" min="0.05" max="1.50" step="0.05" value="0.80">
-            </div>
-            <div class="execute-setting">
-              <label for="execute-duration">Duration</label>
-              <input id="execute-duration" type="number" min="1.0" max="8.0" step="0.5" value="3.0">
-            </div>
-            <div class="execute-setting">
-              <label for="execute-speed">Max Speed</label>
-              <input id="execute-speed" type="number" min="0.1" max="1.5" step="0.1" value="1.5">
-            </div>
-          </div>
-          <div class="execute-row">
-            <div class="execute-status" id="execute-status">Preview only. Move a target slider, then execute with confirmation.</div>
-            <div>
-              <button class="tool-button execute-button" id="execute-preview" type="button" disabled>Execute Joints + Gripper</button>
-              <button class="tool-button stop-button" id="stop-execute" type="button" disabled>Stop</button>
-            </div>
-          </div>
-          </div>
-        </section>
-
-        <section class="panel teach-panel collapsible-card collapsed" id="teach-trajectory-card">
-          <div class="card-header"><div class="panel-title">Teach Trajectory</div><button class="card-toggle" type="button" data-card-toggle="teach-trajectory-card" aria-label="Toggle Teach Trajectory"></button></div>
-          <div class="card-body">
-          <details class="teach-step" id="teach-record-step">
-            <summary>1. Record</summary>
-            <div class="execute-settings">
-              <div class="execute-setting wide">
-                <label for="teach-record-name">File Name</label>
-                <input id="teach-record-name" type="text" value="teach_record.jsonl" autocomplete="off">
-              </div>
-            </div>
-            <div class="command-grid">
-              <button class="tool-button execute-button" id="start-teach-record" type="button">Start Teach</button>
-              <button class="tool-button stop-button" id="stop-teach-record" type="button" disabled>Stop Teach</button>
-            </div>
-            <div class="teach-grid compact-grid" id="teach-record-summary">
-              <div class="empty">Choose a file name, then start recording.</div>
-            </div>
-          </details>
-          <details class="teach-step" id="teach-check-step" open>
-            <summary>2. Check</summary>
-            <div class="record-toolbar">
-              <select id="teach-record-select" required>
-                <option value="" disabled selected>Choose recorded file</option>
-              </select>
-              <button class="tool-button" id="refresh-teach-records" type="button">Refresh Files</button>
-            </div>
-            <div class="precheck-strip" id="replay-precheck-summary">
-              <div class="empty">No valid teach trajectory</div>
-            </div>
-            <button class="tool-button" id="run-teach-dry-run" type="button" disabled>Check Trajectory</button>
-          </details>
-          <details class="teach-step" id="teach-replay-step" open>
-            <summary>3. Replay</summary>
-            <div class="execute-row">
-              <div class="execute-status" id="teach-dry-run-status">Check first. Replay stays blocked until safety checks pass.</div>
-              <div>
-                <button class="tool-button execute-button" id="run-teach-replay" type="button" disabled>Replay Prepared</button>
-                <button class="tool-button stop-button" id="stop-teach-replay" type="button" disabled>Stop Replay</button>
-              </div>
-            </div>
-            <div class="teach-controls">
-              <div class="teach-control">
-                <label for="teach-replay-speed">Replay Speed</label>
-                <input id="teach-replay-speed" type="range" min="0.1" max="1.5" step="0.1" value="1.0">
-                <input id="teach-replay-speed-number" type="number" min="0.1" max="1.5" step="0.1" value="1.0">
-              </div>
-            </div>
-            <div class="teach-grid compact-grid" id="teach-params-details">
-              <div class="empty">Waiting for replay estimate</div>
-            </div>
-          </details>
-          <details class="panel teach-panel" id="teach-file-details-panel">
-            <summary>Trajectory File And Curve</summary>
-            <div class="teach-grid" id="teach-file-details">
-              <div class="empty">Waiting for teach record file</div>
-            </div>
-            <div class="trajectory-view">
-              <div class="trajectory-summary" id="teach-trajectory-details">
-                <div class="empty">Load a teach record to draw trajectory curve</div>
-              </div>
-              <div class="trajectory-canvas-wrap" id="teach-trajectory-canvas-wrap">
-                <canvas id="teach-trajectory-canvas"></canvas>
-              </div>
-              <div class="trajectory-controls">
-                <button class="tool-button" id="load-teach-trajectory" type="button">Load Trajectory</button>
-              </div>
-            </div>
-          </details>
-          <details class="panel teach-panel" id="replay-event-log-panel">
-            <summary>Advanced Log</summary>
-            <div class="event-log" id="replay-event-log">
-              <div class="empty">No replay events yet</div>
-            </div>
-          </details>
-          </div>
-        </section>
-
-        <section class="panel collapsible-card collapsed" id="keyboard-teleop-card">
-          <div class="card-header"><div class="panel-title">Keyboard Teleop</div><button class="card-toggle" type="button" data-card-toggle="keyboard-teleop-card" aria-label="Toggle Keyboard Teleop"></button></div>
-          <div class="card-body">
-          <div class="status-list">
-            <div class="status-row">
-              <div class="status-key">Input</div>
-              <div class="status-main"><div class="value small" id="teleop-state">-</div></div>
-            </div>
-          </div>
-          <div class="card-note">Enable this card, then press the mapped keys while the browser page is focused. Each key sends one small joint trajectory through the same controller action.</div>
-          <div class="keymap-grid">
-            <div class="keycap"><strong>1/q</strong> joint1 +/-</div>
-            <div class="keycap"><strong>2/w</strong> joint2 +/-</div>
-            <div class="keycap"><strong>3/e</strong> joint3 +/-</div>
-            <div class="keycap"><strong>4/r</strong> joint4 +/-</div>
-            <div class="keycap"><strong>5/t</strong> joint5 +/-</div>
-            <div class="keycap"><strong>6/y</strong> joint6 +/-</div>
-            <div class="keycap"><strong>Esc</strong> disable</div>
-            <div class="keycap"><strong>focus</strong> page</div>
-            <div class="keycap"><strong>stop</strong> button</div>
-          </div>
-          <div class="execute-settings">
-            <div class="execute-setting">
-              <label for="keyboard-step">Step</label>
-              <input id="keyboard-step-number" type="number" min="0.005" max="0.100" step="0.005" value="0.020">
-            </div>
-            <div class="execute-setting">
-              <label for="keyboard-speed">Speed</label>
-              <input id="keyboard-speed-number" type="number" min="0.1" max="1.5" step="0.1" value="0.5">
-            </div>
-          </div>
-          <div class="command-grid">
-            <button class="tool-button execute-button" id="keyboard-enable" type="button">Enable Keyboard</button>
-            <button class="tool-button stop-button" id="keyboard-disable" type="button" disabled>Disable Keyboard</button>
-          </div>
-          </div>
-        </section>
-
-      </aside>
-    </section>
-  </main>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
-        "three/examples/jsm/": "https://unpkg.com/three@0.165.0/examples/jsm/"
-      }
-    }
-  </script>
-  <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js';
-    import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
-    import URDFLoader from 'https://unpkg.com/urdf-loader@0.12.6/src/URDFLoader.js';
-
-    const panelConfig = await fetch('/api/config')
-      .then((response) => response.json())
-      .catch(() => ({
-        joint_names: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6'],
-        joint_limits: {
-          joint1: [-3.1416, 3.1416],
-          joint2: [-3.1416, 3.1416],
-          joint3: [-3.1416, 3.1416],
-          joint4: [-3.1416, 3.1416],
-          joint5: [-3.1416, 3.1416],
-          joint6: [-3.1416, 3.1416],
-        },
-        gripper_limits: [0.0, 0.09],
-        joint_velocity_limits: {
-          joint1: 1.5,
-          joint2: 1.5,
-          joint3: 1.5,
-          joint4: 1.5,
-          joint5: 1.5,
-          joint6: 1.5,
-        },
-      }));
-    const source = new EventSource('/events');
-    const panelMode = String(panelConfig.panel_mode || 'control').toLowerCase();
-    const isCheckMode = panelMode === 'check';
-    const armJointNames = panelConfig.joint_names || ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6'];
-    const sliderNames = [...armJointNames, 'gripper'];
-    const jointLimits = {
-      ...(panelConfig.joint_limits || {}),
-      gripper: panelConfig.gripper_limits || [0.0, 0.09],
-    };
-    const webExecuteEnabled = panelConfig.web_execute?.enabled === true;
-    let latestTeachFileInfo = null;
-    let selectedTeachRecordPath = '';
-    let lastTeachDryRun = null;
-    let lastReplayStatusKey = '';
-    let lastFastRenderMs = 0;
-    let lastSlowRenderMs = 0;
-    const FAST_RENDER_INTERVAL_MS = 250;
-    const replayEvents = [];
-    const motorRowsByName = new Map();
-    const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value).toFixed(digits) : '-';
-    const deg = (value) => Number.isFinite(value) ? (Number(value) * 180 / Math.PI).toFixed(1) : '-';
-    const text = (value) => value === undefined || value === null || value === '' ? '-' : String(value);
-    const escapeHtml = (value) => text(value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-    const statusObj = (value) => {
-      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-      return { state: text(value) };
-    };
-    const isDetailsOpen = (id) => document.getElementById(id)?.open === true;
-    const isControlCardOpen = (id) => !document.getElementById(id)?.classList.contains('collapsed');
-    const clearOptionalDetails = (id, html = '<div class="empty">Open to render details</div>') => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = html;
-    };
-    const setHtml = (id, html) => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = html;
-    };
-    const toggleControlCard = (cardId) => {
-      const card = document.getElementById(cardId);
-      if (!card) return;
-      card.classList.toggle('collapsed');
-      if (cardId === 'teach-trajectory-card' && !card.classList.contains('collapsed')) {
-        refreshTeachFileInfo({ force: true });
-      }
-    };
-    const attachControlCardToggles = () => {
-      document.querySelectorAll('[data-card-toggle]').forEach((button) => {
-        button.addEventListener('click', () => toggleControlCard(button.dataset.cardToggle));
-      });
-    };
-    const classFor = (state) => {
-      const normalized = String(state || '').toLowerCase();
-      if (['active', 'recording', 'replaying', 'ready', 'idle', 'deadman', 'done', 'direct', 'green', 'pass', 'planned', 'skipped'].includes(normalized)) return 'good';
-      if (['timeout', 'waiting', 'dry_run', 'starting', 'stopped', 'cancel_requested', 'canceled', 'align', 'unknown', 'missing', 'empty', 'invalid', 'yellow', 'disabled'].includes(normalized)) return 'warn';
-      if (['failed', 'rejected', 'blocked', 'unavailable', 'reject', 'red'].includes(normalized)) return 'bad';
-      return '';
-    };
-    const displayState = (state, context = '') => {
-      const normalized = String(state || '').toLowerCase();
-      if (context === 'keyboard' && normalized === 'timeout') return 'No key input';
-      if (context === 'teach_file' && ['missing', 'empty', 'invalid'].includes(normalized)) return 'No valid teach trajectory';
-      return text(state);
-    };
-    const setChip = (id, state) => {
-      const el = document.getElementById(id);
-      const cls = classFor(state);
-      const context = id === 'teleop-state' ? 'keyboard' : '';
-      el.innerHTML = `<span class="chip ${cls}">${displayState(state, context)}</span>`;
-    };
-    const syncRealActionButtons = () => {
-      if (isCheckMode) {
-        document.getElementById('execute-preview')?.setAttribute('disabled', '');
-        document.getElementById('set-gripper')?.setAttribute('disabled', '');
-        document.getElementById('run-teach-dry-run')?.setAttribute('disabled', '');
-        document.getElementById('run-teach-replay')?.setAttribute('disabled', '');
-        return;
-      }
-      if (webExecuteEnabled) return;
-      document.getElementById('execute-preview')?.setAttribute('disabled', '');
-      document.getElementById('set-gripper')?.setAttribute('disabled', '');
-      document.getElementById('run-teach-replay')?.setAttribute('disabled', '');
-    };
-    const statusBlock = (label, value) => {
-      const obj = statusObj(value);
-      const state = obj.state || obj.status || '-';
-      const details = [];
-      if (obj.message) details.push(obj.message);
-      if (obj.last_key) details.push(`last key: ${obj.last_key}`);
-      if (Number.isFinite(obj.max_error)) details.push(`max error: ${fmt(obj.max_error)}`);
-      if (Number.isFinite(obj.max_delta)) details.push(`max delta: ${fmt(obj.max_delta)}`);
-      if (Number.isFinite(obj.max_delta_limit)) details.push(`limit: ${fmt(obj.max_delta_limit)}`);
-      if (Number.isFinite(obj.duration)) details.push(`duration: ${fmt(obj.duration, 2)}s`);
-      if (Number.isFinite(obj.max_joint_speed_rad_s)) details.push(`speed limit: ${fmt(obj.max_joint_speed_rad_s, 2)}rad/s`);
-      if (Number.isFinite(obj.position)) details.push(`position: ${fmt(obj.position)}m`);
-      if (Number.isFinite(obj.max_effort)) details.push(`effort: ${fmt(obj.max_effort, 2)}`);
-      if (Number.isFinite(obj.samples)) details.push(`samples: ${obj.samples}`);
-      if (Number.isFinite(obj.elapsed_sec)) details.push(`elapsed: ${fmt(obj.elapsed_sec, 1)}s`);
-      if (Number.isFinite(obj.actual_sample_rate_hz)) details.push(`actual rate: ${fmt(obj.actual_sample_rate_hz, 1)}Hz`);
-      if (Number.isFinite(obj.file_size_bytes)) details.push(`size: ${obj.file_size_bytes}B`);
-      if (Number.isFinite(obj.trajectory_points)) details.push(`points: ${obj.trajectory_points}`);
-      if (obj.writing_state) details.push(`writing: ${obj.writing_state}`);
-      if (obj.arm_state) details.push(`arm: ${obj.arm_state}`);
-      if (obj.record_path) details.push(`file: ${obj.record_path}`);
-      if (obj.start_band) details.push(`start: ${obj.start_band}`);
-      return `
-        <div class="status-row">
-          <div class="status-key">${label}</div>
-          <div class="status-main">
-            <span class="chip ${classFor(state)}">${displayState(state)}</span>
-            ${details.length ? `<div class="detail">${details.join(' | ')}</div>` : ''}
-          </div>
-        </div>`;
-    };
-    const teachMetric = (label, value, options = {}) => `
-      <div class="teach-metric ${options.wide ? 'teach-wide' : ''}">
-        <div class="label">${escapeHtml(label)}</div>
-        <strong>${options.raw ? value : escapeHtml(value)}</strong>
-      </div>`;
-    const formatJointMap = (positions) => {
-      if (!positions || typeof positions !== 'object') return '-';
-      const entries = armJointNames
-        .filter((name) => Object.prototype.hasOwnProperty.call(positions, name))
-        .map((name) => `${name}: ${fmt(Number(positions[name]))}`);
-      return entries.length ? entries.join(' | ') : '-';
-    };
-    const countLabel = (shown, total, truncated) => {
-      if (!Number.isFinite(Number(total))) return String(shown || 0);
-      return truncated ? `${shown}/${total}` : String(total);
-    };
-    const replayPolicyText = (policy) => {
-      const value = String(policy || '').toLowerCase();
-      if (value.includes('safe retiming')) return '自动限速平滑后回放';
-      if (value.includes('blocked')) return '禁止真机回放';
-      if (value.includes('direct')) return '可检查后回放';
-      return text(policy);
-    };
-    const renderTeachFileInfo = (info) => {
-      if (!info || typeof info !== 'object') {
-        return '<div class="empty">Teach record file check unavailable</div>';
-      }
-      const stateClass = classFor(info.start_band);
-      return [
-        teachMetric('File Check', `<span class="chip ${stateClass}">${escapeHtml(info.start_band)}</span>`, { raw: true }),
-        teachMetric('Samples', Number.isFinite(info.samples) ? info.samples : '-'),
-        teachMetric('Duration', Number.isFinite(info.duration_sec) ? `${fmt(info.duration_sec, 1)} s` : '-'),
-        teachMetric('Worst Joint', text(info.worst_joint)),
-        teachMetric('Max Start Error', Number.isFinite(info.max_error) ? `${fmt(info.max_error)} rad` : '-'),
-        teachMetric('Direct Threshold', Number.isFinite(info.direct_threshold) ? `${fmt(info.direct_threshold)} rad` : '-'),
-        teachMetric('Align Threshold', Number.isFinite(info.align_threshold) ? `${fmt(info.align_threshold)} rad` : '-'),
-        teachMetric('Exists', info.exists ? 'true' : 'false'),
-        teachMetric('Record File', text(info.path), { wide: true }),
-        teachMetric('Message', text(info.message), { wide: true }),
-        teachMetric('Start Positions', formatJointMap(info.start_positions), { wide: true }),
-        teachMetric('End Positions', formatJointMap(info.end_positions), { wide: true }),
-        teachMetric('Current To Start Error', formatJointMap(info.per_joint_error), { wide: true }),
-        teachMetric('轨迹不平滑点', countLabel(Array.isArray(info.anomalies) ? info.anomalies.length : 0, info.anomalies_total, info.anomalies_truncated)),
-        teachMetric('轨迹风险', info.quality?.risk_level ? `<span class="chip ${classFor(info.quality.risk_level)}">${escapeHtml(info.quality.risk_level)}</span>` : '-', { raw: true }),
-        teachMetric('最大单帧跳变', Number.isFinite(info.quality?.max_jump_rad) ? `${fmt(info.quality.max_jump_rad)} rad` : '-'),
-        teachMetric('原始最大速度', Number.isFinite(info.quality?.max_velocity_rad_s) ? `${fmt(info.quality.max_velocity_rad_s)} rad/s` : '-'),
-        teachMetric('回放策略', replayPolicyText(info.quality?.replay_policy), { wide: true }),
-      ].join('');
-    };
-    const renderTeachRecordSummary = (info, recordingValue) => {
-      const recording = statusObj(recordingValue);
-      return [
-        teachMetric('Recording', `<span class="chip ${classFor(recording.state)}">${escapeHtml(recording.state || 'idle')}</span>`, { raw: true }),
-        teachMetric('Samples', Number.isFinite(recording.samples) ? recording.samples : (Number.isFinite(info?.samples) ? info.samples : '-')),
-        teachMetric('File', text(recording.record_path || info?.path), { wide: true }),
-      ].join('');
-    };
-    let latestTeachTrajectory = null;
-    const renderTeachTrajectoryDetails = (payload) => {
-      if (!payload || payload.accepted === false) {
-        return `<div class="empty">${escapeHtml(payload?.message || 'Teach trajectory unavailable')}</div>`;
-      }
-      const q = payload.quality || {};
-      return [
-        teachMetric('Prepared File', text(payload.prepared_record_path || payload.path || latestTeachFileInfo?.path), { wide: true }),
-        teachMetric('Samples', Number.isFinite(payload.raw_samples) ? payload.raw_samples : (Number.isFinite(payload.returned_samples) ? payload.returned_samples : '-')),
-        teachMetric('Duration', Number.isFinite(payload.duration_sec) ? `${fmt(payload.duration_sec, 2)} s` : '-'),
-        teachMetric('Prepared Risk', q.risk_level ? `<span class="chip ${classFor(q.risk_level)}">${escapeHtml(q.risk_level)}</span>` : '-', { raw: true }),
-        teachMetric('Max Jump', Number.isFinite(q.max_jump_rad) ? `${fmt(q.max_jump_rad)} rad` : '-'),
-        teachMetric('Max Velocity', Number.isFinite(q.max_velocity_rad_s) ? `${fmt(q.max_velocity_rad_s)} rad/s` : '-'),
-      ].join('');
-    };
-    const drawTeachTrajectoryChart = (payload) => {
-      const canvas = document.getElementById('teach-trajectory-canvas');
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(320, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(220, Math.floor(rect.height * dpr));
-      const ctx = canvas.getContext('2d');
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const width = canvas.width / dpr;
-      const height = canvas.height / dpr;
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = '#d8dee6';
-      ctx.lineWidth = 1;
-      const left = 44, right = 12, top = 16, bottom = 28;
-      ctx.strokeRect(left, top, width - left - right, height - top - bottom);
-      const points = Array.isArray(payload?.points) ? payload.points : [];
-      const joints = Array.isArray(payload?.joint_names) ? payload.joint_names : [];
-      if (!points.length || !joints.length) {
-        ctx.fillStyle = '#667085';
-        ctx.fillText('No trajectory samples', left + 12, top + 24);
-        return;
-      }
-      const tMax = Math.max(...points.map((p) => Number(p.t) || 0), 0.001);
-      const values = [];
-      points.forEach((point) => joints.forEach((joint) => {
-        const value = Number(point.positions?.[joint]);
-        if (Number.isFinite(value)) values.push(value);
-      }));
-      const yMin = Math.min(...values, -0.1);
-      const yMax = Math.max(...values, 0.1);
-      const ySpan = Math.max(yMax - yMin, 0.001);
-      const xFor = (t) => left + ((Number(t) || 0) / tMax) * (width - left - right);
-      const yFor = (v) => top + (1 - ((Number(v) - yMin) / ySpan)) * (height - top - bottom);
-      const colors = ['#2563a8', '#188a4d', '#b7791f', '#c24135', '#6b46c1', '#0f766e'];
-      const drawSeries = (seriesPoints, alpha = 1.0, widthScale = 1.5) => {
-        joints.forEach((joint, jointIndex) => {
-          ctx.beginPath();
-          ctx.strokeStyle = colors[jointIndex % colors.length];
-          ctx.globalAlpha = alpha;
-          ctx.lineWidth = widthScale;
-          seriesPoints.forEach((point, index) => {
-            const x = xFor(point.t);
-            const y = yFor(point.positions?.[joint]);
-            if (index === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          });
-          ctx.stroke();
-        });
-        ctx.globalAlpha = 1.0;
-      };
-      drawSeries(points, 1.0, 1.8);
-      (payload.events || []).forEach((event) => {
-        const point = points.find((item) => item.sample === event.sample);
-        if (!point) return;
-        const x = xFor(point.t);
-        ctx.strokeStyle = event.level === 'red' ? '#c24135' : '#b7791f';
-        ctx.beginPath();
-        ctx.moveTo(x, top);
-        ctx.lineTo(x, height - bottom);
-        ctx.stroke();
-      });
-      ctx.fillStyle = '#667085';
-      ctx.fillText(`${fmt(yMax)} rad`, 6, top + 8);
-      ctx.fillText(`${fmt(yMin)} rad`, 6, height - bottom);
-      ctx.fillText(`${fmt(tMax, 2)} s`, width - right - 42, height - 8);
-    };
-    const loadTeachTrajectory = async () => {
-      try {
-        const suffix = selectedTeachRecordPath ? `?path=${encodeURIComponent(selectedTeachRecordPath)}&max_points=500` : '?max_points=500';
-        const response = await fetch(`/api/teach_trajectory${suffix}`);
-        const payload = await response.json();
-        latestTeachTrajectory = payload;
-        document.getElementById('teach-trajectory-details').innerHTML = renderTeachTrajectoryDetails(payload);
-        drawTeachTrajectoryChart(payload);
-      } catch (error) {
-        document.getElementById('teach-trajectory-details').innerHTML =
-          `<div class="empty">Teach trajectory load failed: ${escapeHtml(error.message)}</div>`;
-      }
-    };
-    const renderReplayPrecheckSummary = (info) => {
-      const band = String(info?.start_band || 'unknown').toLowerCase();
-      const quality = info?.quality || {};
-      const estimate = replayEstimate(info);
-      const replay = statusObj(previewState.latestTeleop?.replay);
-      const preparedQuality = replay.prepared_replay?.after_quality || {};
-      const playbackRisk = String(
-        replay.effective_risk_level ||
-        replay.prepared_risk_level ||
-        preparedQuality.risk_level ||
-        quality.risk_level ||
-        '-'
-      ).toLowerCase();
-      const preparedJump = Number.isFinite(preparedQuality.max_jump_rad)
-        ? preparedQuality.max_jump_rad
-        : replay.prepared_max_jump_rad;
-      const preparedVelocity = Number.isFinite(preparedQuality.max_velocity_rad_s)
-        ? preparedQuality.max_velocity_rad_s
-        : undefined;
-      const moveit = replay.moveit_start_align || {};
-      const collision = replay.collision_precheck || {};
-      return [
-        teachMetric('Start', `<span class="chip ${classFor(band)}">${escapeHtml(band || 'unknown')}</span>`, { raw: true }),
-        teachMetric('Playback Quality', `<span class="chip ${classFor(playbackRisk)}">${escapeHtml(playbackRisk || '-')}</span>`, { raw: true }),
-        teachMetric('MoveIt', moveit.state ? `<span class="chip ${classFor(moveit.state)}">${escapeHtml(moveit.state)}</span>` : '-', { raw: true }),
-        teachMetric('Collision', collision.state ? `<span class="chip ${classFor(collision.state)}">${escapeHtml(collision.state)}</span>` : '-', { raw: true }),
-        teachMetric('Start Error', Number.isFinite(info?.max_error) ? `${fmt(info.max_error)} rad` : '-'),
-        teachMetric('Worst Joint', text(info?.worst_joint)),
-        teachMetric('Prepared Jump', Number.isFinite(preparedJump) ? `${fmt(preparedJump)} rad` : '-'),
-        teachMetric('Prepared Velocity', Number.isFinite(preparedVelocity) ? `${fmt(preparedVelocity)} rad/s` : '-'),
-        teachMetric('Auto Align Time', `${fmt(estimate.alignDuration, 1)} s`),
-        teachMetric('Estimated Time', `${fmt(estimate.estimatedDuration, 1)} s`),
-        teachMetric('Points', estimate.trajectoryPoints),
-      ].join('');
-    };
-    const replayEstimate = (info) => {
-      const speed = Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 1.5);
-      const maxError = Number(info?.max_error);
-      const alignDuration = Math.min(Math.max(Number.isFinite(maxError) && maxError > 0 ? maxError / 0.15 : 3.0, 3.0), 10.0);
-      const alignSteps = Math.min(Math.max(Math.round(Number(teachReplaySettings.alignSteps)), 2), 200);
-      const finalHold = 1.0;
-      const useAlign = String(info?.start_band || '').toLowerCase() === 'align';
-      const recordDuration = Number(info?.duration_sec);
-      const replayDuration = Number.isFinite(recordDuration) ? recordDuration / Math.max(speed, 0.01) : NaN;
-      return {
-        speed,
-        alignDuration,
-        alignSteps,
-        finalHold,
-        useAlign,
-        estimatedDuration: (Number.isFinite(replayDuration) ? replayDuration : 0) + (useAlign ? alignDuration : 0) + finalHold,
-        trajectoryPoints: (Number(info?.samples) || 0) + (useAlign ? alignSteps : 0) + ((Number(info?.samples) || 0) > 0 && finalHold > 0 ? 1 : 0),
-      };
-    };
-    const replaySettingsPayload = () => ({
-      replay_speed: Math.min(Math.max(Number(teachReplaySettings.replaySpeed), 0.1), 1.5),
-      align_duration: replayEstimate(latestTeachFileInfo).alignDuration,
-      align_steps: Math.min(Math.max(Math.round(Number(teachReplaySettings.alignSteps)), 2), 200),
-      final_hold_sec: 1.0,
-    });
-    const renderReplayParams = (info) => {
-      const estimate = replayEstimate(info);
-      return [
-        teachMetric('Replay Speed', `${fmt(estimate.speed, 1)} x`),
-        teachMetric('Estimated Duration', `${fmt(estimate.estimatedDuration, 1)} s`),
-        teachMetric('Trajectory Points', estimate.trajectoryPoints),
-      ].join('');
-    };
-    const addReplayEvent = (message) => {
-      const now = new Date().toLocaleTimeString();
-      replayEvents.unshift(`${now} ${message}`);
-      replayEvents.splice(8);
-      if (!isDetailsOpen('replay-event-log-panel')) return;
-      document.getElementById('replay-event-log').innerHTML = replayEvents.length
-        ? replayEvents.map((item) => `<div class="event-item">${escapeHtml(item)}</div>`).join('')
-        : '<div class="empty">No replay events yet</div>';
-    };
-    let latestStatusData = null;
-    const renderOptionalDetails = (data) => {
-      if (!data) return;
-      if (isDetailsOpen('replay-event-log-panel')) {
-        document.getElementById('replay-event-log').innerHTML = replayEvents.length
-          ? replayEvents.map((item) => `<div class="event-item">${escapeHtml(item)}</div>`).join('')
-          : '<div class="empty">No replay events yet</div>';
-      }
-    };
-    const attachDetailsUnloaders = () => {
-      [
-        ['replay-event-log-panel', ['replay-event-log']],
-      ].forEach(([panelId, bodyIds]) => {
-        const panel = document.getElementById(panelId);
-        if (!panel) return;
-        panel.addEventListener('toggle', () => {
-          if (panel.open) {
-            renderOptionalDetails(latestStatusData);
-          } else {
-            bodyIds.forEach((id) => clearOptionalDetails(id));
-          }
-        });
-      });
-    };
-    const updateTeachDryRunButton = (info) => {
-      const band = String(info?.start_band || '').toLowerCase();
-      const button = document.getElementById('run-teach-dry-run');
-      button.disabled = isCheckMode || !['direct', 'align', 'moveit_align'].includes(band);
-      const replayButton = document.getElementById('run-teach-replay');
-      const stopButton = document.getElementById('stop-teach-replay');
-      const dryRunMatches = lastTeachDryRun?.accepted === true &&
-        lastTeachDryRun?.record_path === info?.path &&
-        lastTeachDryRun?.start_band === info?.start_band &&
-        Number(lastTeachDryRun?.max_error ?? NaN) === Number(info?.max_error ?? NaN);
-      replayButton.disabled = isCheckMode || !webExecuteEnabled || !dryRunMatches || !['direct', 'align', 'moveit_align'].includes(band);
-      const replayState = String(statusObj(previewState.latestTeleop?.replay).state || '').toLowerCase();
-      stopButton.disabled = !['replaying', 'cancel_requested'].includes(replayState);
-    };
-    const refreshTeachFileInfo = async (options = {}) => {
-      if (!options.force && !isControlCardOpen('teach-trajectory-card')) return;
-      try {
-        const suffix = selectedTeachRecordPath ? `?path=${encodeURIComponent(selectedTeachRecordPath)}` : '';
-        const response = await fetch(`/api/teach_record_info${suffix}`);
-        const info = await response.json();
-        latestTeachFileInfo = info;
-        setHtml('replay-precheck-summary', renderReplayPrecheckSummary(info));
-        setHtml('teach-file-details', renderTeachFileInfo(info));
-        setHtml('teach-record-summary', renderTeachRecordSummary(info, previewState.latestTeleop?.recording));
-        setHtml('teach-params-details', renderReplayParams(info));
-        updateTeachDryRunButton(info);
-      } catch (error) {
-        setHtml('replay-precheck-summary', `<div class="empty">Precheck unavailable: ${escapeHtml(error.message)}</div>`);
-        setHtml('teach-file-details', `<div class="empty">Teach record file check failed: ${escapeHtml(error.message)}</div>`);
-        document.getElementById('run-teach-dry-run').disabled = true;
-        document.getElementById('run-teach-replay').disabled = true;
-        document.getElementById('stop-teach-replay').disabled = true;
-        setHtml('teach-params-details', `<div class="empty">Teach replay parameters unavailable: ${escapeHtml(error.message)}</div>`);
-      }
-    };
-    const refreshTeachRecords = async () => {
-      try {
-        const response = await fetch('/api/teach_records');
-        const payload = await response.json();
-        const select = document.getElementById('teach-record-select');
-        const current = selectedTeachRecordPath || '';
-        const records = (payload.records || []).slice(0, 10);
-        select.innerHTML = '<option value="" disabled selected>Choose recorded file</option>' +
-          records.map((record) => `<option value="${escapeHtml(record.path)}">${escapeHtml(record.name || record.path)}</option>`).join('');
-        select.value = current;
-      } catch (error) {
-        document.getElementById('teach-file-details').innerHTML =
-          `<div class="empty">Teach record list failed: ${escapeHtml(error.message)}</div>`;
-      }
-    };
-    const selectTeachRecord = async (path) => {
-      selectedTeachRecordPath = path || '';
-      const selectedName = selectedTeachRecordPath.split('/').pop() || selectedTeachRecordPath.split('\\\\').pop();
-      if (selectedName) {
-        document.getElementById('teach-record-name').value = selectedName;
-      }
-      lastTeachDryRun = null;
-      document.getElementById('teach-dry-run-status').textContent =
-        selectedTeachRecordPath
-          ? `Selected teach record: ${selectedTeachRecordPath}`
-          : 'Choose a recorded file before checking trajectory.';
-      addReplayEvent(selectedTeachRecordPath ? `selected record: ${selectedTeachRecordPath}` : 'record selection cleared');
-      await refreshTeachFileInfo();
-    };
-    const previewState = {
-      active: false,
-      targets: {},
-      latestJoints: {},
-      executing: false,
-      latestTeleop: {},
-    };
-    const executeSettings = {
-      maxDelta: 0.8,
-      duration: 3.0,
-      maxSpeed: Number(panelConfig.web_execute?.max_joint_speed_rad_s) || 1.5,
-    };
-    const executeMaxDeltaLimit = Number(panelConfig.web_execute?.max_delta_rad) || 1.5;
-    const gripperSettings = {
-      maxEffort: Number(panelConfig.web_gripper?.max_effort) || 0.3,
-    };
-    const keyboardSettings = {
-      enabled: false,
-      stepRad: Number(panelConfig.web_keyboard?.step_rad) || 0.02,
-      minStepRad: Number(panelConfig.web_keyboard?.min_step_rad) || 0.005,
-      maxStepRad: Number(panelConfig.web_keyboard?.max_step_rad) || 0.1,
-      duration: Number(panelConfig.web_keyboard?.duration) || 0.2,
-      minDuration: Number(panelConfig.web_keyboard?.min_duration) || 0.1,
-      maxDuration: Number(panelConfig.web_keyboard?.max_duration) || 2.0,
-      maxSpeed: Number(panelConfig.web_keyboard?.max_joint_speed_rad_s) || 0.5,
-    };
-    const teachReplaySettings = {
-      replaySpeed: Number(panelConfig.teach?.replay_speed) || 1.0,
-      alignSteps: Number(panelConfig.teach?.align_steps) || 30,
-    };
-    const clamp = (value, min, max) => Math.min(Math.max(Number(value), min), max);
-    const makeSlider = (name, mode = 'live') => {
-      const [min, max] = jointLimits[name] || [-3.1416, 3.1416];
-      const isGripper = name === 'gripper';
-      const isPreview = mode === 'preview';
-      const prefix = isPreview ? 'preview' : 'slider';
-      return `
-        <div class="joint-slider" id="${prefix}-row-${name}">
-          <div class="joint-name">${name}</div>
-          <input id="${prefix}-${name}" type="range" min="${min}" max="${max}" step="0.0001" value="0" ${isPreview ? '' : 'disabled'}>
-          <div class="joint-values">
-            <strong id="${prefix}-rad-${name}">-</strong> ${isGripper ? 'm' : 'rad'}
-            <span id="${prefix}-deg-wrap-${name}">${isGripper ? '' : ' / <span id="' + prefix + '-deg-' + name + '">-</span> deg'}</span>
-            <div class="joint-limit">${Number(min).toFixed(2)} .. ${Number(max).toFixed(2)}</div>
-          </div>
-        </div>`;
-    };
-    document.getElementById('joint-sliders').innerHTML = sliderNames.map(makeSlider).join('');
-    document.getElementById('preview-sliders').innerHTML = sliderNames.map((name) => makeSlider(name, 'preview')).join('');
-    const robotViewer = {
-      scene: null,
-      camera: null,
-      renderer: null,
-      controls: null,
-      grid: null,
-      robot: null,
-      gripperVisuals: null,
-      ready: false,
-      renderPending: false,
-    };
-    const objectNamePath = (object) => {
-      const names = [];
-      let cursor = object;
-      while (cursor) {
-        if (cursor.name) names.push(String(cursor.name).toLowerCase());
-        cursor = cursor.parent;
-      }
-      return names.join('/');
-    };
-    const markGripperDebug = (gripperVisuals, opening = 0) => {
-      window.__rebotGripperDebug = {
-        leftCount: gripperVisuals.left.length,
-        rightCount: gripperVisuals.right.length,
-        leftNames: gripperVisuals.left.map(({ object }) => objectNamePath(object)),
-        rightNames: gripperVisuals.right.map(({ object }) => objectNamePath(object)),
-        lastOpening: opening,
-        lastLeftY: gripperVisuals.left.map(({ object }) => object.position.y),
-        lastRightY: gripperVisuals.right.map(({ object }) => object.position.y),
-      };
-      document.body.dataset.gripperLeftCount = String(gripperVisuals.left.length);
-      document.body.dataset.gripperRightCount = String(gripperVisuals.right.length);
-      document.body.dataset.gripperOpening = String(opening);
-      document.body.dataset.gripperLeftY = gripperVisuals.left.map(({ object }) => object.position.y.toFixed(6)).join(',');
-      document.body.dataset.gripperRightY = gripperVisuals.right.map(({ object }) => object.position.y.toFixed(6)).join(',');
-    };
-    const addGripperVisual = (gripperVisuals, side, object) => {
-      if (!object) return;
-      const list = gripperVisuals[side];
-      if (list.some((entry) => entry.object === object)) return;
-      list.push({ object, base: object.position.clone() });
-    };
-    const namedRobotObject = (robot, name) => {
-      return robot?.visual?.[name] || robot?.frames?.[name] || robot?.links?.[name] || null;
-    };
-    const viewerStatus = (message) => {
-      const el = document.getElementById('robot-view-status');
-      if (el) el.textContent = message;
-    };
-    const renderRobotFrame = () => {
-      robotViewer.renderPending = false;
-      if (!robotViewer.renderer || !robotViewer.scene || !robotViewer.camera) return;
-      robotViewer.controls?.update();
-      robotViewer.renderer.render(robotViewer.scene, robotViewer.camera);
-    };
-    const scheduleRobotRender = () => {
-      if (robotViewer.renderPending) return;
-      robotViewer.renderPending = true;
-      requestAnimationFrame(renderRobotFrame);
-    };
-    const initRobotViewer = async () => {
-      const canvas = document.getElementById('robot-view');
-      const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x101820);
-      const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10);
-      camera.position.set(0.55, -0.75, 0.45);
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 0, 0.18);
-      controls.update();
-      controls.addEventListener('change', scheduleRobotRender);
-      scene.add(new THREE.HemisphereLight(0xffffff, 0x324055, 1.9));
-      const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      keyLight.position.set(0.5, -0.6, 0.8);
-      scene.add(keyLight);
-      const grid = new THREE.GridHelper(0.8, 16, 0x5b6775, 0x27313c);
-      grid.rotation.x = Math.PI / 2;
-      grid.visible = false;
-      scene.add(grid);
-      robotViewer.grid = grid;
-      robotViewer.scene = scene;
-      robotViewer.camera = camera;
-      robotViewer.renderer = renderer;
-      robotViewer.controls = controls;
-
-      const loader = new URDFLoader();
-      const robot = await new Promise((resolve, reject) => {
-        loader.load('/robot/urdf', resolve, undefined, reject);
-      });
-      robot.rotation.x = -Math.PI / 2;
-      robot.traverse((object) => {
-        if (object.isMesh) {
-          object.castShadow = false;
-          object.receiveShadow = false;
-          if (object.material) {
-            object.material.color?.set(0xaeb7c2);
-            object.material.roughness = 0.62;
-            object.material.metalness = 0.12;
-            object.material.needsUpdate = true;
-          }
-        }
-      });
-      const gripperVisuals = {
-        left: [],
-        right: [],
-      };
-      addGripperVisual(gripperVisuals, 'left', namedRobotObject(robot, 'left_finger'));
-      addGripperVisual(gripperVisuals, 'right', namedRobotObject(robot, 'right_finger'));
-      if (!gripperVisuals.left.length || !gripperVisuals.right.length) {
-        robot.traverse((object) => {
-          const name = objectNamePath(object);
-          if (!gripperVisuals.left.length && name.includes('left_finger')) addGripperVisual(gripperVisuals, 'left', object);
-          if (!gripperVisuals.right.length && name.includes('right_finger')) addGripperVisual(gripperVisuals, 'right', object);
-        });
-      }
-      scene.add(robot);
-      robotViewer.robot = robot;
-      robotViewer.gripperVisuals = gripperVisuals;
-      markGripperDebug(gripperVisuals);
-      const resize = () => {
-        const rect = canvas.getBoundingClientRect();
-        renderer.setSize(rect.width, rect.height, false);
-        camera.aspect = rect.width / Math.max(rect.height, 1);
-        camera.updateProjectionMatrix();
-        scheduleRobotRender();
-      };
-      window.addEventListener('resize', resize);
-      resize();
-      robotViewer.ready = true;
-      scheduleRobotRender();
-      viewerStatus('3D view live: following joint_states and gripper state');
-    };
-    const jointsFromTargets = (targets) => {
-      const result = {};
-      sliderNames.forEach((name) => {
-        if (Number.isFinite(Number(targets[name]))) {
-          result[name] = { position: Number(targets[name]) };
-        }
-      });
-      return result;
-    };
-    const updateRobotViewer = (joints) => {
-      if (!robotViewer.ready) return;
-      armJointNames.forEach((name) => {
-        const state = joints[name];
-        const joint = robotViewer.robot?.joints?.[name];
-        const position = state && Number.isFinite(Number(state.position)) ? Number(state.position) : NaN;
-        if (!joint || !Number.isFinite(position)) return;
-        joint.setJointValue(position);
-      });
-      const gripper = joints.gripper;
-      const gripperPosition = gripper && Number.isFinite(Number(gripper.position)) ? Number(gripper.position) : NaN;
-      if (Number.isFinite(gripperPosition) && robotViewer.gripperVisuals) {
-        const [closed, open] = jointLimits.gripper || [0.0, 0.09];
-        const opening = clamp(gripperPosition, closed, open) - Number(closed);
-        const halfTravel = opening * 0.5;
-        robotViewer.gripperVisuals.left.forEach(({ object, base }) => {
-          object.position.copy(base);
-          object.position.y += halfTravel;
-        });
-        robotViewer.gripperVisuals.right.forEach(({ object, base }) => {
-          object.position.copy(base);
-          object.position.y -= halfTravel;
-        });
-        markGripperDebug(robotViewer.gripperVisuals, opening);
-      }
-      scheduleRobotRender();
-    };
-    initRobotViewer().catch((error) => viewerStatus(`3D view unavailable: ${error.message}`));
-    document.getElementById('toggle-grid').addEventListener('click', () => {
-      if (!robotViewer.grid) return;
-      robotViewer.grid.visible = !robotViewer.grid.visible;
-      scheduleRobotRender();
-    });
-    const updateSlider = (name, joint, mode = 'live') => {
-      const prefix = mode === 'preview' ? 'preview' : 'slider';
-      const slider = document.getElementById(`${prefix}-${name}`);
-      const radLabel = document.getElementById(`${prefix}-rad-${name}`);
-      const degLabel = document.getElementById(`${prefix}-deg-${name}`);
-      const position = joint && Number.isFinite(Number(joint.position)) ? Number(joint.position) : NaN;
-      if (!Number.isFinite(position)) {
-        radLabel.textContent = '-';
-        if (degLabel) degLabel.textContent = '-';
-        return;
-      }
-      const [min, max] = jointLimits[name] || [-3.1416, 3.1416];
-      slider.min = min;
-      slider.max = max;
-      slider.value = clamp(position, min, max);
-      radLabel.textContent = fmt(position);
-      if (degLabel) degLabel.textContent = deg(position);
-    };
-    const syncPreviewFromLive = () => {
-      sliderNames.forEach((name) => {
-        const joint = previewState.latestJoints[name];
-        const position = joint && Number.isFinite(Number(joint.position)) ? Number(joint.position) : 0;
-        const [min, max] = jointLimits[name] || [-3.1416, 3.1416];
-        previewState.targets[name] = clamp(position, min, max);
-        updateSlider(name, { position: previewState.targets[name] }, 'preview');
-      });
-      previewState.active = false;
-      document.getElementById('web-teleop-card').classList.remove('preview-active');
-      document.getElementById('execute-preview').disabled = true;
-      document.getElementById('stop-execute').disabled = true;
-      document.getElementById('execute-status').textContent = 'Preview synced to live state. Move a target slider before executing.';
-      updateRobotViewer(previewState.latestJoints);
-      viewerStatus('3D view live: following joint_states and gripper state');
-    };
-    const updateMotorRows = (joints) => {
-      const tbody = document.getElementById('joints');
-      const entries = Object.entries(joints || {}).sort();
-      if (!entries.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">Waiting for joint state</td></tr>';
-        motorRowsByName.clear();
-        return;
-      }
-      const liveNames = new Set(entries.map(([name]) => name));
-      motorRowsByName.forEach((row, name) => {
-        if (!liveNames.has(name)) {
-          row.remove();
-          motorRowsByName.delete(name);
-        }
-      });
-      if (tbody.querySelector('.empty')) {
-        tbody.innerHTML = '';
-        motorRowsByName.clear();
-      }
-      entries.forEach(([name, joint]) => {
-        let row = motorRowsByName.get(name);
-        if (!row) {
-          row = document.createElement('tr');
-          row.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
-          tbody.appendChild(row);
-          motorRowsByName.set(name, row);
-        }
-        const cells = row.children;
-        cells[0].textContent = name;
-        cells[1].textContent = fmt(joint.position);
-        cells[2].textContent = fmt(joint.velocity);
-        cells[3].textContent = fmt(joint.torque);
-        cells[4].textContent = joint.status_code ?? '-';
-      });
-    };
-    const previewArmTargets = () => {
-      const result = {};
-      const missing = [];
-      armJointNames.forEach((name) => {
-        const target = Number(previewState.targets[name]);
-        const live = Number(previewState.latestJoints[name]?.position);
-        if (Number.isFinite(target)) {
-          result[name] = target;
-        } else if (Number.isFinite(live)) {
-          result[name] = live;
-        } else {
-          missing.push(name);
-        }
-      });
-      return { result, missing };
-    };
-    const maxPreviewDelta = () => {
-      let maxDelta = 0;
-      armJointNames.forEach((name) => {
-        const live = previewState.latestJoints[name]?.position;
-        const target = previewState.targets[name];
-        if (Number.isFinite(Number(live)) && Number.isFinite(Number(target))) {
-          maxDelta = Math.max(maxDelta, Math.abs(Number(target) - Number(live)));
-        }
-      });
-      return maxDelta;
-    };
-    const speedLimitForJoint = (name) => {
-      const configured = Number(panelConfig.joint_velocity_limits?.[name]);
-      return Number.isFinite(configured) ? Math.min(configured, executeSettings.maxSpeed) : executeSettings.maxSpeed;
-    };
-    const speedCheck = () => {
-      let worst = { name: '', speed: 0, limit: executeSettings.maxSpeed, minDuration: 0 };
-      armJointNames.forEach((name) => {
-        const live = Number(previewState.latestJoints[name]?.position);
-        const target = Number(previewState.targets[name]);
-        if (!Number.isFinite(live) || !Number.isFinite(target)) return;
-        const limit = speedLimitForJoint(name);
-        const distance = Math.abs(target - live);
-        const speed = distance / Math.max(executeSettings.duration, 1e-6);
-        if (speed > worst.speed) {
-          worst = { name, speed, limit, minDuration: distance / Math.max(limit, 1e-6) };
-        }
-      });
-      return worst;
-    };
-    const bindExecuteSetting = (inputId, key, min, max) => {
-      const input = document.getElementById(inputId);
-      const update = (value) => {
-        const clamped = clamp(value, min, max);
-        executeSettings[key] = clamped;
-        input.value = clamped.toFixed(key === 'duration' ? 1 : 2);
-      };
-      input.addEventListener('change', (event) => update(event.target.value));
-      update(executeSettings[key]);
-    };
-    const executePreview = async (options = {}) => {
-      if (!previewState.active || previewState.executing) return { accepted: false, message: 'preview is not active' };
-      const delta = maxPreviewDelta();
-      const targets = previewArmTargets();
-      if (targets.missing.length) {
-        document.getElementById('execute-status').textContent = `Cannot execute: missing live joint state for ${targets.missing.join(', ')}`;
-        return { accepted: false, message: 'missing live joint state' };
-      }
-      const speed = speedCheck();
-      if (speed.speed > speed.limit) {
-        document.getElementById('execute-status').textContent =
-          `${speed.name} speed too high: ${fmt(speed.speed, 3)} rad/s > ${fmt(speed.limit, 3)} rad/s. Use duration >= ${fmt(speed.minDuration, 2)}s.`;
-        return { accepted: false, message: 'speed too high' };
-      }
-      if (options.confirm !== false) {
-        const confirmed = window.confirm(
-          `Send preview target to real arm?\n` +
-          `Target delta: ${fmt(delta)} rad\n` +
-          `Allowed delta: ${fmt(executeSettings.maxDelta)} rad\n` +
-          `Duration: ${fmt(executeSettings.duration, 2)} s\n` +
-          `Speed limit: ${fmt(executeSettings.maxSpeed, 2)} rad/s`
-        );
-        if (!confirmed) return { accepted: false, message: 'canceled' };
-      }
-      previewState.executing = true;
-      const button = document.getElementById('execute-preview');
-      const stopButton = document.getElementById('stop-execute');
-      const status = document.getElementById('execute-status');
-      button.disabled = true;
-      stopButton.disabled = false;
-      status.textContent = 'Sending preview target...';
-      try {
-        const response = await fetch('/api/execute_preview', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            confirm: 'EXECUTE',
-            joint_positions: targets.result,
-            max_delta_rad: executeSettings.maxDelta,
-            max_joint_speed_rad_s: executeSettings.maxSpeed,
-            duration: executeSettings.duration,
-          }),
-        });
-        const result = await response.json();
-        status.textContent = result.message || (result.accepted ? 'Accepted' : 'Rejected');
-        if (!result.accepted) {
-          button.disabled = false;
-          stopButton.disabled = true;
-        }
-        return result;
-      } catch (error) {
-        status.textContent = `Execute request failed: ${error.message}`;
-        button.disabled = false;
-        stopButton.disabled = true;
-        return { accepted: false, message: error.message };
-      } finally {
-        previewState.executing = false;
-      }
-    };
-    const stopExecute = async () => {
-      const stopButton = document.getElementById('stop-execute');
-      const status = document.getElementById('execute-status');
-      stopButton.disabled = true;
-      status.textContent = 'Requesting stop...';
-      try {
-        const response = await fetch('/api/stop_execute', { method: 'POST' });
-        const result = await response.json();
-        status.textContent = result.message || (result.accepted ? 'Stop requested' : 'Stop rejected');
-        if (!result.accepted && result.state !== 'idle') {
-          stopButton.disabled = false;
-        }
-      } catch (error) {
-        status.textContent = `Stop request failed: ${error.message}`;
-        stopButton.disabled = false;
-      }
-    };
-    const setGripper = async (options = {}) => {
-      const target = Number(previewState.targets.gripper);
-      const live = Number(previewState.latestJoints.gripper?.position);
-      const position = Number.isFinite(target) ? target : live;
-      if (!Number.isFinite(position)) {
-        document.getElementById('execute-status').textContent = 'Cannot set gripper: missing gripper state';
-        return { accepted: false, message: 'missing gripper state' };
-      }
-      if (options.confirm !== false) {
-        const confirmed = window.confirm(`Set gripper target?\nPosition: ${fmt(position)} m`);
-        if (!confirmed) return { accepted: false, message: 'canceled' };
-      }
-      const button = document.getElementById('execute-preview');
-      const status = document.getElementById('execute-status');
-      button.disabled = true;
-      status.textContent = 'Sending gripper target...';
-      try {
-        const response = await fetch('/api/set_gripper', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            confirm: 'SET_GRIPPER',
-            position,
-            max_effort: gripperSettings.maxEffort,
-          }),
-        });
-        const result = await response.json();
-        status.textContent = result.message || (result.accepted ? 'Gripper target accepted' : 'Gripper target rejected');
-        if (!result.accepted) {
-          button.disabled = false;
-        }
-        return result;
-      } catch (error) {
-        status.textContent = `Set gripper request failed: ${error.message}`;
-        button.disabled = false;
-        return { accepted: false, message: error.message };
-      }
-    };
-    const executePreviewAndGripper = async () => {
-      const gripperTarget = Number(previewState.targets.gripper);
-      const gripperLive = Number(previewState.latestJoints.gripper?.position);
-      const gripperPosition = Number.isFinite(gripperTarget) ? gripperTarget : gripperLive;
-      const armDelta = maxPreviewDelta();
-      const confirmed = window.confirm(
-        `Execute preview target?\n` +
-        `Arm and gripper commands are sent through existing safe APIs.\n` +
-        `Max joint delta: ${fmt(armDelta)} rad\n` +
-        `Duration: ${fmt(executeSettings.duration, 2)} s\n` +
-        `Gripper: ${Number.isFinite(gripperPosition) ? fmt(gripperPosition) + ' m' : 'unavailable'}`
-      );
-      if (!confirmed) return;
-      if (armDelta > 1e-5) {
-        const armResult = await executePreview({ confirm: false });
-        if (armResult && armResult.accepted === false) return;
-      }
-      if (Number.isFinite(gripperPosition) && webExecuteEnabled) {
-        await setGripper({ confirm: false });
-      }
-    };
-    const runTeachDryRun = async () => {
-      const button = document.getElementById('run-teach-dry-run');
-      const status = document.getElementById('teach-dry-run-status');
-      const band = String(latestTeachFileInfo?.start_band || '').toLowerCase();
-      if (isCheckMode) {
-        status.textContent = 'Check mode uses automatic system dry-run; this page is read-only.';
-        return;
-      }
-      if (!['direct', 'align', 'moveit_align'].includes(band)) {
-        status.textContent = `Dry-run blocked: file check is ${band || 'unknown'}`;
-        return;
-      }
-      const confirmed = window.confirm(
-        `Run teach dry-run check?\n` +
-        `No real trajectory will be sent.\n` +
-        `File check: ${band}\n` +
-        `Record: ${latestTeachFileInfo?.path || '-'}`
-      );
-      if (!confirmed) return;
-      button.disabled = true;
-      status.textContent = 'Running dry-run check...';
-      addReplayEvent(`dry-run requested: ${latestTeachFileInfo?.path || '-'}`);
-      try {
-        const response = await fetch('/api/teach_dry_run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            record_path: latestTeachFileInfo?.path || undefined,
-            settings: replaySettingsPayload(),
-          }),
-        });
-        const result = await response.json();
-        lastTeachDryRun = result.accepted ? result : null;
-        status.textContent = result.message || (result.accepted ? 'Dry-run accepted' : 'Dry-run blocked');
-        addReplayEvent(`${result.accepted ? 'dry-run accepted' : 'dry-run blocked'}: ${result.message || '-'}`);
-        refreshTeachFileInfo();
-      } catch (error) {
-        status.textContent = `Dry-run request failed: ${error.message}`;
-        addReplayEvent(`dry-run request failed: ${error.message}`);
-      } finally {
-        updateTeachDryRunButton(latestTeachFileInfo);
-      }
-    };
-    const runTeachReplay = async () => {
-      const replayButton = document.getElementById('run-teach-replay');
-      const status = document.getElementById('teach-dry-run-status');
-      const band = String(latestTeachFileInfo?.start_band || '').toLowerCase();
-      if (isCheckMode) {
-        status.textContent = 'Replay blocked: check mode is read-only.';
-        return;
-      }
-      if (replayButton.disabled || !lastTeachDryRun?.accepted) {
-        status.textContent = 'Real replay blocked: run dry-run first and keep file check valid.';
-        return;
-      }
-      const confirmed = window.confirm(
-        `Execute real teach replay?\n` +
-        `This will send a FollowJointTrajectory goal to the arm.\n` +
-        `File check: ${band}\n` +
-        `Max start error: ${fmt(Number(latestTeachFileInfo?.max_error))} rad\n` +
-        `Replay speed: ${fmt(Number(teachReplaySettings.replaySpeed), 1)}x\n` +
-        `Align: auto (${fmt(replayEstimate(latestTeachFileInfo).alignDuration, 1)}s)\n` +
-        `Final hold: 1.0s\n` +
-        `Estimated duration: ${fmt(replayEstimate(latestTeachFileInfo).estimatedDuration, 1)}s\n` +
-        `Estimated points: ${replayEstimate(latestTeachFileInfo).trajectoryPoints}\n` +
-        `Record: ${latestTeachFileInfo?.path || '-'}`
-      );
-      if (!confirmed) return;
-      replayButton.disabled = true;
-      status.textContent = 'Sending real teach replay trajectory...';
-      addReplayEvent(`real replay requested: ${latestTeachFileInfo?.path || '-'}`);
-      try {
-        const response = await fetch('/api/teach_replay_execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            record_path: latestTeachFileInfo?.path || undefined,
-            dry_run_token: lastTeachDryRun,
-            settings: replaySettingsPayload(),
-          }),
-        });
-        const result = await response.json();
-        status.textContent = result.message || (result.accepted ? 'Replay accepted' : 'Replay blocked');
-        addReplayEvent(`${result.accepted ? 'real replay accepted' : 'real replay blocked'}: ${result.message || '-'}`);
-        if (!result.accepted) {
-          updateTeachDryRunButton(latestTeachFileInfo);
-        }
-      } catch (error) {
-        status.textContent = `Replay request failed: ${error.message}`;
-        addReplayEvent(`real replay request failed: ${error.message}`);
-        updateTeachDryRunButton(latestTeachFileInfo);
-      }
-    };
-    const stopTeachReplay = async () => {
-      const button = document.getElementById('stop-teach-replay');
-      const status = document.getElementById('teach-dry-run-status');
-      button.disabled = true;
-      status.textContent = 'Requesting teach replay stop...';
-      addReplayEvent('stop replay requested');
-      try {
-        const response = await fetch('/api/teach_replay_stop', { method: 'POST' });
-        const result = await response.json();
-        status.textContent = result.message || (result.accepted ? 'Teach replay stop requested' : 'Teach replay stop blocked');
-        addReplayEvent(`${result.accepted ? 'stop replay accepted' : 'stop replay blocked'}: ${result.message || '-'}`);
-        if (!result.accepted && result.state !== 'idle') {
-          button.disabled = false;
-        }
-      } catch (error) {
-        status.textContent = `Teach replay stop failed: ${error.message}`;
-        addReplayEvent(`stop replay failed: ${error.message}`);
-        updateTeachDryRunButton(latestTeachFileInfo);
-      }
-    };
-    const syncTeachRecordButtons = (recordingValue) => {
-      const recording = statusObj(recordingValue || {});
-      const state = String(recording.state || '').toLowerCase();
-      const active = ['starting', 'recording', 'waiting'].includes(state);
-      document.getElementById('start-teach-record').disabled = active || isCheckMode;
-      document.getElementById('stop-teach-record').disabled = !active || isCheckMode;
-    };
-    const startTeachRecord = async () => {
-      const button = document.getElementById('start-teach-record');
-      button.disabled = true;
-      document.getElementById('teach-dry-run-status').textContent = 'Starting gravity compensation and teach recording...';
-      addReplayEvent('teach recording start requested');
-      try {
-        const recordName = String(document.getElementById('teach-record-name')?.value || '').trim();
-        const response = await fetch('/api/teach_record_start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ record_path: recordName }),
-        });
-        const result = await response.json();
-        document.getElementById('teach-dry-run-status').textContent = result.message || (result.accepted ? 'Teach recording started' : 'Teach recording blocked');
-        addReplayEvent(`${result.accepted ? 'teach recording started' : 'teach recording blocked'}: ${result.message || '-'}`);
-        if (result.record_path) {
-          selectedTeachRecordPath = result.record_path;
-          document.getElementById('teach-record-name').value = result.record_path.split('/').pop() || result.record_path;
-        }
-        syncTeachRecordButtons({ state: result.accepted ? 'recording' : 'idle' });
-        await refreshTeachRecords();
-        await refreshTeachFileInfo();
-      } catch (error) {
-        document.getElementById('teach-dry-run-status').textContent = `Teach recording start failed: ${error.message}`;
-        addReplayEvent(`teach recording start failed: ${error.message}`);
-        syncTeachRecordButtons({ state: 'idle' });
-      }
-    };
-    const stopTeachRecord = async () => {
-      const button = document.getElementById('stop-teach-record');
-      button.disabled = true;
-      document.getElementById('teach-dry-run-status').textContent = 'Stopping teach recording and gravity compensation...';
-      addReplayEvent('teach recording stop requested');
-      try {
-        const response = await fetch('/api/teach_record_stop', { method: 'POST' });
-        const result = await response.json();
-        document.getElementById('teach-dry-run-status').textContent = result.message || (result.accepted ? 'Teach recording stopped' : 'Teach recording stop failed');
-        addReplayEvent(`${result.accepted ? 'teach recording stopped' : 'teach recording stop failed'}: ${result.message || '-'}`);
-        syncTeachRecordButtons({ state: 'stopped' });
-        await refreshTeachRecords();
-        await refreshTeachFileInfo();
-      } catch (error) {
-        document.getElementById('teach-dry-run-status').textContent = `Teach recording stop failed: ${error.message}`;
-        addReplayEvent(`teach recording stop failed: ${error.message}`);
-        syncTeachRecordButtons({ state: 'recording' });
-      }
-    };
-    const runArmCommand = async (command, label) => {
-      const buttons = ['arm-safe-home', 'arm-enable', 'arm-disable']
-        .map((id) => document.getElementById(id))
-        .filter(Boolean);
-      if (!webExecuteEnabled) {
-        return;
-      }
-      if (command === 'safe_home') {
-        const confirmed = window.confirm('Run Safe Home now? The arm will move to its configured safe position.');
-        if (!confirmed) return;
-      }
-      buttons.forEach((button) => { button.disabled = true; });
-      try {
-        const response = await fetch(`/api/arm_${command}`, { method: 'POST' });
-        await response.json();
-      } catch (_error) {
-        // The Arm Status card is driven by /arm_status; keep this row visually quiet.
-      } finally {
-        buttons.forEach((button) => { button.disabled = isCheckMode || !webExecuteEnabled; });
-      }
-    };
-    const bindTeachReplaySetting = (rangeId, numberId, key, min, max, digits = 1) => {
-      const range = document.getElementById(rangeId);
-      const number = document.getElementById(numberId);
-      const update = (value) => {
-        const clamped = key === 'alignSteps'
-          ? Math.round(clamp(value, min, max))
-          : clamp(value, min, max);
-        teachReplaySettings[key] = clamped;
-        range.value = clamped;
-        number.value = Number(clamped).toFixed(digits);
-        document.getElementById('replay-precheck-summary').innerHTML = renderReplayPrecheckSummary(latestTeachFileInfo);
-        document.getElementById('teach-params-details').innerHTML = renderReplayParams(latestTeachFileInfo);
-        lastTeachDryRun = null;
-        updateTeachDryRunButton(latestTeachFileInfo);
-      };
-      range.addEventListener('input', (event) => update(event.target.value));
-      number.addEventListener('change', (event) => update(event.target.value));
-      update(teachReplaySettings[key]);
-    };
-    const syncKeyboardButtons = () => {
-      document.getElementById('keyboard-enable').disabled = keyboardSettings.enabled || isCheckMode || !webExecuteEnabled;
-      document.getElementById('keyboard-disable').disabled = !keyboardSettings.enabled;
-    };
-    const bindKeyboardSetting = (numberId, key, min, max, digits = 3) => {
-      const number = document.getElementById(numberId);
-      number.min = min;
-      number.max = max;
-      const update = (value) => {
-        const clamped = clamp(value, min, max);
-        keyboardSettings[key] = clamped;
-        number.value = Number(clamped).toFixed(digits);
-      };
-      number.addEventListener('change', (event) => update(event.target.value));
-      update(keyboardSettings[key]);
-    };
-    const keyboardDurationForStep = () => {
-      const speedDuration = keyboardSettings.stepRad / Math.max(keyboardSettings.maxSpeed, 1e-6);
-      return clamp(Math.max(keyboardSettings.duration, speedDuration), keyboardSettings.minDuration, keyboardSettings.maxDuration);
-    };
-    const enableKeyboardTeleop = async () => {
-      const status = document.getElementById('teleop-state');
-      try {
-        const response = await fetch('/api/keyboard_enable', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            step_rad: keyboardSettings.stepRad,
-            duration: keyboardDurationForStep(),
-            max_joint_speed_rad_s: keyboardSettings.maxSpeed,
-          }),
-        });
-        const result = await response.json();
-        keyboardSettings.enabled = response.ok && result.accepted;
-        setChip('teleop-state', result.state || (result.accepted ? 'ready' : 'rejected'));
-        if (result.message) status.insertAdjacentHTML('beforeend', `<div class="detail">${escapeHtml(result.message)}</div>`);
-      } catch (error) {
-        keyboardSettings.enabled = false;
-        status.innerHTML = `<span class="chip bad">failed</span><div class="detail">${escapeHtml(error.message)}</div>`;
-      }
-      syncKeyboardButtons();
-    };
-    const disableKeyboardTeleop = async () => {
-      const status = document.getElementById('teleop-state');
-      try {
-        const response = await fetch('/api/keyboard_disable', { method: 'POST' });
-        const result = await response.json();
-        keyboardSettings.enabled = false;
-        setChip('teleop-state', result.state || 'disabled');
-        if (result.message) status.insertAdjacentHTML('beforeend', `<div class="detail">${escapeHtml(result.message)}</div>`);
-      } catch (error) {
-        status.innerHTML = `<span class="chip bad">failed</span><div class="detail">${escapeHtml(error.message)}</div>`;
-      }
-      syncKeyboardButtons();
-    };
-    const sendKeyboardKey = async (key) => {
-      if (!keyboardSettings.enabled || isCheckMode || !webExecuteEnabled) return;
-      try {
-        const response = await fetch('/api/keyboard_key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            confirm: 'KEYBOARD_TELEOP',
-            key,
-            step_rad: keyboardSettings.stepRad,
-            duration: keyboardDurationForStep(),
-            max_joint_speed_rad_s: keyboardSettings.maxSpeed,
-          }),
-        });
-        const result = await response.json();
-        setChip('teleop-state', result.accepted ? 'active' : 'rejected');
-        const status = document.getElementById('teleop-state');
-        status.insertAdjacentHTML('beforeend', `<div class="detail">${escapeHtml(result.message || key)}</div>`);
-      } catch (error) {
-        const status = document.getElementById('teleop-state');
-        status.innerHTML = `<span class="chip bad">failed</span><div class="detail">${escapeHtml(error.message)}</div>`;
-      }
-    };
-    bindExecuteSetting('execute-max-delta', 'maxDelta', 0.05, executeMaxDeltaLimit);
-    bindExecuteSetting('execute-duration', 'duration', 1.0, 8.0);
-    bindExecuteSetting('execute-speed', 'maxSpeed', 0.1, 1.5);
-    bindKeyboardSetting('keyboard-step-number', 'stepRad', keyboardSettings.minStepRad, keyboardSettings.maxStepRad, 3);
-    bindKeyboardSetting('keyboard-speed-number', 'maxSpeed', 0.1, executeSettings.maxSpeed, 1);
-    bindTeachReplaySetting('teach-replay-speed', 'teach-replay-speed-number', 'replaySpeed', 0.1, 1.5, 1);
-    sliderNames.forEach((name) => {
-      document.getElementById(`preview-${name}`).addEventListener('input', (event) => {
-        const [min, max] = jointLimits[name] || [-3.1416, 3.1416];
-        previewState.targets[name] = clamp(event.target.value, min, max);
-        updateSlider(name, { position: previewState.targets[name] }, 'preview');
-        previewState.active = true;
-        document.getElementById('web-teleop-card').classList.add('preview-active');
-        document.getElementById('execute-preview').disabled = false;
-        syncRealActionButtons();
-        const speed = speedCheck();
-        const speedText = speed.speed > speed.limit
-          ? ` ${speed.name} speed too high; use duration >= ${fmt(speed.minDuration, 2)}s.`
-          : ` Speed ${fmt(speed.speed, 3)} rad/s <= ${fmt(speed.limit, 3)} rad/s.`;
-        document.getElementById('execute-status').textContent =
-          `Preview target ready. Max delta ${fmt(maxPreviewDelta())} rad. Limit ${fmt(executeSettings.maxDelta)} rad, duration ${fmt(executeSettings.duration, 2)}s.${speedText}`;
-        updateRobotViewer(jointsFromTargets(previewState.targets));
-        viewerStatus('Preview only: browser model target is not sent to hardware');
-      });
-    });
-    document.getElementById('sync-preview').addEventListener('click', syncPreviewFromLive);
-    document.getElementById('execute-preview').addEventListener('click', executePreviewAndGripper);
-    document.getElementById('stop-execute').addEventListener('click', stopExecute);
-    document.getElementById('arm-safe-home').addEventListener('click', () => runArmCommand('safe_home', 'Safe Home'));
-    document.getElementById('arm-enable').addEventListener('click', () => runArmCommand('enable', 'Enable'));
-    document.getElementById('arm-disable').addEventListener('click', () => runArmCommand('disable', 'Disable'));
-    document.getElementById('keyboard-enable').addEventListener('click', enableKeyboardTeleop);
-    document.getElementById('keyboard-disable').addEventListener('click', disableKeyboardTeleop);
-    document.getElementById('start-teach-record').addEventListener('click', startTeachRecord);
-    document.getElementById('stop-teach-record').addEventListener('click', stopTeachRecord);
-    window.addEventListener('keydown', (event) => {
-      const targetTag = String(event.target?.tagName || '').toLowerCase();
-      if (['input', 'textarea', 'select', 'button'].includes(targetTag)) return;
-      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-      if (key === 'Escape') {
-        if (keyboardSettings.enabled) {
-          event.preventDefault();
-          disableKeyboardTeleop();
-        }
-        return;
-      }
-      const mapped = ['1', 'q', '2', 'w', '3', 'e', '4', 'r', '5', 't', '6', 'y'];
-      if (mapped.includes(key)) {
-        event.preventDefault();
-        sendKeyboardKey(key);
-      }
-    });
-    syncKeyboardButtons();
-    document.getElementById('run-teach-dry-run').addEventListener('click', runTeachDryRun);
-    document.getElementById('run-teach-replay').addEventListener('click', runTeachReplay);
-    document.getElementById('stop-teach-replay').addEventListener('click', stopTeachReplay);
-    document.getElementById('load-teach-trajectory').addEventListener('click', loadTeachTrajectory);
-    document.getElementById('refresh-teach-records').addEventListener('click', async () => {
-      await refreshTeachRecords();
-      await refreshTeachFileInfo();
-    });
-    document.getElementById('teach-record-select').addEventListener('change', (event) => {
-      selectTeachRecord(event.target.value);
-    });
-    source.addEventListener('status', (event) => {
-      const data = JSON.parse(event.data);
-      const nowMs = performance.now();
-      const shouldRenderFastPanels = nowMs - lastFastRenderMs > FAST_RENDER_INTERVAL_MS;
-      const shouldRenderSlowPanels = nowMs - lastSlowRenderMs > 1000;
-      latestStatusData = data;
-      previewState.latestJoints = data.joints || {};
-      previewState.latestTeleop = data.teleop || {};
-      if (!shouldRenderFastPanels) return;
-      lastFastRenderMs = nowMs;
-      document.getElementById('mode').textContent = data.arm.mode || '-';
-      document.getElementById('state').textContent = data.arm.state_machine || '-';
-      document.getElementById('enabled').textContent = data.arm.enabled ? 'true' : 'false';
-      setChip('teleop-state', statusObj(data.teleop.status).state || '-');
-      setChip('recording-state', statusObj(data.teleop.recording).state || '-');
-      setChip('replay-state', statusObj(data.teleop.replay).state || '-');
-      const replayStatus = statusObj(data.teleop.replay);
-      const replayKey = JSON.stringify({
-        state: replayStatus.state || '-',
-        message: replayStatus.message || '',
-        points: replayStatus.trajectory_points || '',
-      });
-      if (replayKey !== lastReplayStatusKey) {
-        lastReplayStatusKey = replayKey;
-        if ((replayStatus.state || replayStatus.message) && replayStatus.state !== 'idle') {
-          addReplayEvent(`status ${replayStatus.state || '-'}: ${replayStatus.message || '-'}`);
-        }
-      }
-      const webExecuteState = statusObj(data.teleop.web_execute).state || '-';
-      document.getElementById('stop-execute').disabled = !['active', 'accepted'].includes(String(webExecuteState).toLowerCase());
-      ['arm-safe-home', 'arm-enable', 'arm-disable'].forEach((id) => {
-        const button = document.getElementById(id);
-        if (button) button.disabled = isCheckMode || !webExecuteEnabled;
-      });
-      updateTeachDryRunButton(latestTeachFileInfo);
-      document.getElementById('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
-      syncRealActionButtons();
-      syncTeachRecordButtons(data.teleop.recording);
-      setHtml('teach-record-summary', renderTeachRecordSummary(latestTeachFileInfo, data.teleop.recording));
-      updateMotorRows(data.joints || {});
-      sliderNames.forEach((name) => updateSlider(name, data.joints[name]));
-      if (!previewState.active) {
-        sliderNames.forEach((name) => updateSlider(name, data.joints[name], 'preview'));
-        updateRobotViewer(data.joints);
-      }
-      if (shouldRenderSlowPanels) {
-        lastSlowRenderMs = nowMs;
-        renderOptionalDetails(latestStatusData);
-      }
-      const errors = data.arm.error_codes || [];
-      document.getElementById('errors').innerHTML = errors.length
-        ? errors.map((item) => `<div class="chip bad">${item}</div>`).join('')
-        : '<div class="empty">No errors</div>';
-    });
-    attachControlCardToggles();
-    attachDetailsUnloaders();
-    refreshTeachRecords();
-    refreshTeachFileInfo();
-    setInterval(refreshTeachFileInfo, 5000);
-  </script>
-</body>
-</html>
-"""
 
 
 class TeleopStatusPanelNode(Node):
@@ -2340,12 +167,16 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("green_jump_rad", 0.03)
         self.declare_parameter("yellow_jump_rad", 0.05)
         self.declare_parameter("yellow_max_speed", 0.6)
-        self.declare_parameter("max_replay_velocity_rad_s", 1.5)
-        self.declare_parameter("max_replay_acceleration_rad_s2", 3.0)
-        self.declare_parameter("max_replay_jerk_rad_s3", 8.0)
+        self.declare_parameter("max_replay_velocity_rad_s", 3.0)
+        self.declare_parameter(
+            "max_replay_velocity_rad_s_by_joint",
+            [3.0, 3.0, 3.0, 1.8, 1.8, 1.8],
+        )
+        self.declare_parameter("max_replay_acceleration_rad_s2", 5.0)
+        self.declare_parameter("max_replay_jerk_rad_s3", 20.0)
         self.declare_parameter("large_motion_span_rad", 0.8)
         self.declare_parameter("large_motion_total_rad", 2.5)
-        self.declare_parameter("large_motion_max_speed", 0.4)
+        self.declare_parameter("large_motion_max_speed", 1.0)
         self.declare_parameter("start_hold_sec", 0.8)
         self.declare_parameter("soft_start_duration", 1.0)
         self.declare_parameter("soft_start_steps", 30)
@@ -2375,7 +206,14 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("filter_sample_rate_hz", 150.0)
         self.declare_parameter("resample_enabled", True)
         self.declare_parameter("resample_rate_hz", 150.0)
+        self.declare_parameter("time_parameterization_method", "auto")
         self.declare_parameter("max_prepared_jump_rad", 0.02)
+        self.declare_parameter("replay_monitor_enabled", True)
+        self.declare_parameter("replay_monitor_period_sec", 0.05)
+        self.declare_parameter("replay_monitor_start_grace_sec", 1.0)
+        self.declare_parameter("replay_monitor_violation_grace_sec", 0.30)
+        self.declare_parameter("max_tracking_error_rad", 0.25)
+        self.declare_parameter("max_live_velocity_rad_s", 3.0)
         self.declare_parameter("use_hardware", False)
         self.declare_parameter("panel_mode", "control")
         self.declare_parameter(
@@ -2518,6 +356,10 @@ class TeleopStatusPanelNode(Node):
         self._web_keyboard_speed = float(self.get_parameter("web_keyboard_default_speed_rad_s").value)
         self._teach_replay_lock = threading.Lock()
         self._teach_replay_goal_handle = None
+        self._active_teach_replay_trajectory: JointTrajectory | None = None
+        self._active_teach_replay_started_at: float | None = None
+        self._teach_replay_tracking_violation_since: float | None = None
+        self._teach_replay_monitor_stop_requested = False
         self._last_teach_dry_run: dict | None = None
         sensor_qos_spec = sensor_qos_kwargs()
         sensor_qos = QoSProfile(
@@ -2563,6 +405,10 @@ class TeleopStatusPanelNode(Node):
             )
             self.create_timer(0.1, self._publish_simulated_gripper_state)
         self.create_timer(1.0, self._update_gravity_comp_status)
+        self.create_timer(
+            max(float(self.get_parameter("replay_monitor_period_sec").value), 0.02),
+            self._check_active_replay_tracking,
+        )
         self._server = self._make_server()
         self._server_thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._server_thread.start()
@@ -2570,188 +416,20 @@ class TeleopStatusPanelNode(Node):
         port = int(self.get_parameter("port").value)
         self.get_logger().info(f"teleop status panel available at http://{host}:{port}/")
 
-    def _make_server(self) -> ThreadingHTTPServer:
-        store = self._store
-        node = self
-        urdf_path = self._urdf_path
-        mesh_dir = self._mesh_dir
+    def _make_server(self):
         interval = 1.0 / max(float(self.get_parameter("sse_rate_hz").value), 1.0)
-
-        class Handler(BaseHTTPRequestHandler):
-            def handle(self):  # noqa: D401
-                try:
-                    super().handle()
-                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-                    return
-
-            def do_GET(self):  # noqa: N802
-                url = urlsplit(self.path)
-                route = url.path
-                if route == "/":
-                    body = HTML_PAGE.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/api/status":
-                    body = json.dumps(store.snapshot_dict(), separators=(",", ":")).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/api/config":
-                    body = json.dumps(node._panel_config(), separators=(",", ":")).encode("utf-8")  # noqa: SLF001
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/api/teach_record_info":
-                    query = parse_qs(url.query)
-                    record_path = query.get("path", query.get("record_path", [""]))[0]
-                    body = json.dumps(
-                        node._teach_record_info(record_path or None),  # noqa: SLF001
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/api/teach_records":
-                    body = json.dumps(node._teach_records(), separators=(",", ":")).encode("utf-8")  # noqa: SLF001
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/api/teach_trajectory":
-                    query = parse_qs(url.query)
-                    record_path = query.get("path", [""])[0]
-                    max_points = int(query.get("max_points", ["500"])[0])
-                    body = json.dumps(
-                        node._teach_trajectory(record_path or None, max_points=max_points),  # noqa: SLF001
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/robot/urdf":
-                    body = rewrite_package_mesh_uris(urdf_path.read_text(encoding="utf-8")).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/xml; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route.startswith("/robot/meshes/"):
-                    name = unquote(route.removeprefix("/robot/meshes/"))
-                    path = safe_mesh_path(mesh_dir, name)
-                    if path is None:
-                        self.send_response(404)
-                        self.end_headers()
-                        return
-                    body = path.read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "model/stl")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
-                if route == "/events":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Cache-Control", "no-cache")
-                    self.end_headers()
-                    try:
-                        while True:
-                            payload = encode_sse_event(store.snapshot_dict()).encode("utf-8")
-                            self.wfile.write(payload)
-                            self.wfile.flush()
-                            time.sleep(interval)
-                    except Exception:
-                        return
-                self.send_response(404)
-                self.end_headers()
-
-            def do_POST(self):  # noqa: N802
-                if self.path not in ("/api/execute_preview", "/api/stop_execute", "/api/set_gripper", "/api/keyboard_enable", "/api/keyboard_disable", "/api/keyboard_key", "/api/teach_record_start", "/api/teach_record_stop", "/api/teach_dry_run", "/api/teach_replay_execute", "/api/teach_replay_stop", "/api/arm_safe_home", "/api/arm_enable", "/api/arm_disable"):
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                try:
-                    if self.path == "/api/stop_execute":
-                        result = node._handle_stop_execute()  # noqa: SLF001
-                    elif self.path == "/api/arm_safe_home":
-                        result = node._handle_arm_service_command("safe_home")  # noqa: SLF001
-                    elif self.path == "/api/arm_enable":
-                        result = node._handle_arm_service_command("enable")  # noqa: SLF001
-                    elif self.path == "/api/arm_disable":
-                        result = node._handle_arm_service_command("disable")  # noqa: SLF001
-                    elif self.path == "/api/keyboard_disable":
-                        result = node._handle_keyboard_disable()  # noqa: SLF001
-                    elif self.path == "/api/teach_record_start":
-                        length = int(self.headers.get("Content-Length", "0"))
-                        raw = self.rfile.read(length) if length > 0 else b"{}"
-                        payload = json.loads(raw.decode("utf-8"))
-                        if not isinstance(payload, dict):
-                            raise ValueError("payload must be an object")
-                        result = node._handle_teach_record_start(payload)  # noqa: SLF001
-                    elif self.path == "/api/teach_record_stop":
-                        result = node._handle_teach_record_stop()  # noqa: SLF001
-                    elif self.path == "/api/teach_replay_stop":
-                        result = node._handle_teach_replay_stop()  # noqa: SLF001
-                    elif self.path in ("/api/teach_dry_run", "/api/teach_replay_execute"):
-                        length = int(self.headers.get("Content-Length", "0"))
-                        raw = self.rfile.read(length) if length > 0 else b"{}"
-                        payload = json.loads(raw.decode("utf-8"))
-                        if not isinstance(payload, dict):
-                            raise ValueError("payload must be an object")
-                        if self.path == "/api/teach_dry_run":
-                            result = node._handle_teach_dry_run(payload)  # noqa: SLF001
-                        else:
-                            result = node._handle_teach_replay_execute(payload)  # noqa: SLF001
-                    else:
-                        length = int(self.headers.get("Content-Length", "0"))
-                        raw = self.rfile.read(length) if length > 0 else b"{}"
-                        payload = json.loads(raw.decode("utf-8"))
-                        if not isinstance(payload, dict):
-                            raise ValueError("payload must be an object")
-                        if self.path == "/api/set_gripper":
-                            result = node._handle_set_gripper(payload)  # noqa: SLF001
-                        elif self.path == "/api/keyboard_enable":
-                            result = node._handle_keyboard_enable(payload)  # noqa: SLF001
-                        elif self.path == "/api/keyboard_key":
-                            result = node._handle_keyboard_key(payload)  # noqa: SLF001
-                        else:
-                            result = node._handle_execute_preview(payload)  # noqa: SLF001
-                    status = 200 if result.get("accepted") else 400
-                except Exception as exc:
-                    result = {"accepted": False, "message": f"invalid web execute request: {exc}"}
-                    status = 400
-                body = json.dumps(result, separators=(",", ":")).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *_args):
-                return
-
         host = str(self.get_parameter("host").value)
         port = int(self.get_parameter("port").value)
-        return ThreadingHTTPServer((host, port), Handler)
+        return create_status_panel_server(
+            host=host,
+            port=port,
+            node=self,
+            store=self._store,
+            html_page=HTML_PAGE,
+            urdf_path=self._urdf_path,
+            mesh_dir=self._mesh_dir,
+            sse_interval_sec=interval,
+        )
 
     def _panel_config(self) -> dict:
         return {
@@ -2800,6 +478,10 @@ class TeleopStatusPanelNode(Node):
                 "yellow_jump_rad": float(self.get_parameter("yellow_jump_rad").value),
                 "yellow_max_speed": float(self.get_parameter("yellow_max_speed").value),
                 "max_replay_velocity_rad_s": float(self.get_parameter("max_replay_velocity_rad_s").value),
+                "max_replay_velocity_rad_s_by_joint": [
+                    float(value)
+                    for value in self.get_parameter("max_replay_velocity_rad_s_by_joint").value
+                ],
                 "max_replay_acceleration_rad_s2": float(self.get_parameter("max_replay_acceleration_rad_s2").value),
                 "max_replay_jerk_rad_s3": float(self.get_parameter("max_replay_jerk_rad_s3").value),
                 "large_motion_span_rad": float(self.get_parameter("large_motion_span_rad").value),
@@ -2821,6 +503,7 @@ class TeleopStatusPanelNode(Node):
                 "filter_sample_rate_hz": float(self.get_parameter("filter_sample_rate_hz").value),
                 "resample_enabled": bool(self.get_parameter("resample_enabled").value),
                 "resample_rate_hz": float(self.get_parameter("resample_rate_hz").value),
+                "time_parameterization_method": str(self.get_parameter("time_parameterization_method").value),
                 "max_prepared_jump_rad": float(self.get_parameter("max_prepared_jump_rad").value),
                 "use_hardware": bool(self.get_parameter("use_hardware").value) if self.has_parameter("use_hardware") else False,
             },
@@ -2897,6 +580,13 @@ class TeleopStatusPanelNode(Node):
             compact["prepared_replay"] = cls._compact_replay_payload(compact["prepared_replay"], limit=limit)
         return compact
 
+    def _max_replay_velocity_limits(self, joint_names: tuple[str, ...]):
+        scalar_limit = float(self.get_parameter("max_replay_velocity_rad_s").value)
+        values = self.get_parameter("max_replay_velocity_rad_s_by_joint").value
+        if isinstance(values, (list, tuple)) and len(values) == len(joint_names):
+            return tuple(float(value) for value in values)
+        return scalar_limit
+
     def _prepare_teach_replay_samples(self, samples, settings: dict[str, float | int] | None = None):
         replay_speed = float(settings["replay_speed"]) if settings else float(self.get_parameter("replay_speed").value)
         return prepare_teach_replay_samples(
@@ -2910,9 +600,10 @@ class TeleopStatusPanelNode(Node):
             resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
             retime_enabled=True,
             replay_speed=replay_speed,
-            max_velocity_rad_s=float(self.get_parameter("max_replay_velocity_rad_s").value),
+            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(samples[0].joint_names) if samples else ()),
             max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
             max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
+            time_parameterization_method=str(self.get_parameter("time_parameterization_method").value),
             large_motion_span_rad=float(self.get_parameter("large_motion_span_rad").value),
             large_motion_total_rad=float(self.get_parameter("large_motion_total_rad").value),
             large_motion_max_speed=float(self.get_parameter("large_motion_max_speed").value),
@@ -3103,6 +794,7 @@ class TeleopStatusPanelNode(Node):
         payload["prepared_replay"] = prepared_teach_replay_to_dict(prepared)
         payload["collision_precheck"] = self._collision_precheck(preview_samples)
         payload["accepted"] = True
+        payload["curve_source"] = "prepared"
         payload["path"] = str(prepared_path)
         payload["raw_record_path"] = str(path)
         payload["prepared_record_path"] = str(prepared_path)
@@ -3232,20 +924,11 @@ class TeleopStatusPanelNode(Node):
             prepared_payload = {"error": str(exc)}
             collision_precheck = {"state": "unknown", "message": f"collision precheck failed: {exc}"}
         token = self._last_teach_dry_run or {}
-        token_error = token.get("max_error")
-        info_error = info_payload.get("max_error")
-        error_matches = token_error == info_error
-        if token_error is not None and info_error is not None:
-            error_matches = abs(float(token_error) - float(info_error)) < 1e-4
         dry_run_passed = (
             bool(token.get("accepted"))
             and str(token.get("record_path", "")) == str(info_payload.get("path", ""))
-            and str(token.get("start_band", "")) == str(info_payload.get("start_band", ""))
-            and str(token.get("worst_joint", "")) == str(info_payload.get("worst_joint", ""))
-            and str(token.get("risk_level", "")) == str(quality.get("risk_level", ""))
             and str(token.get("prepared_risk_level", "")) == str(prepared_quality.get("risk_level", ""))
             and token.get("settings") == settings
-            and error_matches
         )
         decision = validate_teach_replay_execute_request(
             str(info_payload.get("start_band", "")),
@@ -3336,7 +1019,7 @@ class TeleopStatusPanelNode(Node):
         goal = FollowJointTrajectory.Goal()
         goal.trajectory = trajectory
         future = self._action_client.send_goal_async(goal)
-        future.add_done_callback(lambda fut: self._on_teach_replay_goal_response(fut, info_payload, len(trajectory.points)))
+        future.add_done_callback(lambda fut: self._on_teach_replay_goal_response(fut, info_payload, len(trajectory.points), trajectory))
         result = {
             "accepted": True,
             "state": "replaying",
@@ -3431,8 +1114,15 @@ class TeleopStatusPanelNode(Node):
             return False, str(exc)
 
     def _handle_arm_service_command(self, command: str) -> dict:
+        command = normalize_arm_command(command) or ""
         if not bool(self.get_parameter("web_execute_enabled").value):
             message = "web arm command disabled; launch with web_execute_enabled:=true"
+            result = {"accepted": False, "state": "blocked", "command": command, "message": message}
+            self._store.update_teleop_status("arm_command", result)
+            return result
+        replay_state = status_state(self._store.snapshot().teleop.get("replay", {}))
+        if arm_command_is_replay_locked(replay_state):
+            message = "arm command blocked during teach replay"
             result = {"accepted": False, "state": "blocked", "command": command, "message": message}
             self._store.update_teleop_status("arm_command", result)
             return result
@@ -3445,13 +1135,25 @@ class TeleopStatusPanelNode(Node):
             result = {"accepted": False, "state": "rejected", "command": command, "message": "unknown arm command"}
             self._store.update_teleop_status("arm_command", result)
             return result
-        timeout_sec = {"safe_home": 30.0, "enable": 8.0, "disable": 10.0}[command]
+        stop_requested = False
+        stop_message = ""
+        if should_stop_trajectory_before_arm_command(command):
+            stop_requested, stop_message = self._call_trigger_service(
+                self._trajectory_stop_client,
+                timeout_sec=2.0,
+            )
+            with self._execute_lock:
+                self._execute_goal_handle = None
+        timeout_sec = arm_command_timeout_sec(command)
         ok, message = self._call_trigger_service(clients[command], timeout_sec=timeout_sec)
+        if stop_message:
+            message = f"{message}; trajectory_stop: {stop_message}" if message else f"trajectory_stop: {stop_message}"
         result = {
             "accepted": ok,
             "state": "done" if ok else "failed",
             "command": command,
             "message": message or ("done" if ok else "failed"),
+            "trajectory_stop_requested": stop_requested,
         }
         if ok:
             arm = self._store.snapshot().arm
@@ -3620,21 +1322,30 @@ class TeleopStatusPanelNode(Node):
         prepared_quality = prepared.after_quality
         if str(prepared_quality.risk_level) == "yellow":
             speed = min(speed, float(self.get_parameter("yellow_max_speed").value))
-        for retimed in retime_teach_samples(
-            replay_samples,
-            replay_speed=speed,
-            max_velocity_rad_s=float(self.get_parameter("max_replay_velocity_rad_s").value),
-            max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-            initial_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
-            boundary_zero_velocity=True,
-        ):
-            point = JointTrajectoryPoint()
-            point.positions = [float(v) for v in retimed.positions]
-            if retimed.velocities:
-                point.velocities = [float(v) for v in retimed.velocities]
-            _set_duration(point.time_from_start, elapsed + retimed.time_from_start)
-            trajectory.points.append(point)
+        if prepared.retimed_points:
+            initial_delay = max(float(self.get_parameter("initial_replay_delay_sec").value), 0.0)
+            for retimed in prepared.retimed_points:
+                point = JointTrajectoryPoint()
+                point.positions = [float(v) for v in retimed.positions]
+                point.velocities = [float(v) for v in retimed.velocities] if retimed.velocities else [0.0 for _ in point.positions]
+                _set_duration(point.time_from_start, elapsed + initial_delay + float(retimed.time_from_start))
+                trajectory.points.append(point)
+        else:
+            for retimed in retime_teach_samples(
+                replay_samples,
+                replay_speed=speed,
+                max_velocity_rad_s=self._max_replay_velocity_limits(tuple(replay_samples[0].joint_names)),
+                max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
+                max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
+                initial_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
+                boundary_zero_velocity=True,
+            ):
+                point = JointTrajectoryPoint()
+                point.positions = [float(v) for v in retimed.positions]
+                if retimed.velocities:
+                    point.velocities = [float(v) for v in retimed.velocities]
+                _set_duration(point.time_from_start, elapsed + retimed.time_from_start)
+                trajectory.points.append(point)
         self._append_final_hold(trajectory, final_hold_sec=float(settings["final_hold_sec"]))
         return trajectory
 
@@ -3709,7 +1420,7 @@ class TeleopStatusPanelNode(Node):
             trajectory.points.append(first_point)
         return elapsed
 
-    def _on_teach_replay_goal_response(self, future, info_payload: dict, points: int) -> None:
+    def _on_teach_replay_goal_response(self, future, info_payload: dict, points: int, trajectory: JointTrajectory) -> None:
         try:
             goal_handle = future.result()
         except Exception as exc:
@@ -3720,6 +1431,10 @@ class TeleopStatusPanelNode(Node):
             return
         with self._teach_replay_lock:
             self._teach_replay_goal_handle = goal_handle
+            self._active_teach_replay_trajectory = trajectory
+            self._active_teach_replay_started_at = time.monotonic()
+            self._teach_replay_tracking_violation_since = None
+            self._teach_replay_monitor_stop_requested = False
         self._store.update_teleop_status(
             "replay",
             {
@@ -3729,6 +1444,11 @@ class TeleopStatusPanelNode(Node):
                 "start_band": str(info_payload.get("start_band", "")),
                 "max_error": info_payload.get("max_error"),
                 "trajectory_points": points,
+                "runtime_monitor": {
+                    "enabled": bool(self.get_parameter("replay_monitor_enabled").value),
+                    "max_tracking_error_rad": float(self.get_parameter("max_tracking_error_rad").value),
+                    "max_live_velocity_rad_s": float(self.get_parameter("max_live_velocity_rad_s").value),
+                },
                 "dry_run": False,
             },
         )
@@ -3749,8 +1469,18 @@ class TeleopStatusPanelNode(Node):
             else "teach replay already finished before cancel"
         )
         self._store.update_teleop_status("replay", {"state": state, "message": message})
+        if not goals_canceling:
+            with self._teach_replay_lock:
+                self._teach_replay_goal_handle = None
+                self._active_teach_replay_trajectory = None
+                self._active_teach_replay_started_at = None
+                self._teach_replay_tracking_violation_since = None
+                self._teach_replay_monitor_stop_requested = False
 
     def _on_teach_replay_result(self, future, info_payload: dict, points: int) -> None:
+        previous_replay = self._store.snapshot().teleop.get("replay", {})
+        with self._teach_replay_lock:
+            monitor_stop_requested = self._teach_replay_monitor_stop_requested
         try:
             wrapped_result = future.result()
             status = int(getattr(wrapped_result, "status", -1))
@@ -3761,27 +1491,103 @@ class TeleopStatusPanelNode(Node):
             self._store.update_teleop_status("replay", {"state": "failed", "message": str(exc)})
             with self._teach_replay_lock:
                 self._teach_replay_goal_handle = None
+                self._active_teach_replay_trajectory = None
+                self._active_teach_replay_started_at = None
+                self._teach_replay_tracking_violation_since = None
+                self._teach_replay_monitor_stop_requested = False
             return
         if status == 4 and error_code == 0:
             state = "done"
         elif status == 5:
-            state = "canceled"
+            state = "safety_stop" if monitor_stop_requested else "canceled"
         else:
             state = "failed"
+        message = f"teach replay result status={status}, error_code={error_code}: {error_string}"
+        runtime_monitor = previous_replay.get("runtime_monitor") if isinstance(previous_replay, dict) else None
+        if status == 5 and monitor_stop_requested:
+            previous_message = str(previous_replay.get("message", "")) if isinstance(previous_replay, dict) else ""
+            message = (
+                f"action canceled after runtime monitor stop: {previous_message}"
+                if previous_message
+                else "action canceled after runtime monitor stop"
+            )
         self._store.update_teleop_status(
             "replay",
             {
                 "state": state,
-                "message": f"teach replay result status={status}, error_code={error_code}: {error_string}",
+                "message": message,
                 "record_path": str(info_payload.get("path", "")),
                 "start_band": str(info_payload.get("start_band", "")),
                 "max_error": info_payload.get("max_error"),
                 "trajectory_points": points,
+                "runtime_monitor": runtime_monitor,
                 "dry_run": False,
             },
         )
         with self._teach_replay_lock:
             self._teach_replay_goal_handle = None
+            self._active_teach_replay_trajectory = None
+            self._active_teach_replay_started_at = None
+            self._teach_replay_tracking_violation_since = None
+            self._teach_replay_monitor_stop_requested = False
+
+    def _check_active_replay_tracking(self) -> None:
+        if not bool(self.get_parameter("replay_monitor_enabled").value):
+            return
+        snapshot = self._store.snapshot()
+        with self._teach_replay_lock:
+            goal_handle = self._teach_replay_goal_handle
+            trajectory = self._active_teach_replay_trajectory
+            started_at = self._active_teach_replay_started_at
+            stop_requested = self._teach_replay_monitor_stop_requested
+        if goal_handle is None or trajectory is None or started_at is None or stop_requested:
+            return
+        elapsed = time.monotonic() - started_at
+        if elapsed < float(self.get_parameter("replay_monitor_start_grace_sec").value):
+            return
+        joint_names = tuple(snapshot.joints.keys())
+        positions = tuple(float(item.get("position", 0.0)) for item in snapshot.joints.values())
+        velocities = tuple(float(item.get("velocity", 0.0)) for item in snapshot.joints.values())
+        result = evaluate_replay_tracking(
+            trajectory,
+            joint_names=joint_names,
+            positions=positions,
+            velocities=velocities,
+            elapsed_sec=elapsed,
+            max_tracking_error_rad=float(self.get_parameter("max_tracking_error_rad").value),
+            max_live_velocity_rad_s=float(self.get_parameter("max_live_velocity_rad_s").value),
+        )
+        if result.ok:
+            with self._teach_replay_lock:
+                self._teach_replay_tracking_violation_since = None
+            return
+        now = time.monotonic()
+        with self._teach_replay_lock:
+            if self._teach_replay_tracking_violation_since is None:
+                self._teach_replay_tracking_violation_since = now
+                return
+            if now - self._teach_replay_tracking_violation_since < float(self.get_parameter("replay_monitor_violation_grace_sec").value):
+                return
+            self._teach_replay_monitor_stop_requested = True
+        self._request_controller_trajectory_stop(timeout_sec=0.2)
+        with suppress(Exception):
+            goal_handle.cancel_goal_async()
+        self._store.update_teleop_status(
+            "replay",
+            {
+                "state": "safety_stop",
+                "message": f"runtime replay monitor stopped trajectory: {result.message}",
+                "runtime_monitor": {
+                    "reason": result.reason,
+                    "worst_joint": result.worst_joint,
+                    "max_tracking_error_rad": result.max_tracking_error_rad,
+                    "max_live_velocity_rad_s": result.max_live_velocity_rad_s,
+                    "tracking_error": result.reason == "tracking_error",
+                    "live_velocity": result.reason == "live_velocity",
+                },
+                "dry_run": False,
+            },
+        )
 
     def _handle_keyboard_enable(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
@@ -4341,3 +2147,4 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
+

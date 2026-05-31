@@ -433,5 +433,8 @@ class ArmActions:
         result.effort = self._hardware.get_gripper_state()[2]
         result.stalled = stalled
         result.reached_goal = self._hardware.gripper_reached_target()
-        goal_handle.succeed()
+        if result.reached_goal:
+            goal_handle.succeed()
+        else:
+            goal_handle.abort()
         return result

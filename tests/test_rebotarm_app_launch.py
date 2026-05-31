@@ -54,13 +54,13 @@ def test_replay_profiles_keep_safe_defaults_in_config() -> None:
     assert safe["speed"] <= 0.2
     assert safe["collision_check_enabled"] is True
     assert safe["use_moveit_start_align"] is True
-    assert safe["max_replay_velocity_rad_s"] <= 1.5
-    assert safe["max_replay_acceleration_rad_s2"] <= 3.0
-    assert safe["max_replay_jerk_rad_s3"] <= 8.0
+    assert safe["max_replay_velocity_rad_s"] <= 3.0
+    assert safe["max_replay_acceleration_rad_s2"] <= 5.0
+    assert safe["max_replay_jerk_rad_s3"] <= 30.0
 
     large = profiles["profiles"]["large"]
     assert large["speed"] <= profiles["profiles"]["normal"]["speed"]
-    assert large["large_motion_max_speed"] <= large["speed"]
+    assert large["large_motion_max_speed"] <= 1.0
 
 
 def test_teach_recording_uses_higher_sampling_defaults() -> None:

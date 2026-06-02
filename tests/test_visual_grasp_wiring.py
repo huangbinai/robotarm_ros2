@@ -83,6 +83,7 @@ def test_rebotarm_vision_exposes_grasp_console_entrypoints():
         "rebotarm_visual_grasp_markers",
         "rebotarm_grasp_tcp_frame",
         "rebotarm_grasp_depth_probe",
+        "rebotarm_visual_ready",
     }.issubset(scripts)
 
 
@@ -115,6 +116,23 @@ def test_visual_grasp_system_uses_measured_grasp_tcp_offset_by_default():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
 
     assert 'DeclareLaunchArgument("tcp_offset_xyz", default_value="[-0.04, 0.0, 0.0]")' in launch_text
+
+
+def test_visual_grasp_system_can_move_to_visual_ready_on_start():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    node_text = _read("src/rebotarm_vision/rebotarm_vision/visual_ready_node.py")
+
+    assert 'DeclareLaunchArgument("move_to_visual_ready_on_start", default_value="true")' in launch_text
+    assert (
+        'DeclareLaunchArgument("visual_ready_joint_positions", default_value="[0.0, 0.0, -0.20, 0.20, 0.0, 0.0]")'
+        in launch_text
+    )
+    assert 'DeclareLaunchArgument("visual_ready_max_start_delta_rad", default_value="1.0")' in launch_text
+    assert 'executable="rebotarm_visual_ready"' in launch_text
+    assert '"joint_positions": visual_ready_joint_positions' in launch_text
+    assert "FollowJointTrajectory" in node_text
+    assert "visual_ready startup move refused" in node_text
+    assert "ARM_JOINT_NAMES" in node_text
 
 
 def test_visual_grasp_executor_keeps_stop_paths_wired():

@@ -27,6 +27,7 @@ setup(
             "rebotarm_visual_grasp_executor = rebotarm_vision.visual_grasp_executor_node:main",
             "rebotarm_grasp_candidate_ik_filter = rebotarm_vision.candidate_ik_filter_node:main",
             "rebotarm_grasp_tcp_frame = rebotarm_vision.grasp_tcp_frame_node:main",
+            "rebotarm_visual_ready = rebotarm_vision.visual_ready_node:main",
             "rebotarm_tcp_calibration = rebotarm_vision.tcp_calibration_node:main",
             "rebotarm_debug_camera_preview = rebotarm_vision.debug_camera_preview:main",
             "rebotarm_grasp_depth_probe = rebotarm_vision.grasp_depth_probe_node:main",

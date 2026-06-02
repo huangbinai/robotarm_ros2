@@ -19,6 +19,11 @@ def generate_launch_description():
     ordinary_depth_quality_enabled = LaunchConfiguration("ordinary_depth_quality_enabled")
     start_grasp_preview = LaunchConfiguration("start_grasp_preview")
     start_candidate_ik_filter = LaunchConfiguration("start_candidate_ik_filter")
+    move_to_visual_ready_on_start = LaunchConfiguration("move_to_visual_ready_on_start")
+    visual_ready_joint_positions = LaunchConfiguration("visual_ready_joint_positions")
+    visual_ready_duration_sec = LaunchConfiguration("visual_ready_duration_sec")
+    visual_ready_wait_timeout_sec = LaunchConfiguration("visual_ready_wait_timeout_sec")
+    visual_ready_max_start_delta_rad = LaunchConfiguration("visual_ready_max_start_delta_rad")
     start_visual_grasp_executor = LaunchConfiguration("start_visual_grasp_executor")
     start_visual_grasp_markers = LaunchConfiguration("start_visual_grasp_markers")
     filtered_candidates_topic = LaunchConfiguration("filtered_candidates_topic")
@@ -96,6 +101,11 @@ def generate_launch_description():
             DeclareLaunchArgument("ordinary_depth_quality_enabled", default_value="true"),
             DeclareLaunchArgument("start_grasp_preview", default_value="false"),
             DeclareLaunchArgument("start_candidate_ik_filter", default_value="false"),
+            DeclareLaunchArgument("move_to_visual_ready_on_start", default_value="true"),
+            DeclareLaunchArgument("visual_ready_joint_positions", default_value="[0.0, 0.0, -0.20, 0.20, 0.0, 0.0]"),
+            DeclareLaunchArgument("visual_ready_duration_sec", default_value="4.0"),
+            DeclareLaunchArgument("visual_ready_wait_timeout_sec", default_value="12.0"),
+            DeclareLaunchArgument("visual_ready_max_start_delta_rad", default_value="1.0"),
             DeclareLaunchArgument("start_visual_grasp_executor", default_value="true"),
             DeclareLaunchArgument("start_visual_grasp_markers", default_value="true"),
             DeclareLaunchArgument("filtered_candidates_topic", default_value="/grasp/filtered_candidates"),
@@ -186,6 +196,22 @@ def generate_launch_description():
                 launch_arguments={
                     "ordinary_depth_quality_enabled": ordinary_depth_quality_enabled,
                 }.items(),
+            ),
+            Node(
+                package="rebotarm_vision",
+                executable="rebotarm_visual_ready",
+                name="rebotarm_visual_ready",
+                output="screen",
+                condition=IfCondition(move_to_visual_ready_on_start),
+                parameters=[
+                    {
+                        "arm_namespace": arm_namespace,
+                        "joint_positions": visual_ready_joint_positions,
+                        "duration_sec": visual_ready_duration_sec,
+                        "wait_timeout_sec": visual_ready_wait_timeout_sec,
+                        "max_start_delta_rad": visual_ready_max_start_delta_rad,
+                    }
+                ],
             ),
             Node(
                 package="rebotarm_vision",

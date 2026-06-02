@@ -9,7 +9,10 @@ import numpy as np
 import cv2
 from geometry_msgs.msg import Pose
 
-from rebotarm_msgs.msg import Detection2D, Detection2DArray, GraspCandidate, GraspPlan
+from rebotarm_msgs.msg import Detection2D, Detection2DArray, GraspCandidate, GraspCandidateArray, GraspPlan
+
+from ..depth_quality import DepthQualityConfig, evaluate_detection_depth_quality
+from ..grasp_candidate_policy import GraspCandidateScoringConfig, score_grasp_candidate
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,174 @@ def _empty_plan(frame_id: str, reason: str) -> GraspPlan:
     return plan
 
 
+def _source_name(*, has_obb_input: bool, has_mask_input: bool) -> str:
+    if has_obb_input:
+        return "ordinary_grasp_obb_depth"
+    if has_mask_input:
+        return "ordinary_grasp_mask_depth"
+    return "ordinary_grasp_bbox_depth"
+
+
+def _candidate_from_grasp(grasp, output_frame_id: str, source: str) -> GraspCandidate:
+    candidate = GraspCandidate()
+    candidate.header.frame_id = output_frame_id
+    candidate.class_name = str(grasp.class_name)
+    candidate.confidence = float(grasp.conf)
+    candidate.pose = _pose_from_position_rotation(
+        np.asarray(grasp.position, dtype=np.float64),
+        np.asarray(grasp.tcp_rotation, dtype=np.float64),
+    )
+    candidate.jaw_width = float(grasp.jaw_width_m)
+    candidate.object_length = float(grasp.object_length_m)
+    candidate.valid = True
+    candidate.source = source
+    return candidate
+
+
+def build_candidate_array_from_grasps(
+    grasps: list,
+    *,
+    output_frame_id: str,
+    source: str,
+    scoring_config: GraspCandidateScoringConfig | None = None,
+) -> GraspCandidateArray:
+    scored: list[tuple[float, GraspCandidate]] = []
+    for grasp in grasps:
+        score = score_grasp_candidate(
+            confidence=float(getattr(grasp, "conf", 0.0) or 0.0),
+            jaw_width_m=float(getattr(grasp, "jaw_width_m", 0.0) or 0.0),
+            valid=bool(getattr(grasp, "is_valid", False)),
+            config=scoring_config,
+        )
+        if score < 0.0:
+            continue
+        candidate = _candidate_from_grasp(grasp, output_frame_id, source)
+        scored.append((score, candidate))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    array = GraspCandidateArray()
+    array.header.frame_id = output_frame_id
+    array.candidates = [candidate for _, candidate in scored]
+    array.best_index = 0 if array.candidates else -1
+    return array
+
+
+def _plan_from_best_candidate(
+    *,
+    detections: Detection2DArray,
+    candidates: GraspCandidateArray,
+    pregrasp_offset_m: float,
+    reason_if_empty: str,
+) -> GraspPlan:
+    if candidates.best_index < 0 or not candidates.candidates:
+        return _empty_plan(candidates.header.frame_id, reason_if_empty)
+    best_candidate = candidates.candidates[int(candidates.best_index)]
+    tcp_rotation = np.eye(3, dtype=np.float64)
+    # Recover pregrasp direction from the candidate quaternion through the same canonical TCP x-axis.
+    q = (
+        float(best_candidate.pose.orientation.x),
+        float(best_candidate.pose.orientation.y),
+        float(best_candidate.pose.orientation.z),
+        float(best_candidate.pose.orientation.w),
+    )
+    from ..transform_points import quaternion_to_rotation_matrix
+
+    tcp_rotation_list = quaternion_to_rotation_matrix(q)
+    tcp_x = np.asarray([tcp_rotation_list[0][0], tcp_rotation_list[1][0], tcp_rotation_list[2][0]], dtype=np.float64)
+    grasp_position = np.asarray(
+        [
+            float(best_candidate.pose.position.x),
+            float(best_candidate.pose.position.y),
+            float(best_candidate.pose.position.z),
+        ],
+        dtype=np.float64,
+    )
+    pregrasp_position = grasp_position - tcp_x * float(pregrasp_offset_m)
+    plan = GraspPlan()
+    plan.header = detections.header
+    plan.header.frame_id = candidates.header.frame_id
+    plan.candidate = best_candidate
+    plan.grasp_pose = best_candidate.pose
+    plan.pregrasp_pose = _pose_from_position_rotation(pregrasp_position, np.asarray(tcp_rotation, dtype=np.float64))
+    plan.pregrasp_pose.orientation = best_candidate.pose.orientation
+    plan.jaw_width = float(best_candidate.jaw_width)
+    plan.valid = True
+    plan.source = "ordinary_grasp"
+    plan.reason = ""
+    return plan
+
+
+def plan_and_candidates_from_detections_and_depth(
+    detections: Detection2DArray,
+    depth_mm: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    ordinary_grasp_root: str | Path,
+    output_frame_id: str = "camera_depth_frame",
+    depth_quantile: float = 0.75,
+    pregrasp_offset_m: float = 0.08,
+    scoring_config: GraspCandidateScoringConfig | None = None,
+    depth_quality_config: DepthQualityConfig | None = None,
+) -> tuple[GraspPlan, GraspCandidateArray]:
+    if depth_mm is None or depth_mm.size == 0:
+        empty = GraspCandidateArray()
+        empty.header.frame_id = output_frame_id
+        empty.best_index = -1
+        return _empty_plan(output_frame_id, "missing depth image"), empty
+    depth_quality = depth_quality_config or DepthQualityConfig()
+    filtered = []
+    rejected_reasons: list[str] = []
+    for det in detections.detections:
+        if det.confidence <= 0.0:
+            continue
+        quality = evaluate_detection_depth_quality(det, depth_mm, depth_quality)
+        if quality.accepted:
+            filtered.append(det)
+        else:
+            class_name = str(getattr(det, "class_name", "") or "object")
+            rejected_reasons.append(
+                f"{class_name}:{quality.reason}"
+                f"(valid={quality.valid_depth_pixels}, ratio={quality.valid_depth_ratio:.2f}, "
+                f"z={quality.z_median_m:.3f}, mad={quality.z_mad_m:.3f})"
+            )
+    if not filtered:
+        empty = GraspCandidateArray()
+        empty.header.frame_id = output_frame_id
+        empty.best_index = -1
+        if rejected_reasons:
+            return _empty_plan(
+                output_frame_id,
+                "depth quality rejected all detections: " + "; ".join(rejected_reasons),
+            ), empty
+        return _empty_plan(output_frame_id, "no detections"), empty
+
+    has_obb_input = any(_has_valid_obb(det) for det in filtered)
+    has_mask_input = any(_has_valid_mask(det) for det in filtered)
+    estimate_grasps, _select_best_grasp, canonicalize_tcp_rotation = _import_ordinary_grasp(
+        Path(ordinary_grasp_root)
+    )
+    result = _YoloLikeResult(filtered, depth_mm.shape[:2])
+    raw_grasps = estimate_grasps([result], depth_mm, intrinsics.as_matrix(), depth_quantile=depth_quantile)
+    grasps = []
+    for grasp in raw_grasps:
+        if getattr(grasp, "is_valid", False):
+            grasp.tcp_rotation = canonicalize_tcp_rotation(grasp.tcp_rotation)
+        grasps.append(grasp)
+
+    candidates = build_candidate_array_from_grasps(
+        grasps,
+        output_frame_id=output_frame_id,
+        source=_source_name(has_obb_input=has_obb_input, has_mask_input=has_mask_input),
+        scoring_config=scoring_config,
+    )
+    plan = _plan_from_best_candidate(
+        detections=detections,
+        candidates=candidates,
+        pregrasp_offset_m=pregrasp_offset_m,
+        reason_if_empty="ordinary grasp found no valid candidate",
+    )
+    return plan, candidates
+
+
 def plan_from_detections_and_depth(
     detections: Detection2DArray,
     depth_mm: np.ndarray,
@@ -239,52 +410,13 @@ def plan_from_detections_and_depth(
     depth_quantile: float = 0.75,
     pregrasp_offset_m: float = 0.08,
 ) -> GraspPlan:
-    if depth_mm is None or depth_mm.size == 0:
-        return _empty_plan(output_frame_id, "missing depth image")
-    filtered = [det for det in detections.detections if det.confidence > 0.0]
-    if not filtered:
-        return _empty_plan(output_frame_id, "no detections")
-    has_obb_input = any(_has_valid_obb(det) for det in filtered)
-    has_mask_input = any(_has_valid_mask(det) for det in filtered)
-
-    estimate_grasps, select_best_grasp, canonicalize_tcp_rotation = _import_ordinary_grasp(
-        Path(ordinary_grasp_root)
+    plan, _candidates = plan_and_candidates_from_detections_and_depth(
+        detections,
+        depth_mm,
+        intrinsics,
+        ordinary_grasp_root=ordinary_grasp_root,
+        output_frame_id=output_frame_id,
+        depth_quantile=depth_quantile,
+        pregrasp_offset_m=pregrasp_offset_m,
     )
-    result = _YoloLikeResult(filtered, depth_mm.shape[:2])
-    grasps = estimate_grasps([result], depth_mm, intrinsics.as_matrix(), depth_quantile=depth_quantile)
-    best = select_best_grasp(grasps)
-    if best is None or not best.is_valid:
-        return _empty_plan(output_frame_id, "ordinary grasp found no valid candidate")
-
-    tcp_rotation = canonicalize_tcp_rotation(best.tcp_rotation)
-    grasp_position = np.asarray(best.position, dtype=np.float64)
-    tcp_x = np.asarray(tcp_rotation, dtype=np.float64)[:, 0]
-    pregrasp_position = grasp_position - tcp_x * float(pregrasp_offset_m)
-
-    candidate = GraspCandidate()
-    candidate.header = detections.header
-    candidate.header.frame_id = output_frame_id
-    candidate.class_name = str(best.class_name)
-    candidate.confidence = float(best.conf)
-    candidate.pose = _pose_from_position_rotation(grasp_position, tcp_rotation)
-    candidate.jaw_width = float(best.jaw_width_m)
-    candidate.object_length = float(best.object_length_m)
-    candidate.valid = True
-    if has_obb_input:
-        candidate.source = "ordinary_grasp_obb_depth"
-    elif has_mask_input:
-        candidate.source = "ordinary_grasp_mask_depth"
-    else:
-        candidate.source = "ordinary_grasp_bbox_depth"
-
-    plan = GraspPlan()
-    plan.header = detections.header
-    plan.header.frame_id = output_frame_id
-    plan.candidate = candidate
-    plan.grasp_pose = _pose_from_position_rotation(grasp_position, tcp_rotation)
-    plan.pregrasp_pose = _pose_from_position_rotation(pregrasp_position, tcp_rotation)
-    plan.jaw_width = float(best.jaw_width_m)
-    plan.valid = True
-    plan.source = "ordinary_grasp"
-    plan.reason = ""
     return plan

@@ -19,6 +19,17 @@ _G_TAU_MAX = 1.5
 _G_KP_MOVE = 5.0
 _G_KD_MOVE = 1.0
 _G_DEFAULT_FORCE = 0.30
+_G_GRASP_CLOSE_KP = 0.0
+_G_GRASP_CLOSE_KD = 0.5
+_G_GRASP_HOLD_KP = 5.0
+_G_GRASP_HOLD_KD = 1.0
+_G_GRASP_CLOSE_FORCE_DEFAULT = 0.60
+_G_GRASP_CLOSE_FORCE_MAX = 1.0
+_G_GRASP_HOLD_FORCE_DEFAULT = 0.30
+_G_GRASP_VEL_THRESHOLD = 0.04
+_G_GRASP_MIN_CLOSE_TIME = 0.08
+_G_GRASP_MIN_CLOSURE_M = 0.006
+_G_GRASP_TIMEOUT = 2.0
 _G_CTRL_RATE = 500.0
 _GC_VEL_THRESHOLD = 0.04
 _GC_W_VEL_THRESHOLD = 0.08
@@ -69,6 +80,10 @@ class HardwareManager:
         self._gripper_ctrl = None
         self._gripper_target_angle = 0.0
         self._gripper_target_effort = _G_DEFAULT_FORCE
+        self._gripper_close_force = _G_GRASP_CLOSE_FORCE_DEFAULT
+        self._gripper_hold_force = _G_GRASP_HOLD_FORCE_DEFAULT
+        self._gripper_hold_angle = 0.0
+        self._gripper_mode = "idle"
         self._gripper_active = False
         self._gripper_pos = 0.0
         self._gripper_vel = 0.0
@@ -508,6 +523,7 @@ class HardwareManager:
         with self._gripper_lock:
             self._gripper_target_angle = target
             self._gripper_target_effort = float(np.clip(effort, 0.05, _G_TAU_MAX))
+            self._gripper_mode = "position"
             self._gripper_active = True
 
     def wait_gripper_target(self, timeout: float = 3.0) -> bool:
@@ -524,6 +540,70 @@ class HardwareManager:
         self.set_gripper_target(position_m, max_effort)
         reached = self.wait_gripper_target()
         return reached, self.gripper_position_m()
+
+    def grasp_gripper(
+        self,
+        close_force: float = _G_GRASP_CLOSE_FORCE_DEFAULT,
+        hold_force: float = _G_GRASP_HOLD_FORCE_DEFAULT,
+        close_timeout_sec: float = _G_GRASP_TIMEOUT,
+        min_close_time_sec: float = _G_GRASP_MIN_CLOSE_TIME,
+        velocity_threshold: float = _G_GRASP_VEL_THRESHOLD,
+        min_closure_distance_m: float = _G_GRASP_MIN_CLOSURE_M,
+    ) -> tuple[bool, bool, float, float, float, str]:
+        if self._gripper_mot is None:
+            raise RuntimeError("gripper is not initialized")
+
+        close_effort = float(np.clip(close_force, 0.05, _G_GRASP_CLOSE_FORCE_MAX))
+        hold_effort = float(np.clip(hold_force, 0.05, _G_TAU_MAX))
+        timeout = max(float(close_timeout_sec), 0.1)
+        min_time = max(float(min_close_time_sec), 0.0)
+        velocity_limit = max(float(velocity_threshold), 0.0)
+        min_closure = max(float(min_closure_distance_m), 0.0)
+        start_position_m = self.gripper_position_m()
+        start = time.monotonic()
+
+        with self._gripper_lock:
+            self._gripper_close_force = close_effort
+            self._gripper_hold_force = hold_effort
+            self._gripper_mode = "grasp_closing"
+            self._gripper_active = True
+
+        while time.monotonic() - start < timeout:
+            elapsed = time.monotonic() - start
+            reached_position_m = self.gripper_position_m()
+            closure_m = max(start_position_m - reached_position_m, 0.0)
+            if (
+                elapsed >= min_time
+                and closure_m >= min_closure
+                and abs(float(self._gripper_vel)) <= velocity_limit
+            ):
+                with self._gripper_lock:
+                    self._gripper_hold_angle = float(self._gripper_pos)
+                    self._gripper_hold_force = hold_effort
+                    self._gripper_mode = "grasp_holding"
+                    self._gripper_active = True
+                contact_position_m = self.gripper_position_m()
+                return (
+                    True,
+                    True,
+                    contact_position_m,
+                    contact_position_m,
+                    hold_effort,
+                    "contact detected and holding",
+                )
+            time.sleep(0.01)
+
+        with self._gripper_lock:
+            self._gripper_active = False
+            self._gripper_mode = "idle"
+        return (
+            False,
+            False,
+            0.0,
+            self.gripper_position_m(),
+            hold_effort,
+            "grasp close timeout before contact",
+        )
 
     def get_gripper_state(self) -> tuple[float, float, float, int]:
         status = 0
@@ -570,6 +650,7 @@ class HardwareManager:
             raise ValueError(f"unsupported JointMotorCmd mode: {cmd.mode}")
         with self._gripper_lock:
             self._gripper_active = False
+            self._gripper_mode = "idle"
 
     def _patch_arm_bus_lock(self) -> None:
         for ctrl in self._arm._ctrl_map.values():
@@ -681,6 +762,10 @@ class HardwareManager:
         with self._gripper_lock:
             target = self._gripper_target_angle
             effort = self._gripper_target_effort
+            close_force = self._gripper_close_force
+            hold_force = self._gripper_hold_force
+            hold_angle = self._gripper_hold_angle
+            mode = self._gripper_mode
             active = self._gripper_active
         if not active:
             try:
@@ -689,8 +774,13 @@ class HardwareManager:
             except Exception:
                 pass
             return
-        tau_ff = effort if abs(target) < 1e-6 else 0.0
-        self._gripper_safe_mit(target, 0.0, _G_KP_MOVE, _G_KD_MOVE, tau_ff)
+        if mode == "grasp_closing":
+            self._gripper_safe_mit(0.0, 0.0, _G_GRASP_CLOSE_KP, _G_GRASP_CLOSE_KD, close_force)
+        elif mode == "grasp_holding":
+            self._gripper_safe_mit(hold_angle, 0.0, _G_GRASP_HOLD_KP, _G_GRASP_HOLD_KD, hold_force)
+        else:
+            tau_ff = effort if abs(target) < 1e-6 else 0.0
+            self._gripper_safe_mit(target, 0.0, _G_KP_MOVE, _G_KD_MOVE, tau_ff)
 
     def _gripper_loop(self) -> None:
         dt = 1.0 / _G_CTRL_RATE

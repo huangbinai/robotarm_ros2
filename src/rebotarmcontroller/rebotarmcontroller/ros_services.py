@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from rebotarm_msgs.srv import MoveToPoseIK, SetGripper, SetMode, SetZero
+from rebotarm_msgs.srv import GraspGripper, MoveToPoseIK, SetGripper, SetMode, SetZero
 from std_srvs.srv import Trigger
 
 from .conversions import pose_to_xyz_rpy
@@ -72,6 +72,12 @@ class ArmServices:
             SetGripper,
             self._service("gripper/set"),
             self.set_gripper,
+            callback_group=node.reentrant_group,
+        )
+        node.create_service(
+            GraspGripper,
+            self._service("gripper/grasp"),
+            self.grasp_gripper,
             callback_group=node.reentrant_group,
         )
 
@@ -221,5 +227,47 @@ class ArmServices:
             response.success = False
             response.reached_position = 0.0
             self._node.get_logger().error(f"gripper set failed: {exc}")
+        self._node.publish_arm_status()
+        return response
+
+    def grasp_gripper(self, request, response):
+        try:
+            (
+                success,
+                contact_detected,
+                contact_position,
+                reached_position,
+                hold_force,
+                message,
+            ) = self._hardware.grasp_gripper(
+                close_force=request.close_force,
+                hold_force=request.hold_force,
+                close_timeout_sec=request.close_timeout_sec,
+                min_close_time_sec=request.min_close_time_sec,
+                velocity_threshold=request.velocity_threshold,
+                min_closure_distance_m=request.min_closure_distance_m,
+            )
+            response.success = bool(success)
+            response.contact_detected = bool(contact_detected)
+            response.contact_position = float(contact_position)
+            response.reached_position = float(reached_position)
+            response.hold_force = float(hold_force)
+            response.message = str(message)
+            self._node.get_logger().info(
+                "gripper grasp "
+                f"success={response.success} "
+                f"contact={response.contact_detected} "
+                f"contact_position={response.contact_position:.3f}m "
+                f"reached={response.reached_position:.3f}m "
+                f"hold_force={response.hold_force:.3f}"
+            )
+        except Exception as exc:
+            response.success = False
+            response.contact_detected = False
+            response.contact_position = 0.0
+            response.reached_position = 0.0
+            response.hold_force = 0.0
+            response.message = str(exc)
+            self._node.get_logger().error(f"gripper grasp failed: {exc}")
         self._node.publish_arm_status()
         return response

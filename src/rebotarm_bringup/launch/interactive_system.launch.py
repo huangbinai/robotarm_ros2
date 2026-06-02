@@ -39,6 +39,8 @@ def generate_launch_description():
     interactive_config = LaunchConfiguration("interactive_config")
     execution_mode = LaunchConfiguration("execution_mode")
     start_interaction_nodes = LaunchConfiguration("start_interaction_nodes")
+    start_passive_joint_state_publisher = LaunchConfiguration("start_passive_joint_state_publisher")
+    use_moveit_fake_joint_states = LaunchConfiguration("use_moveit_fake_joint_states")
     rviz_config = LaunchConfiguration("rviz_config")
 
     urdf_file = PathJoinSubstitution(
@@ -88,6 +90,8 @@ def generate_launch_description():
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
             DeclareLaunchArgument("execution_mode", default_value="simulation"),
             DeclareLaunchArgument("start_interaction_nodes", default_value="true"),
+            DeclareLaunchArgument("start_passive_joint_state_publisher", default_value="true"),
+            DeclareLaunchArgument("use_moveit_fake_joint_states", default_value="true"),
             DeclareLaunchArgument(
                 "rviz_config",
                 default_value=PathJoinSubstitution([bringup_share, "rviz", "interactive_system.rviz"]),
@@ -107,7 +111,13 @@ def generate_launch_description():
                     "use_rviz": "false",
                     "arm_namespace": arm_namespace,
                     "use_fake_joint_states": PythonExpression(
-                        ["'false' if '", use_hardware, "'.lower() == 'true' else 'true'"]
+                        [
+                            "'false' if '",
+                            use_hardware,
+                            "'.lower() == 'true' or '",
+                            use_moveit_fake_joint_states,
+                            "'.lower() != 'true' else 'true'",
+                        ]
                     ),
                 }.items(),
             ),
@@ -193,7 +203,17 @@ def generate_launch_description():
                 executable="joint_state_publisher",
                 name="interactive_joint_state_publisher",
                 output="screen",
-                condition=UnlessCondition(use_hardware),
+                condition=IfCondition(
+                    PythonExpression(
+                        [
+                            "'",
+                            use_hardware,
+                            "'.lower() != 'true' and '",
+                            start_passive_joint_state_publisher,
+                            "'.lower() == 'true'",
+                        ]
+                    )
+                ),
                 parameters=[
                     {"robot_description": robot_description},
                     {"rate": 30.0},

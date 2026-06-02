@@ -14,6 +14,15 @@ if VISION_PATH not in sys.path:
 
 
 def _install_ros_stubs_if_needed():
+    existing_geometry_msg = sys.modules.get("geometry_msgs.msg")
+    if existing_geometry_msg is not None and hasattr(existing_geometry_msg, "TransformStamped"):
+        tf2_ros = sys.modules.get("tf2_ros", types.ModuleType("tf2_ros"))
+        tf2_ros.Buffer = getattr(tf2_ros, "Buffer", object)
+        tf2_ros.TransformException = getattr(tf2_ros, "TransformException", RuntimeError)
+        tf2_ros.TransformListener = getattr(tf2_ros, "TransformListener", object)
+        tf2_ros.StaticTransformBroadcaster = getattr(tf2_ros, "StaticTransformBroadcaster", object)
+        sys.modules["tf2_ros"] = tf2_ros
+        return
     try:
         if importlib.util.find_spec("geometry_msgs") is not None:
             return
@@ -70,6 +79,7 @@ def _install_ros_stubs_if_needed():
 
     tf2_ros = sys.modules.get("tf2_ros", types.ModuleType("tf2_ros"))
     tf2_ros.Buffer = object
+    tf2_ros.TransformException = RuntimeError
     tf2_ros.TransformListener = object
     tf2_ros.StaticTransformBroadcaster = object
     sys.modules["tf2_ros"] = tf2_ros

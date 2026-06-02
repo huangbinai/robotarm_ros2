@@ -19,10 +19,11 @@ for path in (
 
 
 def _install_ros_message_stubs_if_needed():
-    if "geometry_msgs" in sys.modules:
-        return
-    if importlib.util.find_spec("geometry_msgs") is not None:
-        return
+    try:
+        if importlib.util.find_spec("geometry_msgs") is not None:
+            return
+    except ValueError:
+        pass
 
     class Header:
         def __init__(self):
@@ -84,6 +85,12 @@ def _install_ros_message_stubs_if_needed():
             self.valid = False
             self.source = ""
 
+    class GraspCandidateArray:
+        def __init__(self):
+            self.header = Header()
+            self.candidates = []
+            self.best_index = -1
+
     class GraspPlan:
         def __init__(self):
             self.header = Header()
@@ -95,17 +102,18 @@ def _install_ros_message_stubs_if_needed():
             self.source = ""
             self.reason = ""
 
-    geometry_msgs = types.ModuleType("geometry_msgs")
-    geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
+    geometry_msgs = sys.modules.get("geometry_msgs") or types.ModuleType("geometry_msgs")
+    geometry_msgs_msg = sys.modules.get("geometry_msgs.msg") or types.ModuleType("geometry_msgs.msg")
     geometry_msgs_msg.Pose = Pose
     sys.modules["geometry_msgs"] = geometry_msgs
     sys.modules["geometry_msgs.msg"] = geometry_msgs_msg
 
-    rebotarm_msgs = types.ModuleType("rebotarm_msgs")
-    rebotarm_msgs_msg = types.ModuleType("rebotarm_msgs.msg")
+    rebotarm_msgs = sys.modules.get("rebotarm_msgs") or types.ModuleType("rebotarm_msgs")
+    rebotarm_msgs_msg = sys.modules.get("rebotarm_msgs.msg") or types.ModuleType("rebotarm_msgs.msg")
     rebotarm_msgs_msg.Detection2D = Detection2D
     rebotarm_msgs_msg.Detection2DArray = Detection2DArray
     rebotarm_msgs_msg.GraspCandidate = GraspCandidate
+    rebotarm_msgs_msg.GraspCandidateArray = GraspCandidateArray
     rebotarm_msgs_msg.GraspPlan = GraspPlan
     sys.modules["rebotarm_msgs"] = rebotarm_msgs
     sys.modules["rebotarm_msgs.msg"] = rebotarm_msgs_msg
@@ -252,3 +260,190 @@ def test_ordinary_grasp_adapter_uses_mask_when_available_without_obb():
 
     assert plan.valid is True
     assert plan.candidate.source == "ordinary_grasp_mask_depth"
+
+
+def test_build_candidate_array_scores_valid_candidates_and_best_index():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_vision.converters.ordinary_grasp_adapter import build_candidate_array_from_grasps
+    from rebotarm_vision.grasp_candidate_policy import GraspCandidateScoringConfig
+
+    valid_low_conf = types.SimpleNamespace(
+        class_name="bottle",
+        conf=0.55,
+        position=np.asarray([0.10, 0.00, 0.80], dtype=np.float64),
+        tcp_rotation=np.eye(3, dtype=np.float64),
+        jaw_width_m=0.035,
+        object_length_m=0.12,
+        is_valid=True,
+        rejected_reason=None,
+    )
+    valid_high_conf = types.SimpleNamespace(
+        class_name="bottle",
+        conf=0.92,
+        position=np.asarray([0.12, 0.00, 0.82], dtype=np.float64),
+        tcp_rotation=np.eye(3, dtype=np.float64),
+        jaw_width_m=0.040,
+        object_length_m=0.12,
+        is_valid=True,
+        rejected_reason=None,
+    )
+    invalid = types.SimpleNamespace(
+        class_name="bottle",
+        conf=0.99,
+        position=None,
+        tcp_rotation=None,
+        jaw_width_m=0.0,
+        object_length_m=0.0,
+        is_valid=False,
+        rejected_reason="no depth",
+    )
+
+    array = build_candidate_array_from_grasps(
+        [valid_low_conf, invalid, valid_high_conf],
+        output_frame_id="camera_depth_frame",
+        source="ordinary_grasp_obb_depth",
+        scoring_config=GraspCandidateScoringConfig(max_allowed_width_m=0.085),
+    )
+
+    assert len(array.candidates) == 2
+    assert array.best_index == 0
+    assert array.candidates[0].confidence > array.candidates[1].confidence
+    assert array.candidates[0].confidence == pytest.approx(0.92)
+    assert array.candidates[0].pose.position.x == pytest.approx(0.12)
+
+
+def test_plan_and_candidates_from_detections_returns_candidate_array():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_vision.converters.ordinary_grasp_adapter import (
+        CameraIntrinsics,
+        plan_and_candidates_from_detections_and_depth,
+    )
+
+    local_repo_root = Path(__file__).resolve().parents[3]
+    ordinary_grasp_root = Path("/home/u24/rebot_grasp")
+    if not ordinary_grasp_root.exists():
+        ordinary_grasp_root = local_repo_root / "softare" / "rebot_grasp"
+
+    plan, candidates = plan_and_candidates_from_detections_and_depth(
+        _make_detection_array(),
+        np.full((480, 640), 1000, dtype=np.uint16),
+        CameraIntrinsics(fx=500.0, fy=500.0, cx=320.0, cy=240.0),
+        ordinary_grasp_root=ordinary_grasp_root,
+        output_frame_id="camera_depth_frame",
+    )
+
+    assert plan.valid is True
+    assert len(candidates.candidates) >= 1
+    assert candidates.best_index >= 0
+    assert candidates.candidates[candidates.best_index].valid is True
+
+
+def test_depth_quality_accepts_object_inside_configured_range():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_vision.depth_quality import DepthQualityConfig, evaluate_detection_depth_quality
+
+    result = evaluate_detection_depth_quality(
+        _make_detection_array().detections[0],
+        np.full((480, 640), 1000, dtype=np.uint16),
+        DepthQualityConfig(max_depth_m=1.2),
+    )
+
+    assert result.accepted
+    assert result.z_median_m == pytest.approx(1.0)
+    assert result.valid_depth_pixels > 80
+
+
+def test_depth_quality_rejects_object_farther_than_1_2m():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_vision.depth_quality import DepthQualityConfig, evaluate_detection_depth_quality
+
+    result = evaluate_detection_depth_quality(
+        _make_detection_array().detections[0],
+        np.full((480, 640), 1300, dtype=np.uint16),
+        DepthQualityConfig(max_depth_m=1.2),
+    )
+
+    assert not result.accepted
+    assert result.reason == "depth_out_of_range"
+
+
+def test_plan_rejects_detection_when_depth_quality_fails():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_vision.converters.ordinary_grasp_adapter import (
+        CameraIntrinsics,
+        plan_and_candidates_from_detections_and_depth,
+    )
+    from rebotarm_vision.depth_quality import DepthQualityConfig
+
+    local_repo_root = Path(__file__).resolve().parents[3]
+    ordinary_grasp_root = Path("/home/u24/rebot_grasp")
+    if not ordinary_grasp_root.exists():
+        ordinary_grasp_root = local_repo_root / "softare" / "rebot_grasp"
+
+    plan, candidates = plan_and_candidates_from_detections_and_depth(
+        _make_detection_array(),
+        np.full((480, 640), 1300, dtype=np.uint16),
+        CameraIntrinsics(fx=500.0, fy=500.0, cx=320.0, cy=240.0),
+        ordinary_grasp_root=ordinary_grasp_root,
+        output_frame_id="camera_depth_frame",
+        depth_quality_config=DepthQualityConfig(max_depth_m=1.2),
+    )
+
+    assert plan.valid is False
+    assert "depth quality rejected all detections" in plan.reason
+    assert candidates.best_index == -1
+
+
+def test_filter_candidate_array_by_ik_keeps_reachable_candidates_and_reindexes_best():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_msgs.msg import GraspCandidate, GraspCandidateArray
+    from rebotarm_vision.candidate_filter_policy import filter_candidate_array_by_reachability
+
+    candidates = GraspCandidateArray()
+    candidates.header.frame_id = "camera_depth_frame"
+    candidates.best_index = 0
+    for confidence in (0.80, 0.70, 0.60):
+        candidate = GraspCandidate()
+        candidate.header.frame_id = "camera_depth_frame"
+        candidate.class_name = "bottle"
+        candidate.confidence = confidence
+        candidate.jaw_width = 0.04
+        candidate.object_length = 0.12
+        candidate.valid = True
+        candidate.source = "ordinary_grasp_obb_depth"
+        candidates.candidates.append(candidate)
+
+    filtered = filter_candidate_array_by_reachability(candidates, [False, True, True])
+
+    assert len(filtered.candidates) == 2
+    assert filtered.best_index == 0
+    assert filtered.candidates[0].confidence == pytest.approx(0.70)
+    assert filtered.candidates[1].confidence == pytest.approx(0.60)
+
+
+def test_filter_candidate_array_by_ik_preserves_original_best_when_reachable():
+    _install_ros_message_stubs_if_needed()
+
+    from rebotarm_msgs.msg import GraspCandidate, GraspCandidateArray
+    from rebotarm_vision.candidate_filter_policy import filter_candidate_array_by_reachability
+
+    candidates = GraspCandidateArray()
+    candidates.header.frame_id = "camera_depth_frame"
+    candidates.best_index = 2
+    for confidence in (0.80, 0.70, 0.60):
+        candidate = GraspCandidate()
+        candidate.confidence = confidence
+        candidate.valid = True
+        candidates.candidates.append(candidate)
+
+    filtered = filter_candidate_array_by_reachability(candidates, [True, False, True])
+
+    assert len(filtered.candidates) == 2
+    assert filtered.best_index == 1
+    assert filtered.candidates[filtered.best_index].confidence == pytest.approx(0.60)

@@ -40,6 +40,7 @@ class VisualGraspStage:
     pose: PoseTarget | None = None
     gripper_position_m: float | None = None
     gripper_max_effort: float | None = None
+    detected_jaw_width_m: float = 0.0
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -94,6 +95,7 @@ def build_visual_grasp_sequence(
                 kind="gripper",
                 gripper_position_m=open_width,
                 gripper_max_effort=max_effort,
+                detected_jaw_width_m=float(config.detected_jaw_width_m),
             )
         )
     stages.extend(
@@ -113,6 +115,7 @@ def build_visual_grasp_sequence(
                 kind="gripper",
                 gripper_position_m=close_width,
                 gripper_max_effort=max_effort,
+                detected_jaw_width_m=float(config.detected_jaw_width_m),
             ),
             VisualGraspStage(
                 name="lift",

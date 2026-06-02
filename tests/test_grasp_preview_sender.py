@@ -19,8 +19,13 @@ for path in (
 
 def _install_ros_stubs_if_needed():
     existing_geometry_msg = sys.modules.get("geometry_msgs.msg")
-    if existing_geometry_msg is not None and hasattr(existing_geometry_msg, "Pose"):
-        return
+    existing_pose = getattr(existing_geometry_msg, "Pose", None) if existing_geometry_msg is not None else None
+    if existing_pose is not None:
+        try:
+            if hasattr(existing_pose(), "position"):
+                return
+        except Exception:
+            pass
     try:
         if importlib.util.find_spec("geometry_msgs") is not None:
             return
@@ -48,6 +53,11 @@ def _install_ros_stubs_if_needed():
         def __init__(self):
             self.position = Point()
             self.orientation = Quaternion()
+
+    class PoseStamped:
+        def __init__(self):
+            self.header = Header()
+            self.pose = Pose()
 
     class Transform:
         def __init__(self):
@@ -97,6 +107,12 @@ def _install_ros_stubs_if_needed():
             self.valid = False
             self.source = ""
 
+    class GraspCandidateArray:
+        def __init__(self):
+            self.header = Header()
+            self.candidates = []
+            self.best_index = -1
+
     class GraspPlan:
         def __init__(self):
             self.header = Header()
@@ -114,15 +130,17 @@ def _install_ros_stubs_if_needed():
         types.ModuleType("geometry_msgs.msg"),
     )
     geometry_msgs_msg.Pose = Pose
+    geometry_msgs_msg.PoseStamped = PoseStamped
     geometry_msgs_msg.TransformStamped = TransformStamped
     sys.modules["geometry_msgs"] = geometry_msgs
     sys.modules["geometry_msgs.msg"] = geometry_msgs_msg
 
-    rebotarm_msgs = types.ModuleType("rebotarm_msgs")
-    rebotarm_msgs_msg = types.ModuleType("rebotarm_msgs.msg")
+    rebotarm_msgs = sys.modules.get("rebotarm_msgs", types.ModuleType("rebotarm_msgs"))
+    rebotarm_msgs_msg = sys.modules.get("rebotarm_msgs.msg", types.ModuleType("rebotarm_msgs.msg"))
     rebotarm_msgs_msg.Detection2D = Detection2D
     rebotarm_msgs_msg.Detection2DArray = Detection2DArray
     rebotarm_msgs_msg.GraspCandidate = GraspCandidate
+    rebotarm_msgs_msg.GraspCandidateArray = GraspCandidateArray
     rebotarm_msgs_msg.GraspPlan = GraspPlan
     sys.modules["rebotarm_msgs"] = rebotarm_msgs
     sys.modules["rebotarm_msgs.msg"] = rebotarm_msgs_msg
@@ -142,6 +160,7 @@ def _install_ros_stubs_if_needed():
 
     tf2_ros = sys.modules.get("tf2_ros", types.ModuleType("tf2_ros"))
     tf2_ros.Buffer = object
+    tf2_ros.TransformException = RuntimeError
     tf2_ros.TransformListener = object
     sys.modules["tf2_ros"] = tf2_ros
 

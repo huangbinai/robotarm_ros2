@@ -25,6 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/MoveToPoseIK.srv"
   "srv/ExecutePose.srv"
   "srv/SetGripper.srv"
+  "srv/GraspGripper.srv"
   "action/ExecuteGrasp.action"
   "action/MoveToPose.action"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs

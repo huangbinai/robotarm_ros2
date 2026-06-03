@@ -10,6 +10,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
+from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -47,9 +48,19 @@ class VisualReadyNode(Node):
 
         self.create_subscription(JointState, self._joint_state_topic, self._on_joint_state, qos_profile_sensor_data)
         self._trajectory_client = ActionClient(self, FollowJointTrajectory, self._action_name)
+        self._move_service = self.create_service(
+            Trigger,
+            f"/{namespace}/visual_ready/move",
+            self._handle_move_request,
+        )
 
     def _on_joint_state(self, msg: JointState) -> None:
         self._latest_joint_state = msg
+
+    def _handle_move_request(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        response.success = self.move_to_visual_ready()
+        response.message = "visual_ready reached" if response.success else "visual_ready move failed"
+        return response
 
     def move_to_visual_ready(self) -> bool:
         target = [float(v) for v in self.get_parameter("joint_positions").value]
@@ -139,6 +150,7 @@ def main(args: list[str] | None = None) -> None:
     try:
         if node.move_to_visual_ready():
             node.get_logger().info("visual_ready startup move complete")
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:

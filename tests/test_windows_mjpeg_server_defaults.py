@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _load_windows_mjpeg_server():
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / "tools" / "windows_mjpeg_server.py"
     spec = importlib.util.spec_from_file_location("windows_mjpeg_server", module_path)
     module = importlib.util.module_from_spec(spec)
@@ -39,3 +39,15 @@ def test_orbbec_grasp_defaults_are_fixed_but_classes_remain_overridable():
     assert args.jpeg_quality == 80
     assert args.classes == "bottle,cup"
     assert args.allowed_classes == "bottle,cup"
+
+
+def test_windows_server_exposes_graspnet_candidate_endpoint_and_json_file_option():
+    module = _load_windows_mjpeg_server()
+    text = (Path(__file__).resolve().parents[1] / "tools" / "windows_mjpeg_server.py").read_text(encoding="utf-8")
+
+    parser = module.build_arg_parser()
+    args = parser.parse_args(["--graspnet-candidates-path", r"D:\tmp\graspnet_candidates.json"])
+
+    assert args.graspnet_candidates_path == r"D:\tmp\graspnet_candidates.json"
+    assert "/graspnet_candidates.json" in text
+    assert "latest_graspnet_candidates" in text

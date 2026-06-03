@@ -181,6 +181,11 @@ class VisualGraspExecutorNode(Node):
         self._last_grasp_closure_distance_m = 0.0
         self._last_lift_start_z_m: float | None = None
         self._retry_retreat_stage: VisualGraspStage | None = None
+        self._run_counter = 0
+        self._current_run_id = 0
+        self._current_attempt_index = 0
+        self._current_candidate_index = -1
+        self._current_attempt_plan: GraspPlan | None = None
         self._running = False
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -260,16 +265,26 @@ class VisualGraspExecutorNode(Node):
             response.message = "no valid grasp plan received"
             return response
         self._running = True
+        self._run_counter += 1
+        self._current_run_id = self._run_counter
         try:
+            self._log_diagnostic("detect", "ok", f"input_topic={self._input_topic}, plan_revision={self._plan_revision}")
             attempts = self._candidate_plans_for_attempts()
             if not attempts:
                 response.success = False
                 response.message = "no candidate attempts available"
+                self._log_diagnostic("filter", "fail", response.message)
                 return response
+            self._log_diagnostic("filter", "ok", f"attempts={len(attempts)}")
             for attempt_index, (candidate_index, plan) in enumerate(attempts):
+                self._current_attempt_index = attempt_index + 1
+                self._current_candidate_index = int(candidate_index)
+                self._current_attempt_plan = deepcopy(plan)
                 self.get_logger().info(
-                    f"visual grasp attempt {attempt_index + 1}/{len(attempts)}: candidate={candidate_index}"
+                    f"{self._diagnostic_prefix('attempt')} start: "
+                    f"attempt={attempt_index + 1}/{len(attempts)}, candidate={candidate_index}"
                 )
+                self._log_plan_snapshot(plan)
                 self._last_grasp_contact_detected = False
                 self._last_grasp_closure_distance_m = 0.0
                 self._last_lift_start_z_m = None
@@ -279,6 +294,7 @@ class VisualGraspExecutorNode(Node):
                 if ok:
                     response.success = True
                     response.message = "visual grasp sequence finished"
+                    self._log_diagnostic("result", "success", response.message)
                     return response
                 remaining_attempts = len(attempts) - attempt_index - 1
                 decision = recovery_decision_for_stage(
@@ -299,16 +315,20 @@ class VisualGraspExecutorNode(Node):
                     continue
                 response.success = False
                 response.message = f"{failed_stage} failed: {message}"
+                self._log_failure_snapshot(failed_stage, message)
                 return response
             response.success = True
             response.message = "visual grasp sequence finished"
+            self._log_diagnostic("result", "success", response.message)
             return response
         except Exception as exc:
             self._request_stop()
             response.success = False
             response.message = f"visual grasp failed: {exc}"
+            self._log_failure_snapshot("executor", str(exc))
             return response
         finally:
+            self._current_attempt_plan = None
             self._running = False
 
     def _stop_visual_grasp(self, _request, response):
@@ -437,6 +457,52 @@ class VisualGraspExecutorNode(Node):
                     return False, reason, stage.name
             stage_index += 1
         return True, "ok", ""
+
+    def _diagnostic_prefix(self, stage: str) -> str:
+        return (
+            f"[visual_grasp][run={self._current_run_id}]"
+            f"[attempt={self._current_attempt_index}]"
+            f"[candidate={self._current_candidate_index}]"
+            f"[stage={stage}]"
+        )
+
+    def _log_diagnostic(self, stage: str, status: str, details: str = "") -> None:
+        suffix = f": {details}" if details else ""
+        self.get_logger().info(f"{self._diagnostic_prefix(stage)} {status}{suffix}")
+
+    def _log_plan_snapshot(self, plan: GraspPlan) -> None:
+        candidate = plan.candidate
+        self.get_logger().info(
+            f"{self._diagnostic_prefix('plan')} "
+            f"valid={bool(plan.valid)}, source={plan.source}, reason={plan.reason}, "
+            f"class={getattr(candidate, 'class_name', '')}, confidence={float(getattr(candidate, 'confidence', 0.0)):.3f}, "
+            f"jaw_width={float(getattr(plan, 'jaw_width', 0.0) or getattr(candidate, 'jaw_width', 0.0) or 0.0):.4f}"
+        )
+        self.get_logger().info(f"{self._diagnostic_prefix('pregrasp_pose')} {self._format_pose(plan.pregrasp_pose)}")
+        self.get_logger().info(f"{self._diagnostic_prefix('grasp_pose')} {self._format_pose(plan.grasp_pose)}")
+
+    def _log_failure_snapshot(self, failed_stage: str, message: str) -> None:
+        self.get_logger().error(f"{self._diagnostic_prefix(failed_stage)} fail: {message}")
+        if self._current_attempt_plan is not None:
+            self._log_plan_snapshot(self._current_attempt_plan)
+        reached = "unknown" if self._last_gripper_reached_position is None else f"{self._last_gripper_reached_position:.4f}"
+        self.get_logger().error(
+            f"{self._diagnostic_prefix('failure_summary')} "
+            f"failed_stage={failed_stage}, message={message}, "
+            f"last_gripper_reached_position={reached}, "
+            f"contact={self._last_grasp_contact_detected}, "
+            f"closure_distance={self._last_grasp_closure_distance_m:.4f}"
+        )
+
+    def _format_pose(self, pose: Pose) -> str:
+        return (
+            "position=("
+            f"{float(pose.position.x):.4f}, {float(pose.position.y):.4f}, {float(pose.position.z):.4f}"
+            "), orientation=("
+            f"{float(pose.orientation.x):.4f}, {float(pose.orientation.y):.4f}, "
+            f"{float(pose.orientation.z):.4f}, {float(pose.orientation.w):.4f}"
+            ")"
+        )
 
     def _wait_for_refreshed_plan(self, min_revision: int) -> GraspPlan | None:
         if not bool(self.get_parameter("refresh_plan_at_pregrasp_enabled").value):
@@ -638,7 +704,7 @@ class VisualGraspExecutorNode(Node):
         return pose_to_target(converted)
 
     def _run_stage(self, stage: VisualGraspStage) -> tuple[bool, str]:
-        self.get_logger().info(f"visual grasp stage: {stage.name}")
+        self._log_diagnostic(stage.name, "start")
         if stage.kind == "move":
             if stage.pose is None:
                 return False, "missing move pose"
@@ -658,6 +724,7 @@ class VisualGraspExecutorNode(Node):
         else:
             return False, f"unsupported stage kind: {stage.kind}"
         if not ok:
+            self._log_diagnostic(stage.name, "fail", message)
             return False, message
         wait_sec = self._stage_waits.get(stage.name, 0.0)
         if not self._execution_enabled() and stage.kind == "move":
@@ -665,6 +732,7 @@ class VisualGraspExecutorNode(Node):
         time.sleep(max(0.0, wait_sec))
         if not self._running:
             return False, "stopped"
+        self._log_diagnostic(stage.name, "ok", message)
         return True, message
 
     def _call_execute_pose(self, stage: VisualGraspStage) -> tuple[bool, str]:

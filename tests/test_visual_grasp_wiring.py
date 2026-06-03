@@ -78,12 +78,14 @@ def test_rebotarm_vision_exposes_grasp_console_entrypoints():
 
     assert {
         "rebotarm_ordinary_grasp_node",
+        "rebotarm_graspnet_baseline_node",
         "rebotarm_send_grasp_preview",
         "rebotarm_visual_grasp_executor",
         "rebotarm_visual_grasp_markers",
         "rebotarm_grasp_tcp_frame",
         "rebotarm_grasp_depth_probe",
         "rebotarm_visual_ready",
+        "rebotarm_visual_grasp_benchmark",
     }.issubset(scripts)
 
 
@@ -103,7 +105,7 @@ def test_visual_grasp_system_launch_defaults_to_safe_preview_before_executor():
     )
     assert 'executable="rebotarm_send_grasp_preview"' in launch_text
     assert 'executable="rebotarm_visual_grasp_executor"' in launch_text
-    assert '"input_topic": "/grasp/plan"' in launch_text
+    assert '"input_topic": executor_input_topic' in launch_text
     assert (
         '"/interactive_control/pose_target"' in launch_text
         or '"motion_execution"'
@@ -132,7 +134,89 @@ def test_visual_grasp_system_can_move_to_visual_ready_on_start():
     assert '"joint_positions": visual_ready_joint_positions' in launch_text
     assert "FollowJointTrajectory" in node_text
     assert "visual_ready startup move refused" in node_text
+    assert 'f"/{namespace}/visual_ready/move"' in node_text
+    assert "create_service(" in node_text
+    assert "Trigger," in node_text
     assert "ARM_JOINT_NAMES" in node_text
+
+
+def test_visual_grasp_markers_show_tcp_approach_and_open_axis():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    marker_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_marker_node.py")
+
+    assert 'DeclareLaunchArgument("gripper_open_axis_local_xyz", default_value="[0.0, 1.0, 0.0]")' in launch_text
+    assert 'DeclareLaunchArgument("show_tcp_markers", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("show_approach_arrow", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("show_gripper_open_axis", default_value="true")' in launch_text
+    assert '"input_topic": executor_input_topic' in launch_text
+    assert '"tcp_offset_xyz": tcp_offset_xyz' in launch_text
+    assert '"gripper_open_axis_local_xyz": gripper_open_axis_local_xyz' in launch_text
+    assert '"show_tcp_markers": show_tcp_markers' in launch_text
+    assert '"show_approach_arrow": show_approach_arrow' in launch_text
+    assert '"show_gripper_open_axis": show_gripper_open_axis' in launch_text
+    assert "visual_object_center" in marker_text
+    assert "visual_pregrasp_tcp" in marker_text
+    assert "visual_grasp_tcp" in marker_text
+    assert "visual_approach_axis" in marker_text
+    assert "visual_gripper_open_axis" in marker_text
+    assert "Marker.ARROW" in marker_text
+    assert "Marker.LINE_LIST" in marker_text
+
+
+def test_visual_grasp_benchmark_returns_ready_between_attempts():
+    benchmark_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_benchmark.py")
+
+    assert "--attempts" in benchmark_text
+    assert "--wait-enter" in benchmark_text
+    assert "--return-ready-before-each" in benchmark_text
+    assert 'f"/{namespace}/visual_ready/move"' in benchmark_text
+    assert 'f"/{namespace}/visual_grasp/execute"' in benchmark_text
+    assert "class BenchmarkStats" in benchmark_text
+    assert "classify_failure_stage" in benchmark_text
+    assert "success_rate" in benchmark_text
+
+
+def test_visual_grasp_commands_document_strict_stability_test():
+    doc_text = _read("docs/visual_grasp_commands.md")
+    readme_text = _read("src/rebotarm_vision/README_zh.md")
+
+    assert "rebotarm_visual_grasp_benchmark" in doc_text
+    assert "--attempts 20" in doc_text
+    assert "--return-ready-before-each" in doc_text
+    assert "--wait-enter" in doc_text
+    assert "/rebotarm/visual_ready/move" in doc_text
+    assert "/rebotarm/visual_grasp/execute" in doc_text
+    assert "failed_stage" in doc_text
+    assert "V1.1 严格 20 次稳定性测试" in readme_text
+    assert "rebotarm_visual_grasp_benchmark" in readme_text
+
+
+def test_graspnet_baseline_v13_is_wired_as_candidate_source_without_replacing_execution():
+    setup_scripts = _console_scripts("src/rebotarm_vision/setup.py")
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    node_text = _read("src/rebotarm_vision/rebotarm_vision/graspnet_baseline_node.py")
+
+    assert "rebotarm_graspnet_baseline_node" in setup_scripts
+    assert 'DeclareLaunchArgument("start_graspnet_baseline", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates")' in launch_text
+    assert 'DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates")' in launch_text
+    assert 'DeclareLaunchArgument("graspnet_source_mode", default_value="network")' in launch_text
+    assert 'DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json")' in launch_text
+    assert 'DeclareLaunchArgument("graspnet_model_root", default_value="")' in launch_text
+    assert 'executable="rebotarm_graspnet_baseline_node"' in launch_text
+    assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
+    assert '"source_mode": graspnet_source_mode' in launch_text
+    assert '"network_candidates_url": graspnet_candidates_url' in launch_text
+    assert '"input_topic": grasp_candidates_topic' in launch_text
+    assert "candidate_scoring_mode" not in launch_text
+    assert '"scoring_mode"' not in launch_text
+    assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/plan")' in launch_text
+    assert "GraspNetBaselineBackend" in node_text
+    assert "NetworkGraspNetClient" in node_text
+    assert "GraspCandidateArray" in node_text
+    assert "self.candidates_pub.publish(candidates)" in node_text
+    assert "MoveIt" not in node_text
+    assert "follow_joint_trajectory" not in node_text
 
 
 def test_visual_grasp_executor_keeps_stop_paths_wired():
@@ -200,7 +284,8 @@ def test_visual_grasp_system_launch_wires_candidate_ik_filter():
     assert 'DeclareLaunchArgument("candidate_collision_check_service", default_value="/check_state_validity")' in launch_text
     assert 'DeclareLaunchArgument("candidate_collision_group_name", default_value="arm_with_gripper")' in launch_text
     assert 'executable="rebotarm_grasp_candidate_ik_filter"' in launch_text
-    assert '"input_topic": "/grasp/candidates"' in launch_text
+    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates")' in launch_text
+    assert '"input_topic": grasp_candidates_topic' in launch_text
     assert '"output_topic": filtered_candidates_topic' in launch_text
     assert '"output_plan_topic": filtered_plan_topic' in launch_text
     assert '"collision_check_enabled": candidate_collision_check_enabled' in launch_text
@@ -277,6 +362,7 @@ def test_visual_grasp_executor_has_bounded_approach_visual_servo():
 def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    recovery_text = _read("src/rebotarm_vision/rebotarm_vision/trajectory_recovery_policy.py")
 
     assert "GraspCandidateArray, GraspPlan" in executor_text
     assert "from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices" in executor_text
@@ -299,6 +385,8 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert "self._retry_retreat_stage = stage" in executor_text
     assert "self._run_stage(retreat)" in executor_text
     assert "recovery_decision_for_stage" in executor_text
+    assert '"close_gripper"' not in recovery_text
+    assert '"lift"' not in recovery_text
     assert 'DeclareLaunchArgument("auto_retry_enabled", default_value="false")' in launch_text
     assert 'DeclareLaunchArgument("place_after_grasp_enabled", default_value="false")' in launch_text
     assert 'DeclareLaunchArgument("trajectory_precheck_enabled", default_value="false")' in launch_text
@@ -324,6 +412,10 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'self.declare_parameter("pose_policy", "hybrid_geometry_with_base_axis_fallback")' in node_text
     assert 'self.declare_parameter("orientation_yaw_offsets_rad",' in node_text
     assert 'self.declare_parameter("candidate_grasp_z_offsets_m",' in node_text
+    assert 'self.declare_parameter("max_candidates_per_frame", 20)' in node_text
+    assert 'self.declare_parameter("max_variants_per_candidate", 2)' in node_text
+    assert 'self.declare_parameter("candidate_min_jaw_width_m", 0.006)' in node_text
+    assert 'self.declare_parameter("candidate_max_jaw_width_m", 0.085)' in node_text
     assert "self._filter_busy = False" in node_text
     assert "candidate IK filter is still processing previous candidates; dropping this frame" in node_text
     assert "self._filter_busy = True" in node_text
@@ -336,12 +428,18 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert "def _hybrid_geometry_target_variants" in node_text
     assert "build_hybrid_geometry_grasp_targets" in node_text
     assert "build_official_geometry_grasp_targets" in node_text
-    assert "for pregrasp, grasp, variant_label in self._candidate_target_variants" in node_text
+    assert "variants = self._candidate_target_variants(msg, candidate.pose)" in node_text
+    assert "for pregrasp, grasp, variant_label in variants[:max_variants]" in node_text
     assert "request.ik_request.robot_state.joint_state = deepcopy(self._latest_joint_state)" in node_text
     assert "request.ik_request.avoid_collisions = False" in node_text
     assert "candidate IK filter IK failed" in node_text
     assert "def _check_state_validity" in node_text
     assert "candidate IK filter state validity failed" in node_text
+    assert "candidate_scoring_policy" not in node_text
+    assert "score_candidate" not in node_text
+    assert "def _preserve_input_score" in node_text
+    assert "candidate IK filter best:" in node_text
+    assert "ranked = sorted(ranked" in node_text
     assert "filter_candidate_array_by_reachability" in node_text
     assert "plan.pregrasp_pose = _pose_from_target(pregrasp)" in node_text
     assert "plan.grasp_pose = _pose_from_target(grasp)" in node_text
@@ -353,11 +451,21 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_pose_policy", default_value="hybrid_geometry_with_base_axis_fallback")' in launch_text
     assert 'DeclareLaunchArgument("candidate_orientation_yaw_offsets_rad",' in launch_text
     assert 'DeclareLaunchArgument("candidate_grasp_z_offsets_m",' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_variants_per_candidate", default_value="2")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.120")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.240")' in launch_text
     assert '"joint_state_topic": candidate_joint_state_topic' in launch_text
     assert '"service_timeout_sec": candidate_filter_service_timeout_sec' in launch_text
     assert '"pose_policy": candidate_pose_policy' in launch_text
     assert '"orientation_yaw_offsets_rad": candidate_orientation_yaw_offsets_rad' in launch_text
     assert '"candidate_grasp_z_offsets_m": candidate_grasp_z_offsets_m' in launch_text
+    assert '"max_candidates_per_frame": candidate_max_candidates_per_frame' in launch_text
+    assert '"max_variants_per_candidate": candidate_max_variants_per_candidate' in launch_text
+    assert '"candidate_min_jaw_width_m": candidate_min_jaw_width_m' in launch_text
+    assert '"candidate_max_jaw_width_m": candidate_max_jaw_width_m' in launch_text
 
 
 def test_gripper_visual_joint_state_node_rejects_empty_or_incomplete_arm_state():

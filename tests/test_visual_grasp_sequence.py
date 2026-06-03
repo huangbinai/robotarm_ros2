@@ -401,7 +401,7 @@ def test_place_policy_builds_place_open_and_retreat_stages():
     assert stages[2].pose.position == pytest.approx((0.20, -0.20, 0.31))
 
 
-def test_recovery_policy_allows_retry_for_pregrasp_and_approach_only():
+def test_recovery_policy_allows_retry_for_motion_failures_only():
     from rebotarm_vision.trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage
 
     config = RecoveryConfig(auto_retry_enabled=True, safe_retreat_before_retry=True)
@@ -409,6 +409,7 @@ def test_recovery_policy_allows_retry_for_pregrasp_and_approach_only():
     pregrasp = recovery_decision_for_stage("move_to_pregrasp", attempt_index=0, remaining_attempts=1, config=config)
     approach = recovery_decision_for_stage("approach_grasp", attempt_index=0, remaining_attempts=1, config=config)
     close = recovery_decision_for_stage("close_gripper", attempt_index=0, remaining_attempts=1, config=config)
+    lift = recovery_decision_for_stage("lift", attempt_index=0, remaining_attempts=1, config=config)
 
     assert pregrasp.retry
     assert not pregrasp.request_safe_retreat
@@ -416,6 +417,8 @@ def test_recovery_policy_allows_retry_for_pregrasp_and_approach_only():
     assert approach.request_safe_retreat
     assert not close.retry
     assert close.abort
+    assert not lift.retry
+    assert lift.abort
 
 
 def test_filtered_plan_targets_are_used_without_reapplying_base_axis_policy():

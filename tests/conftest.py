@@ -81,11 +81,13 @@ def _ensure_ros_stubs() -> None:
             self.transform = Transform()
 
     class Marker:
+        ARROW = 0
         ADD = 0
         DELETEALL = 3
         CUBE = 1
         SPHERE = 2
         CYLINDER = 3
+        LINE_LIST = 5
         TEXT_VIEW_FACING = 9
 
         def __init__(self):
@@ -100,6 +102,7 @@ def _ensure_ros_stubs() -> None:
             self.lifetime = Stamp()
             self.frame_locked = False
             self.text = ""
+            self.points = []
 
     class MarkerArray:
         def __init__(self):
@@ -159,6 +162,24 @@ def _ensure_ros_stubs() -> None:
             self.source = ""
             self.reason = ""
 
+    class Image:
+        def __init__(self):
+            self.header = Header()
+            self.height = 0
+            self.width = 0
+            self.encoding = ""
+            self.is_bigendian = 0
+            self.step = 0
+            self.data = b""
+
+    class JointState:
+        def __init__(self):
+            self.header = Header()
+            self.name = []
+            self.position = []
+            self.velocity = []
+            self.effort = []
+
     class _Request:
         pass
 
@@ -198,6 +219,16 @@ def _ensure_ros_stubs() -> None:
     std_srvs_srv = _module("std_srvs.srv")
     std_srvs_srv.Trigger = _Service
     _module("std_srvs").srv = std_srvs_srv
+
+    moveit_msgs_srv = _module("moveit_msgs.srv")
+    moveit_msgs_srv.GetPositionIK = _Service
+    moveit_msgs_srv.GetStateValidity = _Service
+    _module("moveit_msgs").srv = moveit_msgs_srv
+
+    sensor_msgs_msg = _module("sensor_msgs.msg")
+    sensor_msgs_msg.Image = Image
+    sensor_msgs_msg.JointState = JointState
+    _module("sensor_msgs").msg = sensor_msgs_msg
 
     rclpy = _module("rclpy")
     rclpy.duration = types.SimpleNamespace(Duration=lambda seconds=0.0: seconds)

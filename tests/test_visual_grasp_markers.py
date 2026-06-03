@@ -66,11 +66,13 @@ def _install_ros_stubs_if_needed():
             self.orientation = Quaternion()
 
     class Marker:
+        ARROW = 0
         ADD = 0
         DELETEALL = 3
         CUBE = 1
         SPHERE = 2
         CYLINDER = 3
+        LINE_LIST = 5
         TEXT_VIEW_FACING = 9
 
         def __init__(self):
@@ -85,6 +87,7 @@ def _install_ros_stubs_if_needed():
             self.lifetime = Stamp()
             self.frame_locked = False
             self.text = ""
+            self.points = []
 
     class MarkerArray:
         def __init__(self):
@@ -194,6 +197,43 @@ def test_visual_marker_builder_uses_upright_object_marker():
     assert object_marker.scale.x == pytest.approx(0.072)
     assert object_marker.scale.z == pytest.approx(0.20)
     assert object_marker.frame_locked is True
+
+
+def test_visual_marker_builder_shows_tcp_approach_and_gripper_open_axis():
+    from visualization_msgs.msg import Marker
+    from rebotarm_vision.visual_grasp_marker_node import VisualGraspMarkerBuilder
+
+    plan = _plan()
+    plan.pregrasp_pose.position.x = 0.20
+    plan.pregrasp_pose.position.y = 0.00
+    plan.pregrasp_pose.position.z = 0.35
+    plan.grasp_pose.position.x = 0.30
+    plan.grasp_pose.position.y = 0.00
+    plan.grasp_pose.position.z = 0.30
+    plan.jaw_width = 0.04
+
+    markers = VisualGraspMarkerBuilder(
+        tcp_offset_xyz=(-0.04, 0.0, 0.0),
+        gripper_open_axis_local_xyz=(0.0, 1.0, 0.0),
+    ).build(
+        plan,
+        frame_id="base_link",
+        stamp=types.SimpleNamespace(sec=0, nanosec=0),
+    )
+
+    by_ns = {marker.ns: marker for marker in markers.markers}
+
+    assert by_ns["visual_object_center"].pose.position.x == pytest.approx(0.32)
+    assert by_ns["visual_pregrasp_tcp"].pose.position.x == pytest.approx(0.16)
+    assert by_ns["visual_grasp_tcp"].pose.position.x == pytest.approx(0.26)
+    assert by_ns["visual_approach_axis"].type == Marker.ARROW
+    assert len(by_ns["visual_approach_axis"].points) == 2
+    assert by_ns["visual_approach_axis"].points[0].x == pytest.approx(0.16)
+    assert by_ns["visual_approach_axis"].points[1].x == pytest.approx(0.26)
+    assert by_ns["visual_gripper_open_axis"].type == Marker.LINE_LIST
+    assert len(by_ns["visual_gripper_open_axis"].points) == 2
+    assert by_ns["visual_gripper_open_axis"].points[0].y == pytest.approx(-0.02)
+    assert by_ns["visual_gripper_open_axis"].points[1].y == pytest.approx(0.02)
 
 
 def test_visual_marker_builder_deletes_markers_for_invalid_plan():

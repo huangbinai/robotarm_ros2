@@ -25,7 +25,11 @@ def recovery_decision_for_stage(
     remaining_attempts: int,
     config: RecoveryConfig,
 ) -> RecoveryDecision:
-    can_retry_stage = stage_name in {"move_to_pregrasp", "approach_grasp", "visual_servo_approach"}
+    can_retry_stage = stage_name in {
+        "move_to_pregrasp",
+        "approach_grasp",
+        "visual_servo_approach",
+    }
     can_retry = bool(config.auto_retry_enabled) and can_retry_stage and int(remaining_attempts) > 0
     if can_retry:
         request_safe_retreat = bool(config.safe_retreat_before_retry) and stage_name != "move_to_pregrasp"

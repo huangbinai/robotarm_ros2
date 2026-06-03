@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 
 import rclpy
 from geometry_msgs.msg import Pose
@@ -26,6 +27,22 @@ def copy_pose(pose: Pose) -> Pose:
     return copied
 
 
+def copy_point(point):
+    copied = point.__class__()
+    copied.x = float(point.x)
+    copied.y = float(point.y)
+    copied.z = float(point.z)
+    return copied
+
+
+def point_from_xyz(reference_pose: Pose, xyz: tuple[float, float, float]):
+    point = reference_pose.position.__class__()
+    point.x = float(xyz[0])
+    point.y = float(xyz[1])
+    point.z = float(xyz[2])
+    return point
+
+
 def identity_orientation(pose: Pose) -> Pose:
     copied = copy_pose(pose)
     copied.orientation.x = 0.0
@@ -43,6 +60,46 @@ def object_height(object_length: float, minimum: float) -> float:
     return max(float(minimum), min(max(float(object_length), 0.0), 0.35))
 
 
+def _rotate_vector_by_quaternion(
+    vector: tuple[float, float, float],
+    quaternion: tuple[float, float, float, float],
+) -> tuple[float, float, float]:
+    x, y, z = (float(vector[0]), float(vector[1]), float(vector[2]))
+    qx, qy, qz, qw = (float(quaternion[0]), float(quaternion[1]), float(quaternion[2]), float(quaternion[3]))
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm <= 1e-9:
+        return x, y, z
+    qx, qy, qz, qw = qx / norm, qy / norm, qz / norm, qw / norm
+
+    # Quaternion vector rotation: v' = v + 2*w*(q_vec x v) + 2*(q_vec x (q_vec x v)).
+    tx = 2.0 * (qy * z - qz * y)
+    ty = 2.0 * (qz * x - qx * z)
+    tz = 2.0 * (qx * y - qy * x)
+    return (
+        x + qw * tx + (qy * tz - qz * ty),
+        y + qw * ty + (qz * tx - qx * tz),
+        z + qw * tz + (qx * ty - qy * tx),
+    )
+
+
+def _pose_quaternion(pose: Pose) -> tuple[float, float, float, float]:
+    return (
+        float(pose.orientation.x),
+        float(pose.orientation.y),
+        float(pose.orientation.z),
+        float(pose.orientation.w),
+    )
+
+
+def _offset_pose_position(pose: Pose, offset_xyz: tuple[float, float, float]) -> Pose:
+    copied = copy_pose(pose)
+    dx, dy, dz = _rotate_vector_by_quaternion(offset_xyz, _pose_quaternion(pose))
+    copied.position.x = float(pose.position.x) + dx
+    copied.position.y = float(pose.position.y) + dy
+    copied.position.z = float(pose.position.z) + dz
+    return copied
+
+
 class VisualGraspMarkerBuilder:
     """Builds RViz markers for a real GraspPlan without owning ROS subscriptions."""
 
@@ -52,10 +109,20 @@ class VisualGraspMarkerBuilder:
         object_min_diameter_m: float = 0.06,
         object_min_height_m: float = 0.12,
         upright_object_marker: bool = True,
+        tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        gripper_open_axis_local_xyz: tuple[float, float, float] = (0.0, 1.0, 0.0),
+        show_tcp_markers: bool = True,
+        show_approach_arrow: bool = True,
+        show_gripper_open_axis: bool = True,
     ) -> None:
         self._object_min_diameter_m = float(object_min_diameter_m)
         self._object_min_height_m = float(object_min_height_m)
         self._upright_object_marker = bool(upright_object_marker)
+        self._tcp_offset_xyz = tuple(float(v) for v in tcp_offset_xyz)
+        self._gripper_open_axis_local_xyz = tuple(float(v) for v in gripper_open_axis_local_xyz)
+        self._show_tcp_markers = bool(show_tcp_markers)
+        self._show_approach_arrow = bool(show_approach_arrow)
+        self._show_gripper_open_axis = bool(show_gripper_open_axis)
 
     def build(self, plan: GraspPlan, *, frame_id: str, stamp) -> MarkerArray:
         markers = MarkerArray()
@@ -80,6 +147,17 @@ class VisualGraspMarkerBuilder:
             self._sphere_marker(
                 frame_id,
                 stamp,
+                4,
+                identity_orientation(plan.candidate.pose),
+                "visual_object_center",
+                0.025,
+                (0.0, 1.0, 0.18, 1.0),
+            )
+        )
+        markers.markers.append(
+            self._sphere_marker(
+                frame_id,
+                stamp,
                 1,
                 plan.pregrasp_pose,
                 "visual_pregrasp",
@@ -98,6 +176,42 @@ class VisualGraspMarkerBuilder:
                 (1.0, 0.18, 0.12, 1.0),
             )
         )
+        pregrasp_tcp = _offset_pose_position(plan.pregrasp_pose, self._tcp_offset_xyz)
+        grasp_tcp = _offset_pose_position(plan.grasp_pose, self._tcp_offset_xyz)
+        if self._show_tcp_markers:
+            markers.markers.append(
+                self._sphere_marker(
+                    frame_id,
+                    stamp,
+                    5,
+                    pregrasp_tcp,
+                    "visual_pregrasp_tcp",
+                    0.022,
+                    (0.0, 0.42, 1.0, 1.0),
+                )
+            )
+            markers.markers.append(
+                self._sphere_marker(
+                    frame_id,
+                    stamp,
+                    6,
+                    grasp_tcp,
+                    "visual_grasp_tcp",
+                    0.026,
+                    (1.0, 0.0, 0.0, 1.0),
+                )
+            )
+        if self._show_approach_arrow:
+            markers.markers.append(self._approach_arrow_marker(frame_id, stamp, pregrasp_tcp, grasp_tcp))
+        if self._show_gripper_open_axis:
+            markers.markers.append(
+                self._gripper_open_axis_marker(
+                    frame_id,
+                    stamp,
+                    grasp_tcp,
+                    jaw_width=float(plan.jaw_width or plan.candidate.jaw_width),
+                )
+            )
         markers.markers.append(self._text_marker(frame_id, stamp, plan))
         return markers
 
@@ -150,6 +264,46 @@ class VisualGraspMarkerBuilder:
         marker.color.r, marker.color.g, marker.color.b, marker.color.a = color
         return marker
 
+    def _approach_arrow_marker(self, frame_id: str, stamp, pregrasp_tcp: Pose, grasp_tcp: Pose) -> Marker:
+        marker = self._base_marker(frame_id, stamp, 7, Marker.ARROW, "visual_approach_axis")
+        marker.points = [copy_point(pregrasp_tcp.position), copy_point(grasp_tcp.position)]
+        marker.scale.x = 0.012
+        marker.scale.y = 0.026
+        marker.scale.z = 0.026
+        marker.color.r = 1.0
+        marker.color.g = 0.48
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        return marker
+
+    def _gripper_open_axis_marker(self, frame_id: str, stamp, grasp_tcp: Pose, *, jaw_width: float) -> Marker:
+        marker = self._base_marker(frame_id, stamp, 8, Marker.LINE_LIST, "visual_gripper_open_axis")
+        axis = _rotate_vector_by_quaternion(self._gripper_open_axis_local_xyz, _pose_quaternion(grasp_tcp))
+        axis_len = math.sqrt(sum(component * component for component in axis))
+        if axis_len <= 1e-9:
+            axis = (0.0, 1.0, 0.0)
+            axis_len = 1.0
+        axis = tuple(component / axis_len for component in axis)
+        half_width = max(0.01, float(jaw_width) * 0.5)
+        center = grasp_tcp.position
+        p0 = (
+            float(center.x) - axis[0] * half_width,
+            float(center.y) - axis[1] * half_width,
+            float(center.z) - axis[2] * half_width,
+        )
+        p1 = (
+            float(center.x) + axis[0] * half_width,
+            float(center.y) + axis[1] * half_width,
+            float(center.z) + axis[2] * half_width,
+        )
+        marker.points = [point_from_xyz(grasp_tcp, p0), point_from_xyz(grasp_tcp, p1)]
+        marker.scale.x = 0.01
+        marker.color.r = 0.0
+        marker.color.g = 0.95
+        marker.color.b = 1.0
+        marker.color.a = 1.0
+        return marker
+
     def _text_marker(self, frame_id: str, stamp, plan: GraspPlan) -> Marker:
         marker = self._base_marker(frame_id, stamp, 3, Marker.TEXT_VIEW_FACING, "visual_object_label")
         marker.pose = identity_orientation(plan.candidate.pose)
@@ -175,6 +329,11 @@ class VisualGraspMarkerNode(Node):
         self.declare_parameter("object_min_diameter_m", 0.06)
         self.declare_parameter("object_min_height_m", 0.12)
         self.declare_parameter("upright_object_marker", True)
+        self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
+        self.declare_parameter("gripper_open_axis_local_xyz", [0.0, 1.0, 0.0])
+        self.declare_parameter("show_tcp_markers", True)
+        self.declare_parameter("show_approach_arrow", True)
+        self.declare_parameter("show_gripper_open_axis", True)
         self.declare_parameter("publish_invalid_delete", True)
 
         self._input_topic = str(self.get_parameter("input_topic").value)
@@ -185,6 +344,11 @@ class VisualGraspMarkerNode(Node):
             object_min_diameter_m=float(self.get_parameter("object_min_diameter_m").value),
             object_min_height_m=float(self.get_parameter("object_min_height_m").value),
             upright_object_marker=bool(self.get_parameter("upright_object_marker").value),
+            tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
+            gripper_open_axis_local_xyz=self._tuple3("gripper_open_axis_local_xyz"),
+            show_tcp_markers=bool(self.get_parameter("show_tcp_markers").value),
+            show_approach_arrow=bool(self.get_parameter("show_approach_arrow").value),
+            show_gripper_open_axis=bool(self.get_parameter("show_gripper_open_axis").value),
         )
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -194,6 +358,12 @@ class VisualGraspMarkerNode(Node):
             f"visual grasp markers ready: input={self._input_topic}, output={self._output_topic}, "
             f"target_frame={self._target_frame}"
         )
+
+    def _tuple3(self, name: str) -> tuple[float, float, float]:
+        values = self.get_parameter(name).value
+        if len(values) != 3:
+            raise ValueError(f"{name} must contain exactly 3 values")
+        return tuple(float(value) for value in values)
 
     def _on_plan(self, plan: GraspPlan) -> None:
         marker_stamp = rclpy.time.Time().to_msg()

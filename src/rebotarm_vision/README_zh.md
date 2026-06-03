@@ -290,6 +290,85 @@ ros2 service call /rebotarm/gripper/set rebotarm_msgs/srv/SetGripper "{position:
 
 `execution_mode:=simulation` 只测试视觉、TF、MoveIt IK 和预览链路，不会让实机运动；`execution_mode:=real` 只有调用 `execute_preview` 后才会运动。危险情况优先使用实体急停或断电。
 
+### 8.1 V1.1 严格 20 次稳定性测试
+
+当前视觉抓取已经可以初步稳定夹取后，下一步要验证的是：
+
+```text
+同一个 visual_ready 初始姿态
++ 人工重新摆放同一个瓶子
++ 每次抓取前人工确认安全
+=> 连续 20 次抓取成功率和失败阶段
+```
+
+启动视觉抓取系统后，打开一个新终端运行：
+
+```bash
+cd ~/robotarm_ros2
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 run rebotarm_vision rebotarm_visual_grasp_benchmark \
+  --attempts 20 \
+  --service-timeout-sec 180 \
+  --return-ready-before-each \
+  --wait-enter
+```
+
+每一轮测试流程：
+
+```text
+1. 程序先调用 /rebotarm/visual_ready/move，让机械臂回到固定 visual_ready 姿态
+2. 手动松开夹爪，并把瓶子摆到测试位置
+3. 确认机械臂周围安全后按 Enter
+4. 程序调用 /rebotarm/visual_grasp/execute 执行一次抓取
+5. 自动记录本次 success/fail 和 failed_stage
+6. 进入下一轮
+```
+
+最终统计示例：
+
+```text
+total=20 success=17 failed=3 success_rate=85.0%
+failed_stage:
+  close_gripper: 2
+  move_to_pregrasp: 1
+```
+
+失败时看启动终端中的标准化日志：
+
+```text
+[visual_grasp][run=...][attempt=...][candidate=...][stage=plan]
+[visual_grasp][run=...][attempt=...][candidate=...][stage=pregrasp_pose]
+[visual_grasp][run=...][attempt=...][candidate=...][stage=grasp_pose]
+[visual_grasp][run=...][attempt=...][candidate=...][stage=move_to_pregrasp] start/ok/fail
+[visual_grasp][run=...][attempt=...][candidate=...][stage=approach_grasp] start/ok/fail
+[visual_grasp][run=...][attempt=...][candidate=...][stage=close_gripper] start/ok/fail
+[visual_grasp][run=...][attempt=...][candidate=...][stage=lift] start/ok/fail
+```
+
+失败摘要会额外包含：
+
+```text
+failed_stage
+failure_message
+pregrasp_pose
+grasp_pose
+jaw_width
+last_gripper_reached_position
+contact
+closure_distance
+```
+
+判断规则：
+
+- 如果失败集中在 `move_to_pregrasp`，优先排查 MoveIt 规划、起始姿态、目标可达性。
+- 如果失败集中在 `approach_grasp`，优先排查 TCP 偏移、grasp 点和接近方向。
+- 如果失败集中在 `close_gripper`，优先排查 `jaw_width`、夹爪接触判断和夹爪力度。
+- 如果失败集中在 `lift`，优先排查是否夹稳、保持力和 lift 高度。
+
+20 次成功率低于 80% 时，先不要继续增加复杂算法，先根据失败阶段定位 TCP、手眼 TF、深度稳定性或夹爪接触判断。
+
 ## 9. 常见问题
 
 ### 9.1 打开的是电脑自带摄像头

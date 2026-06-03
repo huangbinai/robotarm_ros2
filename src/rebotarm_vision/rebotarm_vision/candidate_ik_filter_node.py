@@ -88,10 +88,17 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("base_pregrasp_distance_m", 0.08)
         self.declare_parameter("orientation_yaw_offsets_rad", [0.0, 3.141592653589793])
         self.declare_parameter("candidate_grasp_z_offsets_m", [0.0, 0.03])
+        self.declare_parameter("max_candidates_per_frame", 20)
+        self.declare_parameter("max_variants_per_candidate", 2)
+        self.declare_parameter("lift_z_m", 0.08)
         self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.01, 0.0])
         self.declare_parameter("pregrasp_base_z_offset_m", 0.05)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
+        self.declare_parameter("candidate_min_jaw_width_m", 0.006)
+        self.declare_parameter("candidate_max_jaw_width_m", 0.085)
+        self.declare_parameter("candidate_min_grasp_z_m", 0.120)
+        self.declare_parameter("candidate_safe_lift_min_z_m", 0.240)
 
         self._input_topic = str(self.get_parameter("input_topic").value)
         self._target_frame = str(self.get_parameter("target_frame").value)
@@ -194,27 +201,79 @@ class CandidateIkFilterNode(Node):
         if not msg.candidates:
             self._publish_filtered(msg, [])
             return
-        reachable = []
-        reachable_targets: list[tuple[PoseTarget, PoseTarget]] = []
-        for candidate in msg.candidates:
+        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str]] = []
+        max_candidates = max(1, int(self.get_parameter("max_candidates_per_frame").value))
+        for original_index, candidate in enumerate(msg.candidates[:max_candidates]):
             try:
-                accepted_target = None
-                for pregrasp, grasp, variant_label in self._candidate_target_variants(msg, candidate.pose):
+                best: tuple[float, tuple[PoseTarget, PoseTarget], str] | None = None
+                variants = self._candidate_target_variants(msg, candidate.pose)
+                max_variants = max(1, int(self.get_parameter("max_variants_per_candidate").value))
+                for pregrasp, grasp, variant_label in variants[:max_variants]:
                     is_reachable = (
                         self._check_ik_and_collision(pregrasp, f"{variant_label}/pregrasp")
                         and self._check_ik_and_collision(grasp, f"{variant_label}/grasp")
                     )
-                    if is_reachable:
-                        accepted_target = (pregrasp, grasp)
-                        self.get_logger().info(f"candidate IK filter accepted {variant_label}")
-                        break
-                reachable.append(accepted_target is not None)
-                if accepted_target is not None:
-                    reachable_targets.append(accepted_target)
+                    if not is_reachable:
+                        continue
+                    score_value = self._preserve_input_score(
+                        candidate, grasp=grasp, variant_label=variant_label, original_index=original_index
+                    )
+                    if score_value is None:
+                        continue
+                    if best is None or float(score_value) > float(best[0]):
+                        best = (float(score_value), (pregrasp, grasp), variant_label)
+                if best is not None:
+                    score_value, targets, label = best
+                    ranked.append((score_value, original_index, candidate, targets, label))
+                    self.get_logger().info(
+                        f"candidate IK filter accepted candidate={original_index} {label}: score={score_value:.2f}"
+                    )
             except Exception as exc:
                 self.get_logger().warn(f"candidate IK filter rejected candidate: {exc}")
-                reachable.append(False)
-        self._publish_filtered(msg, reachable, reachable_targets)
+        self._publish_ranked(msg, ranked)
+
+    def _preserve_input_score(
+        self,
+        candidate,
+        *,
+        grasp: PoseTarget,
+        variant_label: str,
+        original_index: int,
+    ) -> float | None:
+        if not self._candidate_safety_gate(candidate, grasp=grasp):
+            return None
+        # Preserve the GraspNet/input ranking after IK/collision filtering.
+        # The small variant penalty only breaks ties within one candidate.
+        variant_penalty = 0.0
+        if "_z" in variant_label:
+            try:
+                variant_penalty = float(variant_label.rsplit("_z", 1)[1]) * 0.001
+            except ValueError:
+                variant_penalty = 0.0
+        return -float(original_index) - variant_penalty
+
+    def _candidate_safety_gate(self, candidate, *, grasp: PoseTarget) -> bool:
+        width = float(getattr(candidate, "jaw_width", 0.0))
+        if width < float(self.get_parameter("candidate_min_jaw_width_m").value):
+            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: jaw_width too small ({width:.3f}m)")
+            return False
+        if width > float(self.get_parameter("candidate_max_jaw_width_m").value):
+            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: jaw_width too large ({width:.3f}m)")
+            return False
+        if float(grasp.position[2]) < float(self.get_parameter("candidate_min_grasp_z_m").value):
+            self.get_logger().warn(
+                f"candidate IK filter rejected reachable grasp: grasp z too low ({grasp.position[2]:.3f}m)"
+            )
+            return False
+        lift_z = float(self.get_parameter("lift_z_m").value)
+        safe_lift_min_z = float(self.get_parameter("candidate_safe_lift_min_z_m").value)
+        if float(grasp.position[2]) + lift_z < safe_lift_min_z:
+            self.get_logger().warn(
+                "candidate IK filter rejected reachable grasp: "
+                f"lift target too low ({float(grasp.position[2]) + lift_z:.3f}m)"
+            )
+            return False
+        return True
 
     def _list_float_parameter(self, name: str) -> list[float]:
         values = list(self.get_parameter(name).value)
@@ -491,6 +550,25 @@ class CandidateIkFilterNode(Node):
         filtered = filter_candidate_array_by_reachability(original, reachable)
         self._candidates_pub.publish(filtered)
         plan = self._plan_from_filtered(filtered, reachable_targets or [])
+        self._plan_pub.publish(plan)
+
+    def _publish_ranked(
+        self,
+        original: GraspCandidateArray,
+        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str]],
+    ) -> None:
+        ranked = sorted(ranked, key=lambda item: (-float(item[0]), int(item[1])))
+        filtered = GraspCandidateArray()
+        filtered.header = original.header
+        filtered.best_index = 0 if ranked else -1
+        filtered.candidates = [deepcopy(item[2]) for item in ranked]
+        targets = [item[3] for item in ranked]
+        self._candidates_pub.publish(filtered)
+        plan = self._plan_from_filtered(filtered, targets)
+        if ranked:
+            score, original_index, _candidate, _targets, label = ranked[0]
+            plan.reason = f"best_candidate original_index={original_index}, score={score:.2f}, variant={label}"
+            self.get_logger().info(f"candidate IK filter best: {plan.reason}")
         self._plan_pub.publish(plan)
 
     def _plan_from_filtered(

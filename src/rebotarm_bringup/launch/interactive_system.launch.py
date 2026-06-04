@@ -1,4 +1,4 @@
-import os
+﻿import os
 
 import yaml
 from ament_index_python.packages import get_package_share_directory
@@ -141,7 +141,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",
@@ -158,20 +158,7 @@ def generate_launch_description():
                 condition=UnlessCondition(use_moveit_preview),
             ),
             Node(
-                package="rebotarm_interactive_control",
-                executable="MarkerServerNode",
-                name="marker_server",
-                output="screen",
-                parameters=[
-                    interactive_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                    },
-                ],
-                condition=IfCondition(start_interaction_nodes),
-            ),
-            Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_motion",
                 executable="PreviewNode",
                 name="preview_node",
                 output="screen",
@@ -185,7 +172,7 @@ def generate_launch_description():
                 condition=IfCondition(start_interaction_nodes),
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_motion",
                 executable="PreviewNode",
                 name="preview_node",
                 output="screen",
@@ -221,7 +208,7 @@ def generate_launch_description():
                 remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_motion",
                 executable="ExecutionNode",
                 name="execution_node",
                 output="screen",

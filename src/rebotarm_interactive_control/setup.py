@@ -7,9 +7,6 @@ setup(
     name=package_name,
     version="0.1.0",
     packages=find_packages(exclude=["test"]),
-    package_data={
-        "rebotarm_interactive_control.status_panel_assets": ["index.html"],
-    },
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml", "README.md"]),
@@ -25,9 +22,6 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "InteractiveTargetNode = rebotarm_interactive_control.interactive_target_node:main",
-            "InteractiveMarkerSmokeNode = rebotarm_interactive_control.interactive_marker_smoke_node:main",
-            "MarkerServerNode = rebotarm_interactive_control.marker_server_node:main",
             "PreviewNode = rebotarm_interactive_control.preview_node:main",
             "ExecutionNode = rebotarm_interactive_control.execution_node:main",
             "TeleopKeyboardNode = rebotarm_interactive_control.teleop_keyboard_node:main",

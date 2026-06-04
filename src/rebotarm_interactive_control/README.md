@@ -1,43 +1,13 @@
 # rebotarm_interactive_control
 
-ROS2 interactive-control package for the reBotArm 3D drag-control workflow.
+Compatibility package for legacy reBotArm interactive-control imports.
 
 ## Recommended entrypoints
 
-### Formal system
-
-Use the split-node formal system for normal testing and integration:
-
-```bash
-ros2 launch rebotarm_bringup interactive_system.launch.py
-```
-
-This starts:
-
-- `MarkerServerNode`
-- `PreviewNode`
-- `ExecutionNode`
-- `reBotArmController`
-- `robot_state_publisher`
-- `rviz2`
-
-### Debug / smoke test
-
-Use the dedicated debug launch for isolated marker interaction checks:
-
-```bash
-ros2 launch rebotarm_interactive_control interactive_debug.launch.py
-```
+Use the current bringup launch files and web dashboard workflows. RViz end-effector dragging is provided by the MoveIt MotionPlanning wrapper launches in `rebotarm_bringup`.
 
 ## Transitional / legacy entrypoints
 
-These remain only for compatibility during refactoring and should not be used as the default workflow:
+Some legacy internal launches and nodes remain only for compatibility during refactoring. Do not use them as operator entrypoints.
 
-- `ros2 launch rebotarm_bringup interactive_basic.launch.py`
-- `InteractiveTargetNode`
-
-The preferred architecture is the split-node chain:
-
-```text
-MarkerServerNode -> PreviewNode -> ExecutionNode
-```
+New code should depend on the split packages directly, not this compatibility package.

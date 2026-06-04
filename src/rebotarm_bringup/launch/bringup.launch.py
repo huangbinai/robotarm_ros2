@@ -1,5 +1,4 @@
-# 标准完整启动文件，包含机械臂控制器、机器人状态发布器和可选的RViz可视化。
-
+﻿# 鏍囧噯瀹屾暣鍚姩鏂囦欢锛屽寘鍚満姊拌噦鎺у埗鍣ㄣ€佹満鍣ㄤ汉鐘舵€佸彂甯冨櫒鍜屽彲閫夌殑RViz鍙鍖栥€?
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -63,7 +62,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",

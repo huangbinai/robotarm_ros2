@@ -1261,23 +1261,30 @@ class WebRobotAssetTests(unittest.TestCase):
         source = (
             ROOT
             / "src"
-            / "rebotarm_interactive_control"
-            / "rebotarm_interactive_control"
+            / "rebotarm_dashboard"
+            / "rebotarm_dashboard"
             / "teleop_status_panel_node.py"
+        ).read_text(encoding="utf-8")
+        client_source = (
+            ROOT
+            / "src"
+            / "rebotarm_teleop"
+            / "rebotarm_teleop"
+            / "web_teleop_client.py"
         ).read_text(encoding="utf-8")
 
         self.assertIn('self._use_hardware = bool(self.get_parameter("use_hardware").value)', source)
-        self.assertIn("if not self._use_hardware:", source)
+        self.assertIn("use_hardware=self._use_hardware", source)
         self.assertIn('f"/{self._arm_namespace}/gripper/state"', source)
         self.assertIn("self._publish_simulated_gripper_state", source)
-        self.assertIn('"simulated": True', source)
+        self.assertIn('"simulated": True', client_source)
 
     def test_teach_recorder_retries_auto_gravity_comp_start(self) -> None:
         source = (
             ROOT
             / "src"
-            / "rebotarm_interactive_control"
-            / "rebotarm_interactive_control"
+            / "rebotarm_teach"
+            / "rebotarm_teach"
             / "teach_recorder_node.py"
         ).read_text(encoding="utf-8")
 

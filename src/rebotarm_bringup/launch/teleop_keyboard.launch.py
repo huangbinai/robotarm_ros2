@@ -1,4 +1,4 @@
-from launch import LaunchDescription
+﻿from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
@@ -73,7 +73,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",
@@ -97,7 +97,7 @@ def generate_launch_description():
                 remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="TeleopKeyboardNode",
                 name="teleop_keyboard_node",
                 output="screen",

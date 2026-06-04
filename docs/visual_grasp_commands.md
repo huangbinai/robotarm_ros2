@@ -1,17 +1,72 @@
-# reBotArm 视觉抓取操作流程
+# reBotArm 视觉抓取使用手册
 
-当前版本：视觉抓取 V1.1。该版本已完成 Windows GraspNet baseline 候选生成、Ubuntu ROS2 网络拉取、IK 过滤和 `/grasp/filtered_plan` 执行链路，并已完成实机抓取验证。
+当前版本用于维护后的视觉抓取链路。启动顺序已经重构为：
 
-这份文档记录当前视觉抓取测试流程。V1.2 手写多候选评分暂时暂停；V1.3 开始把 GraspNet baseline 作为更强的候选生成器接入，但仍然保留原 ROS2 执行链路做 IK、MoveIt、TCP 和夹爪安全控制。
+```text
+hardware / controller / MoveIt bringup
+-> visual_ready startup
+-> vision nodes
+-> candidate_ik_filter
+-> visual_grasp_executor
+```
 
-## 1. 启动视觉抓取系统
+`visual_ready` 默认姿态已恢复为 V1.1 初始姿态：
 
-实机测试前确认机械臂周围安全，夹爪区域没有手和线缆。
+```text
+[0.0, 0.0, -0.20, 0.20, 0.0, 0.0]
+```
+
+当前默认策略要点：
+
+```text
+ordinary_depth_quality_enabled = true
+candidate_orientation_yaw_offsets_rad = [0.0]
+candidate_grasp_z_offsets_m = [0.0]
+candidate_max_variants_per_candidate = 1
+candidate_min_grasp_z_m = 0.0
+safe_retreat_axis_xyz = [-1.0, 0.0, 0.5]
+tcp_offset_xyz = [-0.04, 0.0, 0.0]
+```
+
+## 1. 启动前清理
+
+如果之前启动过旧版本，先清理残留节点和 FastDDS 共享内存锁。确认机械臂安全静止后执行：
+
+```bash
+pkill -f rebotarm_table_collision || true
+pkill -f rebotarm_visual_ready || true
+pkill -f rebotarm_visual_grasp_markers || true
+pkill -f rebotarm_ordinary_grasp_node || true
+pkill -f rebotarm_grasp_tcp_frame || true
+pkill -f rebotarm_grasp_candidate_ik_filter || true
+pkill -f rebotarm_visual_grasp_executor || true
+pkill -f rebotarm_motion_execution_node || true
+pkill -f GripperVisualJointStateNode || true
+pkill -f reBotArmController || true
+pkill -f move_group || true
+
+rm -f /dev/shm/fastrtps_port*
+```
+
+## 2. 普通视觉抓取路线
+
+适合当前已经验证较稳定的站立瓶子、规则物体。候选来源是：
+
+```text
+YOLO / mask / depth
+-> /grasp/candidates
+-> candidate_ik_filter
+-> /grasp/filtered_plan
+-> visual_grasp_executor
+```
+
+Ubuntu 终端 A 启动：
 
 ```bash
 cd ~/robotarm_ros2
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
+export RMW_FASTRTPS_USE_SHM=0
 
 ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   use_hardware:=true \
@@ -19,10 +74,6 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   start_vision:=true \
   ordinary_depth_quality_enabled:=true \
   start_candidate_ik_filter:=true \
-  candidate_pose_policy:=hybrid_geometry_with_base_axis_fallback \
-  candidate_orientation_yaw_offsets_rad:="[0.0, 3.141592653589793]" \
-  candidate_grasp_z_offsets_m:="[0.0, 0.03]" \
-  candidate_collision_check_enabled:=false \
   executor_input_topic:=/grasp/filtered_plan \
   trajectory_precheck_enabled:=false \
   execution_mode:=execute \
@@ -36,23 +87,27 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   pose_policy:=base_axis
 ```
 
-## 1.3 GraspNet baseline 候选生成器验证
-
-V1.3 的链路是：
+启动后预期：
 
 ```text
-Windows YOLO 选择目标物体
-  -> Windows GraspNet baseline 输出 top N 个 6D grasp pose
-  -> http://192.168.145.1:8081/graspnet_candidates.json
-  -> /grasp/graspnet_candidates
-  -> candidate_ik_filter
-  -> /grasp/filtered_plan
-  -> visual_grasp_executor
+机械臂先到 visual_ready
+然后启动 rebotarm_vision_node
+然后启动 candidate_ik_filter / executor
 ```
 
-第一次验证建议只用 `plan_only`，确认 RViz marker、`/grasp/graspnet_candidates`、`/grasp/filtered_plan` 都正常后，再改成 `execute`。
+## 3. GraspNet 候选路线
 
-Windows 终端 A：启动 Gemini2 / YOLO / HTTP 服务。
+适合测试多候选、平躺物体、复杂姿态物体。候选来源是：
+
+```text
+Windows GraspNet baseline
+-> http://192.168.145.1:8081/graspnet_candidates.json
+-> /grasp/graspnet_candidates
+-> candidate_ik_filter
+-> /grasp/filtered_plan
+```
+
+### 3.1 Windows 终端 A：启动 Gemini2 / YOLO / HTTP 服务
 
 ```powershell
 cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main"
@@ -66,7 +121,7 @@ D:\anaconda3\envs\orbbec_yolo\python.exe tools\windows_mjpeg_server.py `
   --graspnet-candidates-path "D:\tmp\graspnet_candidates.json"
 ```
 
-Windows 终端 B：启动 GraspNet baseline bridge，持续写候选 JSON。
+### 3.2 Windows 终端 B：启动 GraspNet bridge
 
 ```powershell
 cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main"
@@ -82,45 +137,13 @@ D:\anaconda3\envs\graspnet\python.exe tools\windows_graspnet_baseline_bridge.py 
   --poll-hz 0.5
 ```
 
-注意：`graspnet_baseline_inference` 是你本地 GraspNet baseline 的包装模块，需要提供：
-
-```python
-GraspNetBaselineInference(model_root, checkpoint_path, device).infer(
-    color_bgr=...,
-    depth_mm=...,
-    detections=...,
-    camera_info=...,
-    max_grasps=...
-)
-```
-
-当前仓库已经提供默认包装模板：
-
-```text
-tools\graspnet_baseline_inference.py
-```
-
-它会按官方 GraspNet baseline 常见结构导入：
-
-```text
-D:\rebot_ai_models\graspnet-baseline\models
-D:\rebot_ai_models\graspnet-baseline\dataset
-D:\rebot_ai_models\graspnet-baseline\utils
-```
-
-所以实际测试前需要确认：
-
-```powershell
-Test-Path "D:\rebot_ai_models\graspnet-baseline"
-Test-Path "D:\rebot_ai_models\graspnet-baseline\checkpoints\checkpoint-rs.tar"
-```
-
-如果你的路径不同，只改 Windows 终端 B 里的 `--model-root` 和 `--checkpoint-path`。
+### 3.3 Ubuntu 终端 A：启动 GraspNet 视觉抓取系统
 
 ```bash
 cd ~/robotarm_ros2
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
+export RMW_FASTRTPS_USE_SHM=0
 
 ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   use_hardware:=true \
@@ -134,13 +157,9 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   grasp_candidates_topic:=/grasp/graspnet_candidates \
   start_candidate_ik_filter:=true \
   candidate_max_candidates_per_frame:=5 \
-  candidate_pose_policy:=hybrid_geometry_with_base_axis_fallback \
-  candidate_orientation_yaw_offsets_rad:="[0.0]" \
-  candidate_grasp_z_offsets_m:="[0.0]" \
-  candidate_collision_check_enabled:=false \
   executor_input_topic:=/grasp/filtered_plan \
   trajectory_precheck_enabled:=false \
-  execution_mode:=plan_only \
+  execution_mode:=execute \
   open_before_approach:=true \
   auto_gripper_width:=true \
   auto_gripper_effort:=true \
@@ -151,41 +170,55 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   pose_policy:=base_axis
 ```
 
-另开终端检查：
+GraspNet 路线下，终端 A 可能看到：
+
+```text
+candidate IK filter accepted candidate=0 hybrid_geometry_yaw0_z0: score=-0.00
+candidate IK filter accepted candidate=1 hybrid_geometry_yaw0_z0: score=-1.00
+candidate IK filter accepted candidate=2 hybrid_geometry_yaw0_z0: score=-2.00
+candidate IK filter best: best_candidate original_index=0
+```
+
+这里的 `score=-0.00/-1.00/-2.00` 不是成功概率，而是保留输入候选排序后的分数。越靠前的 GraspNet candidate 分数越高。
+
+## 4. 判断当前是否有可抓计划
+
+另开 Ubuntu 终端 B：
 
 ```bash
 cd ~/robotarm_ros2
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 
-ros2 topic echo /grasp/graspnet_candidates --once
 ros2 topic echo /grasp/filtered_plan --once
+```
+
+可以抓取的关键字段：
+
+```text
+valid: true
+source: candidate_ik_filter
+```
+
+如果是 GraspNet 路线，额外检查：
+
+```bash
+ros2 topic echo /grasp/graspnet_candidates --once
 ros2 param get /rebotarm_grasp_candidate_ik_filter input_topic
+curl http://192.168.145.1:8081/graspnet_candidates.json
 ```
 
 预期：
 
 ```text
-input_topic 是 /grasp/graspnet_candidates
-/grasp/graspnet_candidates 里 candidates 不为空，source 是 graspnet_baseline
-/grasp/filtered_plan valid=true
+input_topic = /grasp/graspnet_candidates
+/grasp/graspnet_candidates 里 candidates 不为空
+HTTP JSON 里 candidates 不为空
 ```
 
-如果 `/grasp/graspnet_candidates` 为空，先在 Ubuntu 检查 Windows HTTP：
+## 5. 执行一次抓取
 
-```bash
-curl http://192.168.145.1:8081/graspnet_candidates.json
-```
-
-如果返回 `backend_configured:false`，说明 Windows 端还没有启动/接入 GraspNet baseline 推理脚本。此时不要切 execute。
-
-预期现象：
-
-- 启动后机械臂会先进入 `visual_ready` 准备姿态。
-- RViz 中能看到机械臂、物体 marker、抓取相关 marker。
-- 终端能看到 `visual_ready startup move complete`。
-
-## 2. 单次抓取
+Ubuntu 终端 B：
 
 ```bash
 cd ~/robotarm_ros2
@@ -202,7 +235,7 @@ success=True
 message='visual grasp sequence finished'
 ```
 
-失败时看启动终端中的标准日志。每次抓取会打印：
+失败时看终端 A 的阶段日志：
 
 ```text
 [visual_grasp][run=...][attempt=...][candidate=...][stage=plan]
@@ -214,22 +247,106 @@ message='visual grasp sequence finished'
 [visual_grasp][run=...][attempt=...][candidate=...][stage=lift] start/ok/fail
 ```
 
-失败日志会额外打印：
+## 6. 手动控制指令
 
-```text
-failed_stage
-failure_message
-pregrasp_pose
-grasp_pose
-jaw_width
-last_gripper_reached_position
-contact
-closure_distance
+### 6.1 回到 visual_ready
+
+```bash
+cd ~/robotarm_ros2
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 service call /rebotarm/visual_ready/move std_srvs/srv/Trigger "{}"
 ```
 
-## 3. 严格 20 次稳定性测试
+如果服务不可用，先检查：
 
-这个测试用于判断“同一个初始姿态 + 人工重新摆放物体”下，视觉抓取是否稳定。
+```bash
+ros2 service list | grep visual_ready
+ros2 node list | grep visual_ready
+```
+
+### 6.2 松开夹爪
+
+```bash
+cd ~/robotarm_ros2
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 service call /rebotarm/gripper/set rebotarm_msgs/srv/SetGripper "{position: 0.08, max_effort: 0.25}"
+```
+
+## 7. 常见现象说明
+
+### 7.1 OpenCV / Qt 字体警告
+
+当前 `vision.launch.py` 已设置：
+
+```bash
+QT_QPA_PLATFORM=xcb
+QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu
+```
+
+如果旧进程仍打印字体警告，先清理旧节点并重新启动。旧进程不会自动读取新环境变量。
+
+### 7.2 FastDDS SHM 报错
+
+如果看到：
+
+```text
+RTPS_TRANSPORT_SHM Error
+Failed init_port fastrtps_port...
+```
+
+先执行：
+
+```bash
+rm -f /dev/shm/fastrtps_port*
+export RMW_FASTRTPS_USE_SHM=0
+```
+
+### 7.3 move_group 重名警告
+
+如果看到：
+
+```text
+Publisher already registered for node name: 'move_group'
+```
+
+检查是否有旧节点残留：
+
+```bash
+ros2 node list | grep move_group
+ps aux | grep move_group | grep -v grep
+```
+
+### 7.4 IK filter dropping frame
+
+如果看到：
+
+```text
+candidate IK filter is still processing previous candidates; dropping this frame
+```
+
+含义是上一帧候选还在做 IK，新帧先丢弃，避免队列堆积。偶尔出现正常；持续刷屏时可以降低：
+
+```bash
+candidate_max_candidates_per_frame:=3
+```
+
+### 7.5 轨迹到位误差略超限
+
+如果看到：
+
+```text
+trajectory goal not reached within tolerance (max error 0.032 rad > 0.030 rad)
+```
+
+含义是机械臂几乎到位，但控制器容差太紧。这个属于轨迹执行层问题，不是视觉候选本身。后续可考虑把到位容差从 `0.030 rad` 放宽到 `0.050 rad`。
+
+## 8. 连续稳定性测试
+
+用于统计连续抓取成功率：
 
 ```bash
 cd ~/robotarm_ros2
@@ -243,56 +360,21 @@ ros2 run rebotarm_vision rebotarm_visual_grasp_benchmark \
   --wait-enter
 ```
 
-每一次测试的流程是：
+每次流程：
 
 ```text
-1. 程序先调用 /rebotarm/visual_ready/move，让机械臂回到固定准备姿态
-2. 你手动松开夹爪，并把瓶子摆到测试位置
-3. 确认机械臂周围安全后按 Enter
-4. 程序调用 /rebotarm/visual_grasp/execute 执行一次抓取
-5. 记录本次 success/fail 和失败阶段
-6. 进入下一轮
+1. 程序回 visual_ready
+2. 手动松开夹爪
+3. 摆放物体
+4. 确认安全后按 Enter
+5. 执行一次 /rebotarm/visual_grasp/execute
+6. 记录 success/fail 和失败阶段
 ```
 
-最终输出示例：
-
-```text
-total=20 success=17 failed=3 success_rate=85.0%
-failed_stage:
-  close_gripper: 2
-  move_to_pregrasp: 1
-```
-
-## 4. 如何判断问题来源
-
-如果失败集中在 `move_to_pregrasp`：
-
-- 优先看 MoveIt 规划、起始姿态、目标是否超出可达范围。
-- 检查启动终端是否有 `CheckStartStateCollision` 或 `No motion plan found`。
-
-如果失败集中在 `approach_grasp`：
-
-- 多半是 grasp 点、TCP 偏移或接近方向不稳定。
-- 对比 RViz 中 `pregrasp_pose` 和 `grasp_pose` 是否合理。
-
-如果失败集中在 `close_gripper`：
-
-- 重点看 `jaw_width`、`last_gripper_reached_position`、`contact`、`closure_distance`。
-- 如果实际夹到了但返回失败，需要继续调接触判断阈值。
-
-如果失败集中在 `lift`：
-
-- 说明闭合后疑似夹住，但 lift 后验证失败。
-- 检查夹爪保持力、物体是否滑落、lift 高度是否足够。
-
-## 5. 记录表
-
-建议测试时手动记录：
+建议人工记录：
 
 ```text
 attempt | result | failed_stage | 偏差方向 | 是否夹住 | 是否抬起 | 备注
 1       | success|              |          | yes      | yes      |
 2       | fail   | close_gripper| 偏右擦边 | yes      | no       |
 ```
-
-如果 20 次成功率低于 80%，先不要继续加复杂算法，优先根据失败阶段定位 TCP、手眼 TF、深度稳定性或夹爪接触判断。

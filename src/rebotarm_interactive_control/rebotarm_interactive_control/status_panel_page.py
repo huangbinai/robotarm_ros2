@@ -1,10 +1,5 @@
-from __future__ import annotations
+import sys
 
-import importlib.resources
+from rebotarm_dashboard import status_panel_page as _module
 
-
-HTML_PAGE = (
-    importlib.resources.files("rebotarm_interactive_control.status_panel_assets")
-    .joinpath("index.html")
-    .read_text(encoding="utf-8")
-)
+sys.modules[__name__] = _module

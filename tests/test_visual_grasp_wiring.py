@@ -13,16 +13,27 @@ def _read(relative: str) -> str:
     if relative == "src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py":
         return "\n".join(
             [
-                _read_file(relative),
-                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_page.py"),
-                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_http.py"),
-                _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_assets/index.html"),
+                _read_file("src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"),
+                _read_file("src/rebotarm_dashboard/rebotarm_dashboard/status_panel_page.py"),
+                _read_file("src/rebotarm_dashboard/rebotarm_dashboard/status_panel_http.py"),
+                _read_file("src/rebotarm_dashboard/rebotarm_dashboard/status_panel_assets/index.html"),
             ]
         )
     return _read_file(relative)
 
 
 def _read_file(relative: str) -> str:
+    dashboard_path_map = {
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py": "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_page.py": "src/rebotarm_dashboard/rebotarm_dashboard/status_panel_page.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_http.py": "src/rebotarm_dashboard/rebotarm_dashboard/status_panel_http.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_assets/index.html": "src/rebotarm_dashboard/rebotarm_dashboard/status_panel_assets/index.html",
+        "src/rebotarm_interactive_control/setup.py": "src/rebotarm_dashboard/setup.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/teach_recorder_node.py": "src/rebotarm_teach/rebotarm_teach/teach_recorder_node.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py": "src/rebotarm_teach/rebotarm_teach/teach_replay_node.py",
+        "src/rebotarm_interactive_control/rebotarm_interactive_control/gripper_visual_joint_state_node.py": "src/rebotarm_teleop/rebotarm_teleop/gripper_visual_joint_state_node.py",
+    }
+    relative = dashboard_path_map.get(relative, relative)
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
@@ -56,7 +67,7 @@ def test_status_panel_page_is_split_from_ros_node():
     assert "HTML_PAGE = r\"\"\"" not in page_text
     assert 'id="robot-view"' in html_text
     assert 'id="arm-safe-home"' in html_text
-    assert '"rebotarm_interactive_control.status_panel_assets": ["index.html"]' in setup_text
+    assert '"rebotarm_dashboard.status_panel_assets": ["index.html"]' in setup_text
 
 
 def test_status_panel_http_server_is_split_from_ros_node():
@@ -621,19 +632,24 @@ def test_follow_joint_trajectory_keeps_running_until_goal_settles():
 
 def test_status_panel_stop_replay_falls_back_to_controller_stop():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    client_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_client.py")
 
     assert "self._trajectory_stop_client = self.create_client(" in panel_text
     assert 'f"/{self._arm_namespace}/trajectory_stop"' in panel_text
-    assert "def _request_controller_trajectory_stop" in panel_text
-    assert "controller trajectory_stop requested" in panel_text
+    assert "self._teach_replay_client.stop(" in panel_text
+    assert "trajectory_stop_client=self._trajectory_stop_client" in panel_text
+    assert "controller trajectory_stop requested" in client_text
 
 
 def test_status_panel_web_stop_always_requests_controller_stop():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    client_text = _read("src/rebotarm_teleop/rebotarm_teleop/web_teleop_client.py")
     stop_body = panel_text.split("def _handle_stop_execute(self) -> dict:", 1)[1].split("\n    def ", 1)[0]
 
-    assert "stop_requested = self._request_controller_trajectory_stop" in stop_body
-    assert "no active web execute goal; controller trajectory_stop requested" in stop_body
+    assert "self._web_teleop_client.stop(" in stop_body
+    assert "trajectory_stop_client=self._trajectory_stop_client" in stop_body
+    assert "call_trigger_service(" in client_text
+    assert "no active web execute goal; controller trajectory_stop requested" in client_text
     assert "self._execute_goal_handle = None" in stop_body
 
 
@@ -856,12 +872,10 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
 
 def test_teach_replay_dry_run_token_survives_live_start_error_drift():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    coordinator_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_coordinator.py")
 
     button_body = panel_text.split("const updateTeachDryRunButton = (info) => {", 1)[1].split(
         "const refreshTeachFileInfo", 1
-    )[0]
-    execute_body = panel_text.split("def _handle_teach_replay_execute(self, payload: dict) -> dict:", 1)[1].split(
-        "\n        decision = validate_teach_replay_execute_request", 1
     )[0]
 
     assert "lastTeachDryRun?.record_path === info?.path" in button_body
@@ -869,11 +883,11 @@ def test_teach_replay_dry_run_token_survives_live_start_error_drift():
     assert "dryRunErrorMatches" not in button_body
     assert "lastTeachDryRun?.max_error" not in button_body
 
-    assert 'str(token.get("record_path", "")) == str(info_payload.get("path", ""))' in execute_body
-    assert 'token.get("settings") == settings' in execute_body
-    assert "error_matches" not in execute_body
-    assert 'token.get("worst_joint"' not in execute_body
-    assert 'token.get("risk_level"' not in execute_body
+    assert 'str(dry_run_token.get("record_path", "")) == str(info_payload.get("path", ""))' in coordinator_text
+    assert 'dry_run_token.get("settings") == settings' in coordinator_text
+    assert "error_matches" not in coordinator_text
+    assert 'dry_run_token.get("worst_joint"' not in coordinator_text
+    assert 'dry_run_token.get("risk_level"' not in coordinator_text
 
 
 def test_status_panel_throttles_heavy_browser_rendering():
@@ -1041,15 +1055,20 @@ def test_teach_replay_executes_prepared_retimed_points_directly():
 def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
     replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    monitor_text = _read("src/rebotarm_motion/rebotarm_motion/replay_runtime_monitor.py")
     config_text = _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
 
+    assert "evaluate_replay_tracking" in replay_node_text
+    assert "evaluate_replay_tracking" in monitor_text
+    assert "ReplayRuntimeMonitor" in panel_text
+    assert "_replay_runtime_monitor.check(" in panel_text
     for text in (replay_node_text, panel_text):
-        assert "evaluate_replay_tracking" in text
         assert 'self.declare_parameter("replay_monitor_enabled", True)' in text
         assert 'self.declare_parameter("max_tracking_error_rad", 0.25)' in text
         assert 'self.declare_parameter("max_live_velocity_rad_s", 3.0)' in text
         assert "def _check_active_replay_tracking" in text
         assert "self._request_controller_trajectory_stop" in text
+    for text in (replay_node_text, monitor_text):
         assert "tracking_error" in text
         assert "live_velocity" in text
 
@@ -1065,7 +1084,7 @@ def test_status_panel_preserves_runtime_safety_stop_result_reason():
     )[0]
 
     assert "previous_replay = self._store.snapshot().teleop.get(\"replay\", {})" in result_body
-    assert "self._teach_replay_monitor_stop_requested" in result_body
+    assert "self._replay_runtime_monitor.stop_requested" in result_body
     assert "state = \"safety_stop\"" in result_body
     assert "action canceled after runtime monitor stop" in result_body
 

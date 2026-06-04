@@ -31,11 +31,6 @@ Visualization Manager:
         base_link:
           {}
       Update Interval: 0
-    - Class: rviz_default_plugins/InteractiveMarkers
-      Enabled: true
-      Name: EndEffectorTarget
-      Update Topic:
-        Value: /rebotarm/interactive_control/ee_target/update
   Enabled: true
   Global Options:
     Fixed Frame: base_link

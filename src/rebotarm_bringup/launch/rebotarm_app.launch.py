@@ -4,6 +4,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -26,6 +27,15 @@ def _record_path(name: str, explicit_path: str) -> str:
     if not safe_name.endswith(".jsonl"):
         safe_name = f"{safe_name}.jsonl"
     return f"teleop_records/{safe_name}"
+
+
+def _resolve_channel(channel: str) -> str:
+    if channel and channel != "auto":
+        return channel
+    for candidate in ("/dev/ttyACM0", "/dev/ttyACM1"):
+        if os.path.exists(candidate):
+            return candidate
+    return "/dev/ttyACM0"
 
 
 def _load_profile(profile_name: str) -> dict:
@@ -53,7 +63,7 @@ def _panel_node(
     panel_mode: str,
 ):
     return Node(
-        package="rebotarm_interactive_control",
+        package="rebotarm_dashboard",
         executable="TeleopStatusPanelNode",
         name="teleop_status_panel_node",
         output="screen",
@@ -82,7 +92,7 @@ def _replay_node(*, teleop_config, arm_namespace: str, record_path: str, profile
         }
     )
     return Node(
-        package="rebotarm_interactive_control",
+        package="rebotarm_teach",
         executable="TeachReplayNode",
         name="teach_replay_node",
         output="screen",
@@ -92,7 +102,7 @@ def _replay_node(*, teleop_config, arm_namespace: str, record_path: str, profile
 
 def _keyboard_node(*, teleop_config, arm_namespace: str, keyboard_prefix: str):
     return Node(
-        package="rebotarm_interactive_control",
+        package="rebotarm_teleop",
         executable="TeleopKeyboardNode",
         name="teleop_keyboard_node",
         output="screen",
@@ -118,6 +128,8 @@ def _launch_setup(context, *args, **kwargs):
     bringup_share = get_package_share_directory("rebotarm_bringup")
     moveit_launch = os.path.join(bringup_share, "launch", "moveit_hardware.launch.py")
     teleop_launch = os.path.join(bringup_share, "launch", "teleop_system.launch.py")
+    web_rviz_config = os.path.join(bringup_share, "rviz", "web_teleop_status.rviz")
+    resolved_channel = _resolve_channel(channel)
 
     if mode not in {"app", "teleop", "record", "check", "replay"}:
         raise RuntimeError("mode must be one of: app, teleop, record, check, replay")
@@ -153,10 +165,18 @@ def _launch_setup(context, *args, **kwargs):
                 PythonLaunchDescriptionSource(moveit_launch),
                 launch_arguments={
                     "arm_namespace": arm_namespace,
-                    "channel": channel,
-                    "use_rviz": use_rviz,
+                    "channel": resolved_channel,
+                    "use_rviz": "false",
                     "teach_record_path": record_path,
                 }.items(),
+            ),
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="rviz2",
+                output="screen",
+                arguments=["-d", web_rviz_config],
+                condition=IfCondition(use_rviz),
             ),
             _keyboard_node(
                 teleop_config=teleop_config,
@@ -198,10 +218,18 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(moveit_launch),
             launch_arguments={
                 "arm_namespace": arm_namespace,
-                "channel": channel,
-                "use_rviz": use_rviz,
+                "channel": resolved_channel,
+                "use_rviz": "false",
                 "teach_record_path": record_path,
             }.items(),
+        ),
+        Node(
+            package="rviz2",
+            executable="rviz2",
+            name="rviz2",
+            output="screen",
+            arguments=["-d", web_rviz_config],
+            condition=IfCondition(use_rviz),
         ),
     ]
 
@@ -263,7 +291,7 @@ def generate_launch_description():
             DeclareLaunchArgument("name", default_value="teach_record"),
             DeclareLaunchArgument("record_path", default_value=""),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
-            DeclareLaunchArgument("channel", default_value="/dev/ttyACM0"),
+            DeclareLaunchArgument("channel", default_value="auto"),
             DeclareLaunchArgument("use_hardware", default_value="true"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument("panel", default_value="true"),

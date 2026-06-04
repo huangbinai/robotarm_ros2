@@ -1,5 +1,4 @@
-# 该启动文件仅启动机器人状态发布器和RViz可视化，适用于需要查看机械臂状态和模型的场景。
-
+﻿# 璇ュ惎鍔ㄦ枃浠朵粎鍚姩鏈哄櫒浜虹姸鎬佸彂甯冨櫒鍜孯Viz鍙鍖栵紝閫傜敤浜庨渶瑕佹煡鐪嬫満姊拌噦鐘舵€佸拰妯″瀷鐨勫満鏅€?
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import Command, PathJoinSubstitution
@@ -22,7 +21,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",

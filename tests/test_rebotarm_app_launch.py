@@ -36,9 +36,26 @@ def test_rebotarm_app_launch_exposes_simple_modes_and_profiles() -> None:
     assert 'if mode == "teleop":' in launch_text
     assert 'if mode == "app":' in launch_text
     assert "full MoveIt + web teleop workbench" in launch_text
+    assert 'DeclareLaunchArgument("channel", default_value="auto")' in launch_text
+    assert "def _resolve_channel" in launch_text
+    assert 'for candidate in ("/dev/ttyACM0", "/dev/ttyACM1")' in launch_text
+    assert '"use_rviz": "false"' in launch_text
+    assert 'arguments=["-d", web_rviz_config]' in launch_text
+    assert '"web_teleop_status.rviz"' in launch_text
     assert "_keyboard_node(" in launch_text
     assert 'safe_name = os.path.basename(safe_name.replace("\\\\", "/")) or "teach_record"' in launch_text
     assert 'return f"teleop_records/{safe_name}"' in launch_text
+
+
+def test_web_teleop_rviz_is_robot_status_only() -> None:
+    rviz_text = _read("src/rebotarm_bringup/rviz/web_teleop_status.rviz")
+
+    assert "rviz_default_plugins/RobotModel" in rviz_text
+    assert "rviz_default_plugins/TF" in rviz_text
+    assert "rviz_default_plugins/Interact" in rviz_text
+    assert "moveit_rviz_plugin/MotionPlanning" not in rviz_text
+    assert "InteractiveMarkers" not in rviz_text
+    assert "EndEffectorTarget" not in rviz_text
 
 
 def test_replay_profiles_keep_safe_defaults_in_config() -> None:
@@ -93,9 +110,21 @@ def test_common_commands_document_recommends_one_entrypoint() -> None:
 
     assert "rebotarm_app.launch.py" in doc
     assert "mode:=" not in doc
+    assert "channel:=auto" in doc
     assert "reBotArm 遥操作使用文档" in doc
     assert "网页遥操作" in doc
     assert "键盘遥操作" in doc
     assert "重力补偿手拖示教录制" in doc
     assert "Ctrl+C" in doc
     assert "safe_home" in doc
+
+
+def test_feature_commands_document_web_teleop_next_to_rviz_drag() -> None:
+    doc = _read("docs/rebotarm_feature_commands.md")
+
+    assert "## RViz MoveIt 末端拖动" in doc
+    assert "## 网页遥操作" in doc
+    assert "ros2 launch rebotarm_bringup rviz_ee_drag_real.launch.py" in doc
+    assert "ros2 launch rebotarm_bringup rebotarm_app.launch.py" in doc
+    assert "channel:=auto" in doc
+    assert "网页关节 Preview / Execute / Stop" in doc

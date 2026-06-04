@@ -1,5 +1,4 @@
 # 该启动文件用于演示机械臂的交互式控制，包含机械臂控制器、机器人状态发布器、交互式控制节点和可选的RViz可视化。
-
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -73,7 +72,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",
@@ -86,18 +85,6 @@ def generate_launch_description():
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
                 remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
-            ),
-            Node(
-                package="rebotarm_interactive_control",
-                executable="InteractiveTargetNode",
-                name="interactive_control",
-                output="screen",
-                parameters=[
-                    interactive_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                    },
-                ],
             ),
             Node(
                 package="rviz2",

@@ -14,7 +14,6 @@ source install/setup.bash
 
 ros2 launch rebotarm_bringup rebotarm_app.launch.py \
   use_hardware:=true \
-  channel:=/dev/ttyACM0 \
   web_execute_enabled:=true
 ```
 
@@ -30,6 +29,12 @@ RViz
 ```
 
 日常只使用这一条启动命令。打开网站后，网页遥操作、键盘遥操作、示教录制、轨迹检查、MoveIt 起点对齐、碰撞预检查、回放、RViz 显示都应该可用。
+
+默认 `channel:=auto`，会优先选择 `/dev/ttyACM0`，然后尝试 `/dev/ttyACM1`。如果自动选择不对，再手动加：
+
+```bash
+ros2 launch rebotarm_bringup rebotarm_app.launch.py channel:=/dev/ttyACM1
+```
 
 重要：示教轨迹检查、MoveIt 起点对齐、碰撞预检查、真实 replay 必须用上面的完整 `rebotarm_app.launch.py` 启动。不要只启动单独的状态面板或 `teleop_system.launch.py` 来判断示教回放是否可用，否则网页里会出现：
 
@@ -147,7 +152,6 @@ source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 
 ros2 launch rebotarm_bringup rebotarm_app.launch.py \
-  channel:=/dev/ttyACM0 \
   web_execute_enabled:=true
 ```
 

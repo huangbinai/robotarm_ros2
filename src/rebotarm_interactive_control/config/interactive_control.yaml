@@ -3,10 +3,6 @@ interactive_control:
     arm_namespace: rebotarm
     mode: simulation
     default_move_duration: 2.0
-    marker_frame_id: base_link
-    interactive_marker_namespace: rebotarm/interactive_control/ee_target
-    interactive_marker_name: ee_target
-    interactive_marker_scale: 0.28
     preview_backend: sdk
     moveit_group_name: arm
     moveit_ik_service: /compute_ik

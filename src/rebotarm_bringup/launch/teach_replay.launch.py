@@ -96,7 +96,7 @@ def generate_launch_description():
                 ),
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teach",
                 executable="TeachReplayNode",
                 name="teach_replay_node",
                 output="screen",

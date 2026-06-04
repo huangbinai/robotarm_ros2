@@ -53,7 +53,7 @@ def generate_launch_description():
                 }.items(),
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teach",
                 executable="TeachRecorderNode",
                 name="teach_recorder_node",
                 output="screen",
@@ -69,7 +69,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_dashboard",
                 executable="TeleopStatusPanelNode",
                 name="teleop_status_panel_node",
                 output="screen",

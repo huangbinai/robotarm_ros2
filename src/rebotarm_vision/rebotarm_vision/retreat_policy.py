@@ -12,7 +12,7 @@ class RetreatPolicyConfig:
     enabled: bool = False
     min_lift_z_m: float = 0.22
     retreat_distance_m: float = 0.06
-    retreat_axis_xyz: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    retreat_axis_xyz: tuple[float, float, float] = (-1.0, 0.0, 0.5)
 
 
 def _normalize_vector(vector: tuple[float, float, float]) -> tuple[float, float, float]:

@@ -124,20 +124,51 @@ def test_visual_grasp_system_can_move_to_visual_ready_on_start():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     node_text = _read("src/rebotarm_vision/rebotarm_vision/visual_ready_node.py")
 
+    assert 'DeclareLaunchArgument("start_visual_ready", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("move_to_visual_ready_on_start", default_value="true")' in launch_text
     assert (
         'DeclareLaunchArgument("visual_ready_joint_positions", default_value="[0.0, 0.0, -0.20, 0.20, 0.0, 0.0]")'
         in launch_text
     )
+    assert 'DeclareLaunchArgument("visual_ready_startup_delay_sec", default_value="0.0")' in launch_text
     assert 'DeclareLaunchArgument("visual_ready_max_start_delta_rad", default_value="1.0")' in launch_text
     assert 'executable="rebotarm_visual_ready"' in launch_text
+    assert "OnProcessExit" in launch_text
+    assert "target_action=visual_ready_startup" in launch_text
+    assert "on_exit=post_visual_ready_actions" in launch_text
+    assert 'name="rebotarm_visual_ready_startup"' in launch_text
+    assert '"exit_after_startup_move": True' in launch_text
+    assert "post_visual_ready_actions = [" in launch_text
+    assert '"auto_move_on_start": move_to_visual_ready_on_start' in launch_text
+    assert '"startup_delay_sec": visual_ready_startup_delay_sec' in launch_text
     assert '"joint_positions": visual_ready_joint_positions' in launch_text
     assert "FollowJointTrajectory" in node_text
     assert "visual_ready startup move refused" in node_text
+    assert 'self.declare_parameter("auto_move_on_start", True)' in node_text
+    assert 'self.declare_parameter("exit_after_startup_move", False)' in node_text
+    assert 'bool(node.get_parameter("exit_after_startup_move").value)' in node_text
+    assert 'self.declare_parameter("startup_delay_sec", 0.0)' in node_text
+    assert 'self.declare_parameter("joint_positions", [0.0, 0.0, -0.20, 0.20, 0.0, 0.0])' in node_text
     assert 'f"/{namespace}/visual_ready/move"' in node_text
     assert "create_service(" in node_text
     assert "Trigger," in node_text
     assert "ARM_JOINT_NAMES" in node_text
+
+
+def test_visual_grasp_system_starts_vision_chain_after_visual_ready():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+
+    ready_index = launch_text.index("visual_ready_startup = Node(")
+    post_ready_index = launch_text.index("post_visual_ready_actions = [")
+    vision_index = launch_text.index('PathJoinSubstitution([vision_share, "launch", "vision.launch.py"])')
+    ik_index = launch_text.index('executable="rebotarm_grasp_candidate_ik_filter"')
+    executor_index = launch_text.index('executable="rebotarm_visual_grasp_executor"')
+    handler_index = launch_text.index("OnProcessExit(")
+
+    assert ready_index < post_ready_index < vision_index < ik_index < executor_index
+    assert handler_index > executor_index
+    assert "GroupAction(" in launch_text
+    assert "condition=UnlessCondition(start_visual_ready)" in launch_text
 
 
 def test_visual_grasp_markers_show_tcp_approach_and_open_axis():
@@ -413,9 +444,12 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'self.declare_parameter("orientation_yaw_offsets_rad",' in node_text
     assert 'self.declare_parameter("candidate_grasp_z_offsets_m",' in node_text
     assert 'self.declare_parameter("max_candidates_per_frame", 20)' in node_text
-    assert 'self.declare_parameter("max_variants_per_candidate", 2)' in node_text
+    assert 'self.declare_parameter("max_variants_per_candidate", 1)' in node_text
+    assert 'self.declare_parameter("orientation_yaw_offsets_rad", [0.0])' in node_text
+    assert 'self.declare_parameter("candidate_grasp_z_offsets_m", [0.0])' in node_text
     assert 'self.declare_parameter("candidate_min_jaw_width_m", 0.006)' in node_text
     assert 'self.declare_parameter("candidate_max_jaw_width_m", 0.085)' in node_text
+    assert 'self.declare_parameter("candidate_min_grasp_z_m", 0.0)' in node_text
     assert "self._filter_busy = False" in node_text
     assert "candidate IK filter is still processing previous candidates; dropping this frame" in node_text
     assert "self._filter_busy = True" in node_text
@@ -452,10 +486,12 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_orientation_yaw_offsets_rad",' in launch_text
     assert 'DeclareLaunchArgument("candidate_grasp_z_offsets_m",' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_max_variants_per_candidate", default_value="2")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_orientation_yaw_offsets_rad", default_value="[0.0]")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_grasp_z_offsets_m", default_value="[0.0]")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_variants_per_candidate", default_value="1")' in launch_text
     assert 'DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.120")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0")' in launch_text
     assert 'DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.240")' in launch_text
     assert '"joint_state_topic": candidate_joint_state_topic' in launch_text
     assert '"service_timeout_sec": candidate_filter_service_timeout_sec' in launch_text

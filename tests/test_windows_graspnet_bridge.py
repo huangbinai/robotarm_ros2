@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +40,27 @@ def test_windows_graspnet_bridge_writes_backend_missing_payload(tmp_path):
     assert payload["backend_configured"] is False
     assert payload["candidates"] == []
     assert "module not found" in payload["error"]
+
+
+def test_windows_graspnet_bridge_retries_replace_when_target_is_temporarily_locked(tmp_path, monkeypatch):
+    module = _load_bridge()
+    output = tmp_path / "graspnet_candidates.json"
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("target temporarily locked")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(module.os, "replace", flaky_replace)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    module.atomic_write_json(output, {"candidates": [1]})
+
+    assert calls["count"] == 3
+    assert json.loads(output.read_text(encoding="utf-8")) == {"candidates": [1]}
 
 
 def test_windows_graspnet_bridge_builds_json_payload_from_fake_backend():

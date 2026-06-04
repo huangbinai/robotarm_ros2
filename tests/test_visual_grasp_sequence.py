@@ -100,6 +100,33 @@ def test_build_sequence_rejects_too_low_grasp():
         build_visual_grasp_sequence(pregrasp, grasp, config)
 
 
+def test_build_sequence_allows_low_grasp_by_default_and_lifts_to_safe_height():
+    from rebotarm_vision.retreat_policy import RetreatPolicyConfig
+    from rebotarm_vision.visual_grasp_sequence import (
+        PoseTarget,
+        VisualGraspSequenceConfig,
+        build_visual_grasp_sequence,
+    )
+
+    pregrasp = PoseTarget(
+        position=(0.22, 0.0, 0.16),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+    )
+    grasp = PoseTarget(
+        position=(0.30, 0.0, 0.035),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+    )
+    config = VisualGraspSequenceConfig(
+        lift_z_m=0.08,
+        retreat_policy=RetreatPolicyConfig(enabled=True, min_lift_z_m=0.24),
+    )
+
+    stages = build_visual_grasp_sequence(pregrasp, grasp, config)
+
+    assert stages[1].pose == grasp
+    assert stages[3].name == "lift"
+    assert stages[3].pose.position[2] == pytest.approx(0.24)
+
 
 def test_build_sequence_uses_jaw_width_for_open_close():
     from rebotarm_vision.visual_grasp_sequence import (
@@ -246,6 +273,20 @@ def test_sequence_adds_safe_retreat_after_lift_before_safe_home():
     assert stages[3].pose.position[2] == pytest.approx(0.24)
     assert stages[4].pose.position == pytest.approx((0.24, -0.05, 0.24))
     assert stages[5].kind == "safe_home"
+
+
+def test_safe_retreat_default_moves_backward_and_up_after_lift():
+    from rebotarm_vision.retreat_policy import RetreatPolicyConfig, build_retreat_pose
+    from rebotarm_vision.visual_grasp_sequence import PoseTarget
+
+    lift = PoseTarget(
+        position=(0.30, -0.05, 0.24),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+    )
+    retreat = build_retreat_pose(lift, RetreatPolicyConfig(enabled=True))
+
+    assert retreat.position[0] < lift.position[0]
+    assert retreat.position[2] > lift.position[2]
 
 
 def test_close_gripper_contact_can_count_as_success_after_partial_closure():

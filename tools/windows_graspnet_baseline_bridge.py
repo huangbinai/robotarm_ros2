@@ -38,7 +38,20 @@ def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> None:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(target.parent), delete=False) as handle:
         json.dump(payload, handle, ensure_ascii=False)
         tmp_name = handle.name
-    os.replace(tmp_name, target)
+    try:
+        last_error: PermissionError | None = None
+        for attempt in range(20):
+            try:
+                os.replace(tmp_name, target)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                time.sleep(min(0.05 * (attempt + 1), 0.5))
+        if last_error is not None:
+            raise last_error
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
 def write_backend_missing_payload(path: str | Path, *, reason: str) -> None:

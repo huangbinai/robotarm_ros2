@@ -145,7 +145,7 @@ def test_graspnet_unavailable_backend_is_explicitly_disabled():
         backend.infer(points=np.zeros((1, 3)), colors=np.zeros((1, 3)), max_grasps=5)
 
 
-def test_preserve_input_safety_gate_rejects_candidate_without_safe_lift_clearance():
+def test_preserve_input_safety_gate_allows_low_grasp_when_width_is_valid():
     from rebotarm_vision.candidate_ik_filter_node import CandidateIkFilterNode
     from rebotarm_vision.visual_grasp_sequence import PoseTarget
 
@@ -154,7 +154,7 @@ def test_preserve_input_safety_gate_rejects_candidate_without_safe_lift_clearanc
             values = {
                 "candidate_min_jaw_width_m": 0.006,
                 "candidate_max_jaw_width_m": 0.085,
-                "candidate_min_grasp_z_m": 0.120,
+                "candidate_min_grasp_z_m": 0.0,
                 "candidate_safe_lift_min_z_m": 0.240,
                 "lift_z_m": 0.08,
             }
@@ -165,9 +165,9 @@ def test_preserve_input_safety_gate_rejects_candidate_without_safe_lift_clearanc
 
     candidate = _candidate()
     candidate.jaw_width = 0.04
-    low_grasp = PoseTarget(position=(0.38, 0.0, 0.13), orientation=(0.0, 0.0, 0.0, 1.0))
+    low_grasp = PoseTarget(position=(0.38, 0.0, 0.035), orientation=(0.0, 0.0, 0.0, 1.0))
     safe_grasp = PoseTarget(position=(0.38, 0.0, 0.18), orientation=(0.0, 0.0, 0.0, 1.0))
     node = NodeForGate()
 
-    assert CandidateIkFilterNode._candidate_safety_gate(node, candidate, grasp=low_grasp) is False
+    assert CandidateIkFilterNode._candidate_safety_gate(node, candidate, grasp=low_grasp) is True
     assert CandidateIkFilterNode._candidate_safety_gate(node, candidate, grasp=safe_grasp) is True

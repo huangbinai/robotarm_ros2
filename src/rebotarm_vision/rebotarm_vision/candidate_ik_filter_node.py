@@ -86,10 +86,10 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("fixed_grasp_orientation_xyzw", [0.0, 0.0, 0.0, 1.0])
         self.declare_parameter("base_approach_axis_xyz", [1.0, 0.0, 0.0])
         self.declare_parameter("base_pregrasp_distance_m", 0.08)
-        self.declare_parameter("orientation_yaw_offsets_rad", [0.0, 3.141592653589793])
-        self.declare_parameter("candidate_grasp_z_offsets_m", [0.0, 0.03])
+        self.declare_parameter("orientation_yaw_offsets_rad", [0.0])
+        self.declare_parameter("candidate_grasp_z_offsets_m", [0.0])
         self.declare_parameter("max_candidates_per_frame", 20)
-        self.declare_parameter("max_variants_per_candidate", 2)
+        self.declare_parameter("max_variants_per_candidate", 1)
         self.declare_parameter("lift_z_m", 0.08)
         self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.01, 0.0])
@@ -97,7 +97,7 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("candidate_min_jaw_width_m", 0.006)
         self.declare_parameter("candidate_max_jaw_width_m", 0.085)
-        self.declare_parameter("candidate_min_grasp_z_m", 0.120)
+        self.declare_parameter("candidate_min_grasp_z_m", 0.0)
         self.declare_parameter("candidate_safe_lift_min_z_m", 0.240)
 
         self._input_topic = str(self.get_parameter("input_topic").value)
@@ -263,14 +263,6 @@ class CandidateIkFilterNode(Node):
         if float(grasp.position[2]) < float(self.get_parameter("candidate_min_grasp_z_m").value):
             self.get_logger().warn(
                 f"candidate IK filter rejected reachable grasp: grasp z too low ({grasp.position[2]:.3f}m)"
-            )
-            return False
-        lift_z = float(self.get_parameter("lift_z_m").value)
-        safe_lift_min_z = float(self.get_parameter("candidate_safe_lift_min_z_m").value)
-        if float(grasp.position[2]) + lift_z < safe_lift_min_z:
-            self.get_logger().warn(
-                "candidate IK filter rejected reachable grasp: "
-                f"lift target too low ({float(grasp.position[2]) + lift_z:.3f}m)"
             )
             return False
         return True

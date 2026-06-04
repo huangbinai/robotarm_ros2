@@ -36,6 +36,9 @@ class VisualReadyNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_visual_ready")
         self.declare_parameter("arm_namespace", "rebotarm")
+        self.declare_parameter("auto_move_on_start", True)
+        self.declare_parameter("exit_after_startup_move", False)
+        self.declare_parameter("startup_delay_sec", 0.0)
         self.declare_parameter("joint_positions", [0.0, 0.0, -0.20, 0.20, 0.0, 0.0])
         self.declare_parameter("duration_sec", 4.0)
         self.declare_parameter("wait_timeout_sec", 12.0)
@@ -143,13 +146,26 @@ class VisualReadyNode(Node):
             trajectory.points.append(point)
         return trajectory
 
+    def wait_before_startup_move(self) -> None:
+        delay = max(float(self.get_parameter("startup_delay_sec").value), 0.0)
+        if delay <= 0.0:
+            return
+        self.get_logger().info(f"visual_ready startup move delayed {delay:.1f}s")
+        deadline = time.monotonic() + delay
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=min(0.1, max(deadline - time.monotonic(), 0.0)))
+
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = VisualReadyNode()
     try:
-        if node.move_to_visual_ready():
-            node.get_logger().info("visual_ready startup move complete")
+        if bool(node.get_parameter("auto_move_on_start").value):
+            node.wait_before_startup_move()
+            if node.move_to_visual_ready():
+                node.get_logger().info("visual_ready startup move complete")
+            if bool(node.get_parameter("exit_after_startup_move").value):
+                return
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass

@@ -14,6 +14,13 @@ def test_vision_launch_does_not_wrap_static_tf_in_ros2_run():
     assert "executable=\"static_transform_publisher\"" in text
 
 
+def test_vision_launch_configures_opencv_qt_font_environment():
+    text = (ROOT / "src" / "rebotarm_vision" / "launch" / "vision.launch.py").read_text(encoding="utf-8")
+
+    assert "export QT_QPA_PLATFORM=xcb" in text
+    assert "export QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu" in text
+
+
 def test_interactive_launch_honors_start_interaction_nodes_flag():
     text = (ROOT / "src" / "rebotarm_bringup" / "launch" / "interactive_system.launch.py").read_text(encoding="utf-8")
 

@@ -14,6 +14,8 @@ def generate_launch_description():
         "source /opt/ros/jazzy/setup.bash && "
         "source /home/u24/robotarm_ros2/install/setup.bash && "
         "source /home/u24/venvs/rebotarm_vision/bin/activate && "
+        "export QT_QPA_PLATFORM=xcb && "
+        "export QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu && "
         "export PYTHONPATH="
         "/home/u24/venvs/rebotarm_vision/lib/python3.12/site-packages:"
         "/home/u24/rebot_grasp_vendor/pyorbbecsdk:"

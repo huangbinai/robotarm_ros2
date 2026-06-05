@@ -11,6 +11,15 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     bringup_share = FindPackageShare("rebotarm_bringup")
     vision_share = FindPackageShare("rebotarm_vision")
+    grasp_pose_policy_params = PathJoinSubstitution([vision_share, "config", "grasp_pose_policy.yaml"])
+    gripper_policy_params = PathJoinSubstitution([vision_share, "config", "gripper_policy.yaml"])
+    retry_policy_params = PathJoinSubstitution([vision_share, "config", "retry_policy.yaml"])
+    retreat_policy_params = PathJoinSubstitution([vision_share, "config", "retreat_policy.yaml"])
+    visual_servo_params = PathJoinSubstitution([vision_share, "config", "visual_servo.yaml"])
+    table_safety_params = PathJoinSubstitution([vision_share, "config", "table_safety.yaml"])
+    graspnet_policy_params = PathJoinSubstitution([vision_share, "config", "graspnet_policy.yaml"])
+    visual_ready_params = PathJoinSubstitution([vision_share, "config", "visual_ready.yaml"])
+    flat_graspnet_params = PathJoinSubstitution([vision_share, "config", "flat_graspnet.yaml"])
 
     arm_namespace = LaunchConfiguration("arm_namespace")
     use_hardware = LaunchConfiguration("use_hardware")
@@ -73,6 +82,10 @@ def generate_launch_description():
     candidate_max_jaw_width_m = LaunchConfiguration("candidate_max_jaw_width_m")
     candidate_min_grasp_z_m = LaunchConfiguration("candidate_min_grasp_z_m")
     candidate_safe_lift_min_z_m = LaunchConfiguration("candidate_safe_lift_min_z_m")
+    candidate_workspace_gate_enabled = LaunchConfiguration("candidate_workspace_gate_enabled")
+    candidate_workspace_min_xyz = LaunchConfiguration("candidate_workspace_min_xyz")
+    candidate_workspace_max_xyz = LaunchConfiguration("candidate_workspace_max_xyz")
+    candidate_max_grasp_to_object_center_m = LaunchConfiguration("candidate_max_grasp_to_object_center_m")
     lift_z_m = LaunchConfiguration("lift_z_m")
     close_position_m = LaunchConfiguration("close_position_m")
     close_max_effort = LaunchConfiguration("close_max_effort")
@@ -140,6 +153,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(start_visual_ready),
         parameters=[
+            visual_ready_params,
             {
                 "arm_namespace": arm_namespace,
                 "auto_move_on_start": move_to_visual_ready_on_start,
@@ -159,6 +173,7 @@ def generate_launch_description():
             name="rebotarm_visual_ready",
             output="screen",
             parameters=[
+                visual_ready_params,
                 {
                     "arm_namespace": arm_namespace,
                     "auto_move_on_start": False,
@@ -185,6 +200,7 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(start_grasp_preview),
             parameters=[
+                grasp_pose_policy_params,
                 {
                     "input_topic": executor_input_topic,
                     "output_topic": ["/", arm_namespace, "/interactive_control/pose_target"],
@@ -206,6 +222,7 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(start_visual_grasp_markers),
             parameters=[
+                grasp_pose_policy_params,
                 {
                     "input_topic": executor_input_topic,
                     "output_topic": "/grasp/visual_markers",
@@ -228,6 +245,7 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(start_graspnet_baseline),
             parameters=[
+                graspnet_policy_params,
                 {
                     "input_color_topic": "/camera/color/image_raw",
                     "input_depth_topic": "/camera/depth/image_raw",
@@ -254,6 +272,8 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(start_candidate_ik_filter),
             parameters=[
+                grasp_pose_policy_params,
+                table_safety_params,
                 {
                     "input_topic": grasp_candidates_topic,
                     "output_topic": filtered_candidates_topic,
@@ -280,6 +300,10 @@ def generate_launch_description():
                     "candidate_max_jaw_width_m": candidate_max_jaw_width_m,
                     "candidate_min_grasp_z_m": candidate_min_grasp_z_m,
                     "candidate_safe_lift_min_z_m": candidate_safe_lift_min_z_m,
+                    "candidate_workspace_gate_enabled": candidate_workspace_gate_enabled,
+                    "candidate_workspace_min_xyz": candidate_workspace_min_xyz,
+                    "candidate_workspace_max_xyz": candidate_workspace_max_xyz,
+                    "candidate_max_grasp_to_object_center_m": candidate_max_grasp_to_object_center_m,
                     "tcp_offset_xyz": tcp_offset_xyz,
                     "target_base_offset_xyz": target_base_offset_xyz,
                     "pregrasp_base_z_offset_m": base_z_offset_m,
@@ -321,6 +345,12 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(start_visual_grasp_executor),
             parameters=[
+                grasp_pose_policy_params,
+                gripper_policy_params,
+                retry_policy_params,
+                retreat_policy_params,
+                visual_servo_params,
+                table_safety_params,
                 {
                     "arm_namespace": arm_namespace,
                     "input_topic": executor_input_topic,
@@ -451,6 +481,10 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085"),
             DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0"),
             DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.240"),
+            DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="false"),
+            DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]"),
+            DeclareLaunchArgument("candidate_workspace_max_xyz", default_value="[0.64, 0.35, 0.45]"),
+            DeclareLaunchArgument("candidate_max_grasp_to_object_center_m", default_value="0.15"),
             DeclareLaunchArgument("lift_z_m", default_value="0.08"),
             DeclareLaunchArgument("close_position_m", default_value="0.025"),
             DeclareLaunchArgument("close_max_effort", default_value="0.3"),

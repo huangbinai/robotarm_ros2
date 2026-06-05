@@ -122,3 +122,56 @@ def test_hybrid_geometry_policy_uses_base_axis_pregrasp_with_candidate_yaw():
     assert pregrasp.position == pytest.approx((0.36, -0.02, 0.23))
     assert grasp.orientation == pytest.approx((0.0, 0.0, 0.70710678, 0.70710678))
     assert pregrasp.orientation == grasp.orientation
+
+
+def test_preserve_candidate_pose_keeps_graspnet_tcp_orientation_and_uses_end_link_center_when_tcp_offset_zero():
+    from rebotarm_vision.visual_grasp_pose_policy import (
+        OfficialGeometryGraspPolicyConfig,
+        build_preserve_candidate_grasp_targets,
+    )
+
+    config = OfficialGeometryGraspPolicyConfig(
+        pregrasp_distance_m=0.08,
+        tcp_offset_xyz=(0.0, 0.0, 0.0),
+        target_base_offset_xyz=(0.0, 0.0, 0.0),
+        pregrasp_z_offset_m=0.0,
+        grasp_z_offset_m=0.0,
+    )
+
+    pregrasp, grasp = build_preserve_candidate_grasp_targets(
+        grasp_position_xyz=(0.42, 0.03, 0.055),
+        grasp_orientation_xyzw=(0.0, 0.70710678, 0.0, 0.70710678),
+        config=config,
+    )
+
+    assert grasp.position == pytest.approx((0.42, 0.03, 0.055))
+    assert grasp.orientation == pytest.approx((0.0, 0.70710678, 0.0, 0.70710678))
+    assert pregrasp.orientation == grasp.orientation
+    assert pregrasp.position != pytest.approx((0.42, 0.03, 0.055))
+
+
+def test_candidate_workspace_gate_accepts_only_base_link_workspace_box_and_object_distance():
+    from rebotarm_vision.candidate_workspace_gate import CandidateWorkspaceGateConfig, candidate_workspace_gate
+
+    config = CandidateWorkspaceGateConfig(
+        enabled=True,
+        min_xyz=(0.18, -0.35, 0.0),
+        max_xyz=(0.64, 0.35, 0.45),
+        max_grasp_to_object_center_m=0.15,
+    )
+
+    assert candidate_workspace_gate(
+        grasp_position_xyz=(0.42, 0.03, 0.055),
+        object_center_xyz=(0.40, 0.02, 0.050),
+        config=config,
+    ).accepted
+    assert not candidate_workspace_gate(
+        grasp_position_xyz=(2.7, -1.4, 0.37),
+        object_center_xyz=(0.40, 0.02, 0.050),
+        config=config,
+    ).accepted
+    assert not candidate_workspace_gate(
+        grasp_position_xyz=(0.42, 0.03, 0.055),
+        object_center_xyz=(0.10, 0.30, 0.050),
+        config=config,
+    ).accepted

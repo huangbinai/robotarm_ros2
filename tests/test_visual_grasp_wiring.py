@@ -131,6 +131,43 @@ def test_visual_grasp_system_uses_measured_grasp_tcp_offset_by_default():
     assert 'DeclareLaunchArgument("tcp_offset_xyz", default_value="[-0.04, 0.0, 0.0]")' in launch_text
 
 
+def test_visual_grasp_strategy_defaults_are_split_into_yaml_profiles():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    expected_profiles = [
+        "grasp_pose_policy.yaml",
+        "gripper_policy.yaml",
+        "retry_policy.yaml",
+        "retreat_policy.yaml",
+        "visual_servo.yaml",
+        "table_safety.yaml",
+        "graspnet_policy.yaml",
+        "visual_ready.yaml",
+        "flat_graspnet.yaml",
+    ]
+
+    for filename in expected_profiles:
+        profile = _read(f"src/rebotarm_vision/config/{filename}")
+        assert profile.strip(), filename
+        assert f'PathJoinSubstitution([vision_share, "config", "{filename}"])' in launch_text
+        assert f'"config/{filename}"' in _read("src/rebotarm_vision/setup.py")
+
+    assert "grasp_pose_policy_params" in launch_text
+    assert "gripper_policy_params" in launch_text
+    assert "retry_policy_params" in launch_text
+    assert "retreat_policy_params" in launch_text
+    assert "visual_servo_params" in launch_text
+    assert "table_safety_params" in launch_text
+    assert "graspnet_policy_params" in launch_text
+    assert "visual_ready_params" in launch_text
+    assert "flat_graspnet_params" in launch_text
+    assert "parameters=[\n            visual_ready_params," in launch_text
+    assert "graspnet_policy_params,\n                {" in launch_text
+    assert "grasp_pose_policy_params,\n                table_safety_params," in launch_text
+    assert "grasp_pose_policy_params,\n                gripper_policy_params," in launch_text
+    assert "retry_policy_params,\n                retreat_policy_params," in launch_text
+    assert "visual_servo_params,\n                table_safety_params," in launch_text
+
+
 def test_visual_grasp_system_can_move_to_visual_ready_on_start():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     node_text = _read("src/rebotarm_vision/rebotarm_vision/visual_ready_node.py")
@@ -471,8 +508,16 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert "def _candidate_target_variants" in node_text
     assert "def _official_geometry_target_variants" in node_text
     assert "def _hybrid_geometry_target_variants" in node_text
+    assert "def _preserve_candidate_target_variants" in node_text
     assert "build_hybrid_geometry_grasp_targets" in node_text
     assert "build_official_geometry_grasp_targets" in node_text
+    assert "build_preserve_candidate_grasp_targets" in node_text
+    assert "CandidateWorkspaceGateConfig" in node_text
+    assert "candidate_workspace_gate" in node_text
+    assert 'self.declare_parameter("candidate_workspace_gate_enabled", False)' in node_text
+    assert 'self.declare_parameter("candidate_workspace_min_xyz", [0.18, -0.35, 0.0])' in node_text
+    assert 'self.declare_parameter("candidate_workspace_max_xyz", [0.64, 0.35, 0.45])' in node_text
+    assert 'self.declare_parameter("candidate_max_grasp_to_object_center_m", 0.15)' in node_text
     assert "variants = self._candidate_target_variants(msg, candidate.pose)" in node_text
     assert "for pregrasp, grasp, variant_label in variants[:max_variants]" in node_text
     assert "request.ik_request.robot_state.joint_state = deepcopy(self._latest_joint_state)" in node_text
@@ -504,6 +549,10 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085")' in launch_text
     assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0")' in launch_text
     assert 'DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.240")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_workspace_max_xyz", default_value="[0.64, 0.35, 0.45]")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_grasp_to_object_center_m", default_value="0.15")' in launch_text
     assert '"joint_state_topic": candidate_joint_state_topic' in launch_text
     assert '"service_timeout_sec": candidate_filter_service_timeout_sec' in launch_text
     assert '"pose_policy": candidate_pose_policy' in launch_text
@@ -513,6 +562,21 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert '"max_variants_per_candidate": candidate_max_variants_per_candidate' in launch_text
     assert '"candidate_min_jaw_width_m": candidate_min_jaw_width_m' in launch_text
     assert '"candidate_max_jaw_width_m": candidate_max_jaw_width_m' in launch_text
+    assert '"candidate_workspace_gate_enabled": candidate_workspace_gate_enabled' in launch_text
+    assert '"candidate_workspace_min_xyz": candidate_workspace_min_xyz' in launch_text
+    assert '"candidate_workspace_max_xyz": candidate_workspace_max_xyz' in launch_text
+    assert '"candidate_max_grasp_to_object_center_m": candidate_max_grasp_to_object_center_m' in launch_text
+
+
+def test_flat_graspnet_profile_preserves_pose_and_uses_end_link_center():
+    profile_text = _read("src/rebotarm_vision/config/flat_graspnet.yaml")
+
+    assert "candidate_pose_policy: preserve_candidate_pose" in profile_text
+    assert "tcp_offset_xyz: [0.0, 0.0, 0.0]" in profile_text
+    assert "candidate_workspace_gate_enabled: true" in profile_text
+    assert "candidate_workspace_min_xyz: [0.18, -0.35, 0.0]" in profile_text
+    assert "candidate_workspace_max_xyz: [0.64, 0.35, 0.45]" in profile_text
+    assert "candidate_max_grasp_to_object_center_m: 0.15" in profile_text
 
 
 def test_gripper_visual_joint_state_node_rejects_empty_or_incomplete_arm_state():

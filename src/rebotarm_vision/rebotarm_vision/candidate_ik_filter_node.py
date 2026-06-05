@@ -16,6 +16,7 @@ from tf2_ros import Buffer, TransformListener
 from rebotarm_msgs.msg import GraspCandidateArray, GraspPlan
 
 from .candidate_filter_policy import filter_candidate_array_by_reachability
+from .candidate_workspace_gate import CandidateWorkspaceGateConfig, candidate_workspace_gate
 from .grasp_preview_sender_node import _transform_from_msg, transform_pose_message
 from .visual_grasp_pose_policy import (
     BaseAxisGraspPolicyConfig,
@@ -23,6 +24,7 @@ from .visual_grasp_pose_policy import (
     build_base_axis_grasp_targets,
     build_hybrid_geometry_grasp_targets,
     build_official_geometry_grasp_targets,
+    build_preserve_candidate_grasp_targets,
 )
 from .visual_grasp_sequence import PoseTarget
 
@@ -99,6 +101,10 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("candidate_max_jaw_width_m", 0.085)
         self.declare_parameter("candidate_min_grasp_z_m", 0.0)
         self.declare_parameter("candidate_safe_lift_min_z_m", 0.240)
+        self.declare_parameter("candidate_workspace_gate_enabled", False)
+        self.declare_parameter("candidate_workspace_min_xyz", [0.18, -0.35, 0.0])
+        self.declare_parameter("candidate_workspace_max_xyz", [0.64, 0.35, 0.45])
+        self.declare_parameter("candidate_max_grasp_to_object_center_m", 0.15)
 
         self._input_topic = str(self.get_parameter("input_topic").value)
         self._target_frame = str(self.get_parameter("target_frame").value)
@@ -265,7 +271,52 @@ class CandidateIkFilterNode(Node):
                 f"candidate IK filter rejected reachable grasp: grasp z too low ({grasp.position[2]:.3f}m)"
             )
             return False
+        try:
+            workspace_enabled = bool(self.get_parameter("candidate_workspace_gate_enabled").value)
+        except Exception:
+            workspace_enabled = False
+        if not workspace_enabled:
+            return True
+
+        workspace_result = candidate_workspace_gate(
+            grasp_position_xyz=tuple(float(v) for v in grasp.position),
+            object_center_xyz=self._candidate_object_center_in_target_frame(candidate),
+            config=CandidateWorkspaceGateConfig(
+                enabled=workspace_enabled,
+                min_xyz=self._tuple3("candidate_workspace_min_xyz"),
+                max_xyz=self._tuple3("candidate_workspace_max_xyz"),
+                max_grasp_to_object_center_m=float(
+                    self.get_parameter("candidate_max_grasp_to_object_center_m").value
+                ),
+            ),
+        )
+        if not workspace_result.accepted:
+            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: {workspace_result.reason}")
+            return False
         return True
+
+    def _candidate_object_center_in_target_frame(self, candidate) -> tuple[float, float, float] | None:
+        pose = getattr(candidate, "pose", None)
+        if pose is None:
+            return None
+        source_frame = str(getattr(getattr(candidate, "header", None), "frame_id", "") or "")
+        object_pose = deepcopy(pose)
+        if self._target_frame and source_frame and source_frame != self._target_frame:
+            try:
+                tf_msg = self._tf_buffer.lookup_transform(
+                    self._target_frame,
+                    source_frame,
+                    rclpy.time.Time(),
+                    timeout=rclpy.duration.Duration(seconds=0.2),
+                )
+                object_pose = transform_pose_message(object_pose, _transform_from_msg(tf_msg))
+            except Exception:
+                return None
+        return (
+            float(object_pose.position.x),
+            float(object_pose.position.y),
+            float(object_pose.position.z),
+        )
 
     def _list_float_parameter(self, name: str) -> list[float]:
         values = list(self.get_parameter(name).value)
@@ -278,6 +329,8 @@ class CandidateIkFilterNode(Node):
     ) -> list[tuple[PoseTarget, PoseTarget, str]]:
         variants: list[tuple[PoseTarget, PoseTarget, str]] = []
         pose_policy = str(self.get_parameter("pose_policy").value).strip()
+        if pose_policy == "preserve_candidate_pose":
+            variants.extend(self._preserve_candidate_target_variants(candidates, pose))
         if pose_policy in ("hybrid_geometry", "hybrid_geometry_with_base_axis_fallback"):
             variants.extend(self._hybrid_geometry_target_variants(candidates, pose))
         if pose_policy in ("official_geometry", "official_geometry_with_base_axis_fallback"):
@@ -293,6 +346,18 @@ class CandidateIkFilterNode(Node):
         ):
             variants.extend(self._base_axis_target_variants(candidates, pose))
         return variants
+
+    def _preserve_candidate_target_variants(
+        self,
+        candidates: GraspCandidateArray,
+        pose: Pose,
+    ) -> list[tuple[PoseTarget, PoseTarget, str]]:
+        pregrasp, grasp = self._build_targets(
+            candidates,
+            pose,
+            use_preserve_candidate_pose=True,
+        )
+        return [(pregrasp, grasp, "preserve_candidate_pose")]
 
     def _hybrid_geometry_target_variants(
         self,
@@ -396,6 +461,7 @@ class CandidateIkFilterNode(Node):
         grasp_z_offset_extra_m: float = 0.0,
         use_hybrid_geometry: bool = False,
         use_candidate_approach_axis: bool = False,
+        use_preserve_candidate_pose: bool = False,
     ) -> tuple[PoseTarget, PoseTarget]:
         grasp_pose = deepcopy(pose)
         source_frame = str(candidates.header.frame_id)
@@ -433,6 +499,24 @@ class CandidateIkFilterNode(Node):
                     float(grasp_pose.orientation.w),
                 ),
                 config=base_axis_config,
+            )
+        if use_preserve_candidate_pose:
+            return build_preserve_candidate_grasp_targets(
+                grasp_position_xyz=position_xyz,
+                grasp_orientation_xyzw=orientation_xyzw
+                or (
+                    float(grasp_pose.orientation.x),
+                    float(grasp_pose.orientation.y),
+                    float(grasp_pose.orientation.z),
+                    float(grasp_pose.orientation.w),
+                ),
+                config=OfficialGeometryGraspPolicyConfig(
+                    pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
+                    tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
+                    target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
+                    pregrasp_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
+                    grasp_z_offset_m=grasp_z_offset_m,
+                ),
             )
         if use_candidate_approach_axis:
             return build_official_geometry_grasp_targets(

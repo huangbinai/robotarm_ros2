@@ -175,3 +175,16 @@ def build_official_geometry_grasp_targets(
             orientation=orientation,
         ),
     )
+
+
+def build_preserve_candidate_grasp_targets(
+    *,
+    grasp_position_xyz: tuple[float, float, float],
+    grasp_orientation_xyzw: tuple[float, float, float, float],
+    config: OfficialGeometryGraspPolicyConfig,
+) -> tuple[PoseTarget, PoseTarget]:
+    return build_official_geometry_grasp_targets(
+        grasp_position_xyz=grasp_position_xyz,
+        grasp_orientation_xyzw=grasp_orientation_xyzw,
+        config=config,
+    )

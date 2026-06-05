@@ -28,6 +28,22 @@ safe_retreat_axis_xyz = [-1.0, 0.0, 0.5]
 tcp_offset_xyz = [-0.04, 0.0, 0.0]
 ```
 
+策略默认值已经从 `visual_grasp_system.launch.py` 拆到 YAML：
+
+```text
+src/rebotarm_vision/config/grasp_pose_policy.yaml
+src/rebotarm_vision/config/gripper_policy.yaml
+src/rebotarm_vision/config/retry_policy.yaml
+src/rebotarm_vision/config/retreat_policy.yaml
+src/rebotarm_vision/config/visual_servo.yaml
+src/rebotarm_vision/config/table_safety.yaml
+src/rebotarm_vision/config/graspnet_policy.yaml
+src/rebotarm_vision/config/visual_ready.yaml
+src/rebotarm_vision/config/flat_graspnet.yaml
+```
+
+日常启动只需要保留模式开关和少量覆盖参数。具体策略参数优先改 YAML，不要在终端里堆很长一串。
+
 ## 1. 启动前清理
 
 如果之前启动过旧版本，先清理残留节点和 FastDDS 共享内存锁。确认机械臂安全静止后执行：
@@ -75,16 +91,7 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   ordinary_depth_quality_enabled:=true \
   start_candidate_ik_filter:=true \
   executor_input_topic:=/grasp/filtered_plan \
-  trajectory_precheck_enabled:=false \
-  execution_mode:=execute \
-  open_before_approach:=true \
-  auto_gripper_width:=true \
-  auto_gripper_effort:=true \
-  gripper_grasp_enabled:=true \
-  gripper_grasp_timeout_sec:=5.0 \
-  safe_retreat_enabled:=true \
-  safe_home_after_grasp:=false \
-  pose_policy:=base_axis
+  execution_mode:=execute
 ```
 
 启动后预期：
@@ -107,34 +114,37 @@ Windows GraspNet baseline
 -> /grasp/filtered_plan
 ```
 
-### 3.1 Windows 终端 A：启动 Gemini2 / YOLO / HTTP 服务
+### 3.1 Windows：一键启动 YOLO + GraspNet
 
 ```powershell
 cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main"
 
-D:\anaconda3\envs\orbbec_yolo\python.exe tools\windows_mjpeg_server.py `
-  --capture-source orbbec `
-  --host 0.0.0.0 `
-  --port 8081 `
-  --classes "bottle,cup" `
-  --allowed-classes "bottle,cup" `
-  --graspnet-candidates-path "D:\tmp\graspnet_candidates.json"
+.\tools\windows_start_grasp_ai_stack.ps1
 ```
 
-### 3.2 Windows 终端 B：启动 GraspNet bridge
+这个脚本会打开两个 PowerShell 窗口：
+
+```text
+windows_start_yolo_server.ps1
+windows_start_graspnet_bridge.ps1
+```
+
+Windows 端路径、模型、端口、候选 JSON 都已经固定在脚本里。日常测试不需要再手动输入一大串参数。
+
+### 3.2 Windows：分开启动排错
 
 ```powershell
 cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main"
 
-D:\anaconda3\envs\graspnet\python.exe tools\windows_graspnet_baseline_bridge.py `
-  --server-url http://127.0.0.1:8081 `
-  --output-path "D:\tmp\graspnet_candidates.json" `
-  --model-root "D:\rebot_ai_models\graspnet-baseline" `
-  --checkpoint-path "D:\rebot_ai_models\graspnet-baseline\checkpoints\checkpoint-rs.tar" `
-  --backend-module graspnet_baseline_inference `
-  --device cuda:0 `
-  --max-grasps 5 `
-  --poll-hz 0.5
+.\tools\windows_start_yolo_server.ps1
+```
+
+另开一个 Windows 终端：
+
+```powershell
+cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main"
+
+.\tools\windows_start_graspnet_bridge.ps1
 ```
 
 ### 3.3 Ubuntu 终端 A：启动 GraspNet 视觉抓取系统
@@ -156,19 +166,27 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   graspnet_network_poll_hz:=0.5 \
   grasp_candidates_topic:=/grasp/graspnet_candidates \
   start_candidate_ik_filter:=true \
+  candidate_pose_policy:=preserve_candidate_pose \
   candidate_max_candidates_per_frame:=5 \
+  candidate_max_variants_per_candidate:=1 \
+  candidate_orientation_yaw_offsets_rad:="[0.0]" \
+  candidate_grasp_z_offsets_m:="[0.0]" \
+  candidate_workspace_gate_enabled:=true \
+  candidate_workspace_min_xyz:="[0.18, -0.35, 0.0]" \
+  candidate_workspace_max_xyz:="[0.64, 0.35, 0.45]" \
+  candidate_max_grasp_to_object_center_m:=0.15 \
+  tcp_offset_xyz:="[0.0, 0.0, 0.0]" \
   executor_input_topic:=/grasp/filtered_plan \
-  trajectory_precheck_enabled:=false \
-  execution_mode:=execute \
-  open_before_approach:=true \
-  auto_gripper_width:=true \
-  auto_gripper_effort:=true \
-  gripper_grasp_enabled:=true \
-  gripper_grasp_timeout_sec:=5.0 \
-  safe_retreat_enabled:=true \
-  safe_home_after_grasp:=false \
-  pose_policy:=base_axis
+  execution_mode:=execute
 ```
+
+平躺路线对应的参数参考文件是：
+
+```text
+src/rebotarm_vision/config/flat_graspnet.yaml
+```
+
+当前为了不影响立着瓶子的稳定路线，`flat_graspnet.yaml` 不作为默认 profile 自动加载；上面的启动命令会显式覆盖平躺需要的关键参数。
 
 GraspNet 路线下，终端 A 可能看到：
 
@@ -177,6 +195,12 @@ candidate IK filter accepted candidate=0 hybrid_geometry_yaw0_z0: score=-0.00
 candidate IK filter accepted candidate=1 hybrid_geometry_yaw0_z0: score=-1.00
 candidate IK filter accepted candidate=2 hybrid_geometry_yaw0_z0: score=-2.00
 candidate IK filter best: best_candidate original_index=0
+```
+
+如果使用平躺 GraspNet 参数，日志里的 variant 会变成：
+
+```text
+preserve_candidate_pose
 ```
 
 这里的 `score=-0.00/-1.00/-2.00` 不是成功概率，而是保留输入候选排序后的分数。越靠前的 GraspNet candidate 分数越高。

@@ -9,8 +9,8 @@ class GripperPolicyConfig:
     auto_effort: bool = True
     default_open_width_m: float = 0.09
     default_close_width_m: float = 0.025
-    default_max_effort: float = 0.3
-    open_clearance_m: float = 0.02
+    default_max_effort: float = 0.4
+    open_clearance_m: float = 0.0
     close_margin_m: float = 0.012
     min_open_width_m: float = 0.035
     max_open_width_m: float = 0.09
@@ -18,9 +18,7 @@ class GripperPolicyConfig:
     max_close_width_m: float = 0.08
     min_effort: float = 0.22
     max_effort: float = 0.60
-    effort_per_width_m: float = 3.0
-    effort_per_length_m: float = 0.3
-    max_allowed_width_m: float = 0.085
+    max_allowed_width_m: float = 0.082
 
 
 @dataclass(frozen=True)
@@ -45,13 +43,12 @@ def resolve_gripper_command(
 ) -> GripperCommand:
     cfg = config or GripperPolicyConfig()
     width = max(float(jaw_width_m or 0.0), 0.0)
-    length = max(float(object_length_m or 0.0), 0.0)
 
     if cfg.auto_width and width > float(cfg.max_allowed_width_m):
         return GripperCommand(
             open_width_m=float(cfg.max_open_width_m),
             close_width_m=float(cfg.max_close_width_m),
-            max_effort=float(cfg.max_effort),
+            max_effort=_clamp(float(cfg.default_max_effort), float(cfg.min_effort), float(cfg.max_effort)),
             allowed=False,
             reason=f"object too wide for gripper: {width:.3f}m > {cfg.max_allowed_width_m:.3f}m",
         )
@@ -80,17 +77,7 @@ def resolve_gripper_command(
             float(cfg.max_close_width_m),
         )
 
-    if cfg.auto_effort and width > 0.0:
-        effort = (
-            float(cfg.min_effort)
-            + width * float(cfg.effort_per_width_m)
-            + length * float(cfg.effort_per_length_m)
-        )
-        if str(class_name).strip().lower() in {"bottle", "cup", "can"}:
-            effort += 0.02
-        max_effort = _clamp(effort, float(cfg.min_effort), float(cfg.max_effort))
-    else:
-        max_effort = _clamp(float(cfg.default_max_effort), float(cfg.min_effort), float(cfg.max_effort))
+    max_effort = _clamp(float(cfg.default_max_effort), float(cfg.min_effort), float(cfg.max_effort))
 
     return GripperCommand(
         open_width_m=open_width,

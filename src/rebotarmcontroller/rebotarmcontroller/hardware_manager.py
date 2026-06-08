@@ -18,14 +18,14 @@ _G_ARRIVE_TOL = 0.12
 _G_TAU_MAX = 1.5
 _G_KP_MOVE = 5.0
 _G_KD_MOVE = 1.0
-_G_DEFAULT_FORCE = 0.30
+_G_DEFAULT_FORCE = 0.40
 _G_GRASP_CLOSE_KP = 0.0
 _G_GRASP_CLOSE_KD = 0.5
 _G_GRASP_HOLD_KP = 5.0
 _G_GRASP_HOLD_KD = 1.0
-_G_GRASP_CLOSE_FORCE_DEFAULT = 0.60
+_G_GRASP_CLOSE_FORCE_DEFAULT = 0.40
 _G_GRASP_CLOSE_FORCE_MAX = 1.0
-_G_GRASP_HOLD_FORCE_DEFAULT = 0.30
+_G_GRASP_HOLD_FORCE_DEFAULT = 0.40
 _G_GRASP_VEL_THRESHOLD = 0.04
 _G_GRASP_MIN_CLOSE_TIME = 0.08
 _G_GRASP_MIN_CLOSURE_M = 0.006
@@ -122,6 +122,10 @@ class HardwareManager:
         return [
             workspace / "third_party" / "reBotArm_control_py",
             workspace / "sdk" / "reBotArm_control_py",
+            Path.cwd() / "third_party" / "reBotArm_control_py",
+            Path.cwd() / "sdk" / "reBotArm_control_py",
+            Path.home() / "robotarm_ros2" / "third_party" / "reBotArm_control_py",
+            Path.home() / "robotarm_ros2" / "sdk" / "reBotArm_control_py",
             Path.home() / "seeed" / "cameraws" / "sdk" / "reBotArm_control_py",
         ]
 
@@ -141,11 +145,12 @@ class HardwareManager:
 
     @staticmethod
     def _arm_cfg_with_channel(cfg_path: Path, channel: str) -> Path:
-        if not channel:
+        normalized_channel = str(channel or "").strip()
+        if not normalized_channel or normalized_channel.lower() == "auto":
             return cfg_path
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        data["channel"] = channel
+        data["channel"] = normalized_channel
         tmp_dir = Path("/tmp") / "rebotarm_ros2"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         tmp_path = tmp_dir / "arm_channel_override.yaml"
@@ -190,6 +195,16 @@ class HardwareManager:
         return self._state_machine
 
     @property
+    def gripper_active(self) -> bool:
+        with self._gripper_lock:
+            return bool(self._gripper_active)
+
+    @property
+    def gripper_mode(self) -> str:
+        with self._gripper_lock:
+            return str(self._gripper_mode)
+
+    @property
     def error_codes(self) -> list[str]:
         return list(self._error_codes)
 
@@ -201,13 +216,17 @@ class HardwareManager:
     def connect(self) -> None:
         if self._connected:
             return
-        self._arm.connect()
-        self._arm.mode_pos_vel()
-        self._arm.enable()
-        self._enabled = True
-        self._start_pos_vel_loop()
-        self._connected = True
-        self.init_gripper(str(self._gripper_cfg_path))
+        try:
+            self._arm.connect()
+            self._arm.mode_pos_vel()
+            self._arm.enable()
+            self._enabled = True
+            self._start_pos_vel_loop()
+            self._connected = True
+            self.init_gripper(str(self._gripper_cfg_path))
+        except Exception:
+            self.shutdown()
+            raise
 
     def shutdown(self) -> None:
         if not self._connected:

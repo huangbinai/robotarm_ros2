@@ -14,6 +14,12 @@ class SafetyGuard:
             "safe_home",
             "set_gripper",
             "move_named_pose",
+            "move_relative",
+            "pick_object",
+            "place_object",
+            "inspect_workspace",
+            "confirm_action",
+            "cancel_task",
             "run_task_template",
             "stop_motion",
         }
@@ -29,6 +35,13 @@ class SafetyGuard:
             name = command.params.get("name")
             if name not in self._config.task_templates:
                 raise SafetyViolationError(f"task template does not exist: {name}")
+
+        if command.command == "move_relative":
+            distance_m = abs(float(command.params.get("distance_m", 0.0)))
+            if distance_m > 0.05:
+                raise SafetyViolationError("move_relative distance exceeds 0.05 m")
+            if command.params.get("axis") not in {"x", "y", "z"}:
+                raise SafetyViolationError("move_relative axis must be x, y, or z")
 
         return command
 

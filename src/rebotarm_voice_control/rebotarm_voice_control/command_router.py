@@ -32,6 +32,23 @@ class DryRunCommandRouter:
                 "action",
                 {"name": name, "pose": pose},
             )
+        if command.command == "move_relative":
+            return RouteResult(
+                command.intent,
+                "/rebotarm/move_relative",
+                "action",
+                dict(command.params),
+            )
+        if command.command == "pick_object":
+            return RouteResult(command.intent, "/rebotarm/pick_object", "action", dict(command.params))
+        if command.command == "place_object":
+            return RouteResult(command.intent, "/rebotarm/place_object", "action", dict(command.params))
+        if command.command == "inspect_workspace":
+            return RouteResult(command.intent, "/rebotarm/inspect_workspace", "service", dict(command.params))
+        if command.command == "confirm_action":
+            return RouteResult(command.intent, "/rebotarm/confirm_action", "service", dict(command.params))
+        if command.command == "cancel_task":
+            return RouteResult(command.intent, "/rebotarm/cancel_task", "service", dict(command.params))
         if command.command == "stop_motion":
             return RouteResult(command.intent, "/rebotarm/stop", "dry_run_stop", {})
         raise SafetyViolationError(f"cannot route command: {command.command}")

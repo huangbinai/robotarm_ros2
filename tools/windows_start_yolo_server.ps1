@@ -1,6 +1,6 @@
 param(
     [string]$PythonExe = "D:\anaconda3\envs\orbbec_yolo\python.exe",
-    [string]$RepoRoot = "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main",
+    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$GraspNetCandidatesPath = "D:\tmp\graspnet_candidates.json"
 )
 
@@ -15,8 +15,9 @@ Set-Location $RepoRoot
     --height 720 `
     --fps 30 `
     --depth-width 1280 `
-    --depth-height 720 `
+    --depth-height 800 `
     --depth-fps 30 `
+    --depth-downsample-filter 1 `
     --jpeg-quality 80 `
     --conf-threshold 0.25 `
     --iou-threshold 0.45 `

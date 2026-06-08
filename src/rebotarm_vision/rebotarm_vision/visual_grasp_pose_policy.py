@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .approach_policy import ApproachPolicyConfig, build_pregrasp_tcp, normalize_vector
 from .visual_grasp_sequence import PoseTarget
+from .pose_variant_policy import (
+    build_parallel_jaw_symmetric_orientation,
+    quaternion_to_rotation_matrix,
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +18,7 @@ class BaseAxisGraspPolicyConfig:
     tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     target_base_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     pregrasp_z_offset_m: float = 0.05
+    pregrasp_min_z_m: float = 0.0
     grasp_z_offset_m: float = 0.0
 
 
@@ -22,15 +28,12 @@ class OfficialGeometryGraspPolicyConfig:
     tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     target_base_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     pregrasp_z_offset_m: float = 0.0
+    pregrasp_min_z_m: float = 0.0
     grasp_z_offset_m: float = 0.0
 
 
 def _normalize_vector(vector: tuple[float, float, float]) -> tuple[float, float, float]:
-    x, y, z = (float(vector[0]), float(vector[1]), float(vector[2]))
-    norm = (x * x + y * y + z * z) ** 0.5
-    if norm <= 1e-9:
-        raise ValueError("approach_axis_xyz must be non-zero")
-    return (x / norm, y / norm, z / norm)
+    return normalize_vector(vector)
 
 
 def _normalize_quaternion(quaternion: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -103,10 +106,14 @@ def build_base_axis_grasp_targets(
         base[1],
         base[2] + float(config.grasp_z_offset_m),
     )
-    pregrasp_tcp = (
-        base[0] - axis[0] * float(config.pregrasp_distance_m),
-        base[1] - axis[1] * float(config.pregrasp_distance_m),
-        base[2] - axis[2] * float(config.pregrasp_distance_m) + float(config.pregrasp_z_offset_m),
+    pregrasp_tcp = build_pregrasp_tcp(
+        grasp_tcp_xyz=base,
+        approach_axis_xyz=axis,
+        config=ApproachPolicyConfig(
+            pregrasp_distance_m=float(config.pregrasp_distance_m),
+            pregrasp_z_offset_m=float(config.pregrasp_z_offset_m),
+            pregrasp_min_z_m=float(config.pregrasp_min_z_m),
+        ),
     )
     return (
         PoseTarget(
@@ -136,6 +143,7 @@ def build_hybrid_geometry_grasp_targets(
             tcp_offset_xyz=config.tcp_offset_xyz,
             target_base_offset_xyz=config.target_base_offset_xyz,
             pregrasp_z_offset_m=config.pregrasp_z_offset_m,
+            pregrasp_min_z_m=config.pregrasp_min_z_m,
             grasp_z_offset_m=config.grasp_z_offset_m,
         ),
     )
@@ -159,11 +167,14 @@ def build_official_geometry_grasp_targets(
         base[1],
         base[2] + float(config.grasp_z_offset_m),
     )
-    pregrasp_tcp = (
-        grasp_tcp[0] - approach_axis[0] * float(config.pregrasp_distance_m),
-        grasp_tcp[1] - approach_axis[1] * float(config.pregrasp_distance_m),
-        grasp_tcp[2] - approach_axis[2] * float(config.pregrasp_distance_m)
-        + float(config.pregrasp_z_offset_m),
+    pregrasp_tcp = build_pregrasp_tcp(
+        grasp_tcp_xyz=grasp_tcp,
+        approach_axis_xyz=approach_axis,
+        config=ApproachPolicyConfig(
+            pregrasp_distance_m=float(config.pregrasp_distance_m),
+            pregrasp_z_offset_m=float(config.pregrasp_z_offset_m),
+            pregrasp_min_z_m=float(config.pregrasp_min_z_m),
+        ),
     )
     return (
         PoseTarget(

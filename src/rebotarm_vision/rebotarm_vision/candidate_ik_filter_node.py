@@ -16,44 +16,14 @@ from tf2_ros import Buffer, TransformListener
 from rebotarm_msgs.msg import GraspCandidateArray, GraspPlan
 
 from .candidate_filter_policy import filter_candidate_array_by_reachability
-from .candidate_workspace_gate import CandidateWorkspaceGateConfig, candidate_workspace_gate
-from .grasp_preview_sender_node import _transform_from_msg, transform_pose_message
-from .visual_grasp_pose_policy import (
-    BaseAxisGraspPolicyConfig,
-    OfficialGeometryGraspPolicyConfig,
-    build_base_axis_grasp_targets,
-    build_hybrid_geometry_grasp_targets,
-    build_official_geometry_grasp_targets,
-    build_preserve_candidate_grasp_targets,
-)
+from .candidate_gate_policy import CandidateGateConfig, evaluate_candidate_gate
+from .candidate_motion_policy import JointMotionPolicyConfig, evaluate_joint_motion
+from .candidate_scoring_policy import CandidateScoringInput, score_candidate
+from .candidate_target_policy import CandidateTargetPolicyConfig, build_candidate_target_variants
+from .candidate_tf_adapter import transform_candidate_pose_to_target_frame
+from .motion_feasibility_policy import evaluate_motion_feasibility
+from .pose_variant_policy import PoseVariantConfig
 from .visual_grasp_sequence import PoseTarget
-
-
-def _quat_multiply(
-    left: tuple[float, float, float, float],
-    right: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
-    lx, ly, lz, lw = left
-    rx, ry, rz, rw = right
-    return (
-        lw * rx + lx * rw + ly * rz - lz * ry,
-        lw * ry - lx * rz + ly * rw + lz * rx,
-        lw * rz + lx * ry - ly * rx + lz * rw,
-        lw * rw - lx * rx - ly * ry - lz * rz,
-    )
-
-
-def _yaw_quaternion(yaw_rad: float) -> tuple[float, float, float, float]:
-    half = float(yaw_rad) * 0.5
-    return (0.0, 0.0, math.sin(half), math.cos(half))
-
-
-def _normalize_quaternion(quaternion: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
-    x, y, z, w = quaternion
-    norm = (x * x + y * y + z * z + w * w) ** 0.5
-    if norm <= 1e-9:
-        raise ValueError("quaternion must be non-zero")
-    return (x / norm, y / norm, z / norm, w / norm)
 
 
 def _pose_from_target(target: PoseTarget) -> Pose:
@@ -91,20 +61,25 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("orientation_yaw_offsets_rad", [0.0])
         self.declare_parameter("candidate_grasp_z_offsets_m", [0.0])
         self.declare_parameter("max_candidates_per_frame", 20)
-        self.declare_parameter("max_variants_per_candidate", 1)
         self.declare_parameter("lift_z_m", 0.08)
-        self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("target_base_offset_xyz", [0.0, 0.01, 0.0])
+        self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
+        self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("pregrasp_base_z_offset_m", 0.05)
+        self.declare_parameter("candidate_pregrasp_min_z_m", 0.120)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("candidate_min_jaw_width_m", 0.006)
-        self.declare_parameter("candidate_max_jaw_width_m", 0.085)
+        self.declare_parameter("candidate_max_jaw_width_m", 0.082)
         self.declare_parameter("candidate_min_grasp_z_m", 0.0)
-        self.declare_parameter("candidate_safe_lift_min_z_m", 0.240)
+        self.declare_parameter("candidate_safe_lift_min_z_m", 0.120)
         self.declare_parameter("candidate_workspace_gate_enabled", False)
         self.declare_parameter("candidate_workspace_min_xyz", [0.18, -0.35, 0.0])
         self.declare_parameter("candidate_workspace_max_xyz", [0.64, 0.35, 0.45])
         self.declare_parameter("candidate_max_grasp_to_object_center_m", 0.15)
+        self.declare_parameter("candidate_score_joint_distance_weight", 0.15)
+        self.declare_parameter("candidate_score_joint6_weight", 0.35)
+        self.declare_parameter("candidate_max_joint6_delta_rad", 1.5708)
+        self.declare_parameter("candidate_joint6_symmetry_enabled", True)
+        self.declare_parameter("candidate_joint6_symmetry_angle_rad", math.pi)
 
         self._input_topic = str(self.get_parameter("input_topic").value)
         self._target_frame = str(self.get_parameter("target_frame").value)
@@ -207,115 +182,112 @@ class CandidateIkFilterNode(Node):
         if not msg.candidates:
             self._publish_filtered(msg, [])
             return
-        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str]] = []
+        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str, str]] = []
         max_candidates = max(1, int(self.get_parameter("max_candidates_per_frame").value))
         for original_index, candidate in enumerate(msg.candidates[:max_candidates]):
             try:
-                best: tuple[float, tuple[PoseTarget, PoseTarget], str] | None = None
+                best: tuple[float, tuple[PoseTarget, PoseTarget], str, str] | None = None
                 variants = self._candidate_target_variants(msg, candidate.pose)
-                max_variants = max(1, int(self.get_parameter("max_variants_per_candidate").value))
-                for pregrasp, grasp, variant_label in variants[:max_variants]:
-                    is_reachable = (
-                        self._check_ik_and_collision(pregrasp, f"{variant_label}/pregrasp")
-                        and self._check_ik_and_collision(grasp, f"{variant_label}/grasp")
+                for pregrasp, grasp, variant_label in variants:
+                    feasibility = evaluate_motion_feasibility(
+                        pregrasp=pregrasp,
+                        grasp=grasp,
+                        variant_label=variant_label,
+                        check_target=self._check_ik_and_collision,
+                        motion_penalty=self._joint_motion_penalty,
                     )
-                    if not is_reachable:
+                    if not feasibility.accepted or feasibility.motion_penalty is None:
                         continue
-                    score_value = self._preserve_input_score(
-                        candidate, grasp=grasp, variant_label=variant_label, original_index=original_index
+                    if not self._candidate_gate_allows(candidate, grasp=grasp):
+                        continue
+                    scoring = score_candidate(
+                        CandidateScoringInput(
+                            original_index=original_index,
+                            variant_label=variant_label,
+                            motion_penalty=feasibility.motion_penalty,
+                        )
                     )
-                    if score_value is None:
-                        continue
+                    score_value = scoring.score
                     if best is None or float(score_value) > float(best[0]):
-                        best = (float(score_value), (pregrasp, grasp), variant_label)
+                        best = (float(score_value), (pregrasp, grasp), variant_label, feasibility.reason)
                 if best is not None:
-                    score_value, targets, label = best
-                    ranked.append((score_value, original_index, candidate, targets, label))
+                    score_value, targets, label, motion_reason = best
+                    ranked.append((score_value, original_index, candidate, targets, label, motion_reason))
                     self.get_logger().info(
-                        f"candidate IK filter accepted candidate={original_index} {label}: score={score_value:.2f}"
+                        f"candidate IK filter accepted candidate={original_index} {label}: "
+                        f"score={score_value:.2f}, {motion_reason}"
                     )
             except Exception as exc:
                 self.get_logger().warn(f"candidate IK filter rejected candidate: {exc}")
         self._publish_ranked(msg, ranked)
 
-    def _preserve_input_score(
-        self,
-        candidate,
-        *,
-        grasp: PoseTarget,
-        variant_label: str,
-        original_index: int,
-    ) -> float | None:
-        if not self._candidate_safety_gate(candidate, grasp=grasp):
-            return None
-        # Preserve the GraspNet/input ranking after IK/collision filtering.
-        # The small variant penalty only breaks ties within one candidate.
-        variant_penalty = 0.0
-        if "_z" in variant_label:
-            try:
-                variant_penalty = float(variant_label.rsplit("_z", 1)[1]) * 0.001
-            except ValueError:
-                variant_penalty = 0.0
-        return -float(original_index) - variant_penalty
-
-    def _candidate_safety_gate(self, candidate, *, grasp: PoseTarget) -> bool:
-        width = float(getattr(candidate, "jaw_width", 0.0))
-        if width < float(self.get_parameter("candidate_min_jaw_width_m").value):
-            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: jaw_width too small ({width:.3f}m)")
-            return False
-        if width > float(self.get_parameter("candidate_max_jaw_width_m").value):
-            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: jaw_width too large ({width:.3f}m)")
-            return False
-        if float(grasp.position[2]) < float(self.get_parameter("candidate_min_grasp_z_m").value):
-            self.get_logger().warn(
-                f"candidate IK filter rejected reachable grasp: grasp z too low ({grasp.position[2]:.3f}m)"
-            )
-            return False
+    def _candidate_gate_allows(self, candidate, *, grasp: PoseTarget) -> bool:
         try:
             workspace_enabled = bool(self.get_parameter("candidate_workspace_gate_enabled").value)
         except Exception:
             workspace_enabled = False
-        if not workspace_enabled:
-            return True
-
-        workspace_result = candidate_workspace_gate(
+        object_center_xyz = None
+        workspace_min_xyz = (0.18, -0.35, 0.0)
+        workspace_max_xyz = (0.64, 0.35, 0.45)
+        max_grasp_to_object_center_m = 0.15
+        if workspace_enabled:
+            object_center_xyz = self._candidate_object_center_in_target_frame(candidate)
+            workspace_min_xyz = self._tuple3("candidate_workspace_min_xyz")
+            workspace_max_xyz = self._tuple3("candidate_workspace_max_xyz")
+            max_grasp_to_object_center_m = float(
+                self.get_parameter("candidate_max_grasp_to_object_center_m").value
+            )
+        result = evaluate_candidate_gate(
+            jaw_width_m=float(getattr(candidate, "jaw_width", 0.0)),
             grasp_position_xyz=tuple(float(v) for v in grasp.position),
-            object_center_xyz=self._candidate_object_center_in_target_frame(candidate),
-            config=CandidateWorkspaceGateConfig(
-                enabled=workspace_enabled,
-                min_xyz=self._tuple3("candidate_workspace_min_xyz"),
-                max_xyz=self._tuple3("candidate_workspace_max_xyz"),
-                max_grasp_to_object_center_m=float(
-                    self.get_parameter("candidate_max_grasp_to_object_center_m").value
-                ),
+            object_center_xyz=object_center_xyz,
+            config=CandidateGateConfig(
+                min_jaw_width_m=float(self.get_parameter("candidate_min_jaw_width_m").value),
+                max_jaw_width_m=float(self.get_parameter("candidate_max_jaw_width_m").value),
+                min_grasp_z_m=float(self.get_parameter("candidate_min_grasp_z_m").value),
+                workspace_gate_enabled=workspace_enabled,
+                workspace_min_xyz=workspace_min_xyz,
+                workspace_max_xyz=workspace_max_xyz,
+                max_grasp_to_object_center_m=max_grasp_to_object_center_m,
             ),
         )
-        if not workspace_result.accepted:
-            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: {workspace_result.reason}")
+        if not result.accepted:
+            self.get_logger().warn(f"candidate IK filter rejected reachable grasp: {result.reason}")
             return False
         return True
+
+    def _candidate_safety_gate(self, candidate, *, grasp: PoseTarget) -> bool:
+        return CandidateIkFilterNode._candidate_gate_allows(self, candidate, grasp=grasp)
 
     def _candidate_object_center_in_target_frame(self, candidate) -> tuple[float, float, float] | None:
         pose = getattr(candidate, "pose", None)
         if pose is None:
             return None
         source_frame = str(getattr(getattr(candidate, "header", None), "frame_id", "") or "")
-        object_pose = deepcopy(pose)
-        if self._target_frame and source_frame and source_frame != self._target_frame:
-            try:
-                tf_msg = self._tf_buffer.lookup_transform(
-                    self._target_frame,
-                    source_frame,
-                    rclpy.time.Time(),
-                    timeout=rclpy.duration.Duration(seconds=0.2),
-                )
-                object_pose = transform_pose_message(object_pose, _transform_from_msg(tf_msg))
-            except Exception:
-                return None
+        try:
+            object_pose = self._transform_pose_to_target_frame(pose, source_frame)
+        except Exception:
+            return None
         return (
             float(object_pose.position.x),
             float(object_pose.position.y),
             float(object_pose.position.z),
+        )
+
+    def _lookup_transform(self, target_frame: str, source_frame: str):
+        return self._tf_buffer.lookup_transform(
+            target_frame,
+            source_frame,
+            rclpy.time.Time(),
+            timeout=rclpy.duration.Duration(seconds=0.2),
+        )
+
+    def _transform_pose_to_target_frame(self, pose: Pose, source_frame: str) -> Pose:
+        return transform_candidate_pose_to_target_frame(
+            pose,
+            source_frame=source_frame,
+            target_frame=self._target_frame,
+            lookup_transform=self._lookup_transform,
         )
 
     def _list_float_parameter(self, name: str) -> list[float]:
@@ -327,225 +299,92 @@ class CandidateIkFilterNode(Node):
         candidates: GraspCandidateArray,
         pose: Pose,
     ) -> list[tuple[PoseTarget, PoseTarget, str]]:
-        variants: list[tuple[PoseTarget, PoseTarget, str]] = []
-        pose_policy = str(self.get_parameter("pose_policy").value).strip()
-        if pose_policy == "preserve_candidate_pose":
-            variants.extend(self._preserve_candidate_target_variants(candidates, pose))
-        if pose_policy in ("hybrid_geometry", "hybrid_geometry_with_base_axis_fallback"):
-            variants.extend(self._hybrid_geometry_target_variants(candidates, pose))
-        if pose_policy in ("official_geometry", "official_geometry_with_base_axis_fallback"):
-            variants.extend(self._official_geometry_target_variants(candidates, pose))
-        if (
-            pose_policy
-            in (
-                "base_axis",
-                "official_geometry_with_base_axis_fallback",
-                "hybrid_geometry_with_base_axis_fallback",
-            )
-            or not variants
-        ):
-            variants.extend(self._base_axis_target_variants(candidates, pose))
-        return variants
-
-    def _preserve_candidate_target_variants(
-        self,
-        candidates: GraspCandidateArray,
-        pose: Pose,
-    ) -> list[tuple[PoseTarget, PoseTarget, str]]:
-        pregrasp, grasp = self._build_targets(
-            candidates,
-            pose,
-            use_preserve_candidate_pose=True,
-        )
-        return [(pregrasp, grasp, "preserve_candidate_pose")]
-
-    def _hybrid_geometry_target_variants(
-        self,
-        candidates: GraspCandidateArray,
-        pose: Pose,
-    ) -> list[tuple[PoseTarget, PoseTarget, str]]:
-        variants: list[tuple[PoseTarget, PoseTarget, str]] = []
-        base_orientation = (
-            float(pose.orientation.x),
-            float(pose.orientation.y),
-            float(pose.orientation.z),
-            float(pose.orientation.w),
-        )
-        yaw_offsets = self._list_float_parameter("orientation_yaw_offsets_rad")
-        z_offsets = self._list_float_parameter("candidate_grasp_z_offsets_m")
-        if not yaw_offsets:
-            yaw_offsets = [0.0]
-        if not z_offsets:
-            z_offsets = [0.0]
-        for yaw_index, yaw_offset in enumerate(yaw_offsets):
-            orientation = _normalize_quaternion(
-                _quat_multiply(_yaw_quaternion(yaw_offset), base_orientation)
-            )
-            for z_index, z_offset in enumerate(z_offsets):
-                pregrasp, grasp = self._build_targets(
-                    candidates,
-                    pose,
-                    orientation_xyzw=orientation,
-                    grasp_z_offset_extra_m=float(z_offset),
-                    use_hybrid_geometry=True,
-                )
-                variants.append((pregrasp, grasp, f"hybrid_geometry_yaw{yaw_index}_z{z_index}"))
-        return variants
-
-    def _official_geometry_target_variants(
-        self,
-        candidates: GraspCandidateArray,
-        pose: Pose,
-    ) -> list[tuple[PoseTarget, PoseTarget, str]]:
-        variants: list[tuple[PoseTarget, PoseTarget, str]] = []
-        base_orientation = (
-            float(pose.orientation.x),
-            float(pose.orientation.y),
-            float(pose.orientation.z),
-            float(pose.orientation.w),
-        )
-        yaw_offsets = self._list_float_parameter("orientation_yaw_offsets_rad")
-        z_offsets = self._list_float_parameter("candidate_grasp_z_offsets_m")
-        if not yaw_offsets:
-            yaw_offsets = [0.0]
-        if not z_offsets:
-            z_offsets = [0.0]
-        for yaw_index, yaw_offset in enumerate(yaw_offsets):
-            orientation = _normalize_quaternion(
-                _quat_multiply(_yaw_quaternion(yaw_offset), base_orientation)
-            )
-            for z_index, z_offset in enumerate(z_offsets):
-                pregrasp, grasp = self._build_targets(
-                    candidates,
-                    pose,
-                    orientation_xyzw=orientation,
-                    grasp_z_offset_extra_m=float(z_offset),
-                    use_candidate_approach_axis=True,
-                )
-                variants.append((pregrasp, grasp, f"official_geometry_yaw{yaw_index}_z{z_index}"))
-        return variants
-
-    def _base_axis_target_variants(
-        self,
-        candidates: GraspCandidateArray,
-        pose: Pose,
-    ) -> list[tuple[PoseTarget, PoseTarget, str]]:
-        variants: list[tuple[PoseTarget, PoseTarget, str]] = []
-        base_orientation = self._tuple4("fixed_grasp_orientation_xyzw")
-        yaw_offsets = self._list_float_parameter("orientation_yaw_offsets_rad")
-        z_offsets = self._list_float_parameter("candidate_grasp_z_offsets_m")
-        if not yaw_offsets:
-            yaw_offsets = [0.0]
-        if not z_offsets:
-            z_offsets = [0.0]
-        for yaw_index, yaw_offset in enumerate(yaw_offsets):
-            orientation = _normalize_quaternion(
-                _quat_multiply(_yaw_quaternion(yaw_offset), base_orientation)
-            )
-            for z_index, z_offset in enumerate(z_offsets):
-                pregrasp, grasp = self._build_targets(
-                    candidates,
-                    pose,
-                    orientation_xyzw=orientation,
-                    grasp_z_offset_extra_m=float(z_offset),
-                )
-                variants.append((pregrasp, grasp, f"base_axis_yaw{yaw_index}_z{z_index}"))
-        return variants
-
-    def _build_targets(
-        self,
-        candidates: GraspCandidateArray,
-        pose: Pose,
-        *,
-        orientation_xyzw: tuple[float, float, float, float] | None = None,
-        grasp_z_offset_extra_m: float = 0.0,
-        use_hybrid_geometry: bool = False,
-        use_candidate_approach_axis: bool = False,
-        use_preserve_candidate_pose: bool = False,
-    ) -> tuple[PoseTarget, PoseTarget]:
-        grasp_pose = deepcopy(pose)
         source_frame = str(candidates.header.frame_id)
-        if self._target_frame and source_frame and source_frame != self._target_frame:
-            tf_msg = self._tf_buffer.lookup_transform(
-                self._target_frame,
-                source_frame,
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=0.2),
-            )
-            grasp_pose = transform_pose_message(grasp_pose, _transform_from_msg(tf_msg))
+        grasp_pose = self._transform_pose_to_target_frame(pose, source_frame)
         position_xyz = (
             float(grasp_pose.position.x),
             float(grasp_pose.position.y),
             float(grasp_pose.position.z),
         )
-        grasp_z_offset_m = float(self.get_parameter("grasp_base_z_offset_m").value) + float(grasp_z_offset_extra_m)
-        base_axis_config = BaseAxisGraspPolicyConfig(
-            fixed_orientation_xyzw=orientation_xyzw or self._tuple4("fixed_grasp_orientation_xyzw"),
-            approach_axis_xyz=self._tuple3("base_approach_axis_xyz"),
-            pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
-            tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
-            target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
-            pregrasp_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
-            grasp_z_offset_m=grasp_z_offset_m,
-        )
-        if use_hybrid_geometry:
-            return build_hybrid_geometry_grasp_targets(
-                grasp_position_xyz=position_xyz,
-                candidate_orientation_xyzw=orientation_xyzw
-                or (
-                    float(grasp_pose.orientation.x),
-                    float(grasp_pose.orientation.y),
-                    float(grasp_pose.orientation.z),
-                    float(grasp_pose.orientation.w),
-                ),
-                config=base_axis_config,
-            )
-        if use_preserve_candidate_pose:
-            return build_preserve_candidate_grasp_targets(
-                grasp_position_xyz=position_xyz,
-                grasp_orientation_xyzw=orientation_xyzw
-                or (
-                    float(grasp_pose.orientation.x),
-                    float(grasp_pose.orientation.y),
-                    float(grasp_pose.orientation.z),
-                    float(grasp_pose.orientation.w),
-                ),
-                config=OfficialGeometryGraspPolicyConfig(
-                    pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
-                    tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
-                    target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
-                    pregrasp_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
-                    grasp_z_offset_m=grasp_z_offset_m,
-                ),
-            )
-        if use_candidate_approach_axis:
-            return build_official_geometry_grasp_targets(
-                grasp_position_xyz=position_xyz,
-                grasp_orientation_xyzw=orientation_xyzw
-                or (
-                    float(grasp_pose.orientation.x),
-                    float(grasp_pose.orientation.y),
-                    float(grasp_pose.orientation.z),
-                    float(grasp_pose.orientation.w),
-                ),
-                config=OfficialGeometryGraspPolicyConfig(
-                    pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
-                    tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
-                    target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
-                    pregrasp_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
-                    grasp_z_offset_m=grasp_z_offset_m,
-                ),
-            )
-        return build_base_axis_grasp_targets(
+        variants = build_candidate_target_variants(
             grasp_position_xyz=position_xyz,
-            config=base_axis_config,
+            candidate_orientation_xyzw=(
+                float(grasp_pose.orientation.x),
+                float(grasp_pose.orientation.y),
+                float(grasp_pose.orientation.z),
+                float(grasp_pose.orientation.w),
+            ),
+            config=CandidateTargetPolicyConfig(
+                pose_policy=str(self.get_parameter("pose_policy").value),
+                fixed_grasp_orientation_xyzw=self._tuple4("fixed_grasp_orientation_xyzw"),
+                base_approach_axis_xyz=self._tuple3("base_approach_axis_xyz"),
+                base_pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
+                tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
+                target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
+                pregrasp_base_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
+                pregrasp_min_z_m=float(self.get_parameter("candidate_pregrasp_min_z_m").value),
+                grasp_base_z_offset_m=float(self.get_parameter("grasp_base_z_offset_m").value),
+                orientation_yaw_offsets_rad=tuple(self._list_float_parameter("orientation_yaw_offsets_rad")),
+                candidate_grasp_z_offsets_m=tuple(self._list_float_parameter("candidate_grasp_z_offsets_m")),
+                pose_variant_config=PoseVariantConfig(
+                    joint6_symmetry_enabled=bool(self.get_parameter("candidate_joint6_symmetry_enabled").value),
+                    joint6_symmetry_angle_rad=float(self.get_parameter("candidate_joint6_symmetry_angle_rad").value),
+                ),
+            ),
         )
+        return [(variant.pregrasp, variant.grasp, variant.label) for variant in variants]
 
-    def _check_ik_and_collision(self, target: PoseTarget, label: str) -> bool:
+    def _check_ik_and_collision(self, target: PoseTarget, label: str):
         solution = self._solve_ik(target, label)
         if solution is None:
-            return False
-        return self._check_state_validity(solution, label)
+            return None
+        if not self._check_state_validity(solution, label):
+            return None
+        return solution
+
+    def _joint_motion_penalty(self, robot_state) -> tuple[float | None, str]:
+        current = self._joint_positions_by_name(self._latest_joint_state)
+        solution_joint_state = getattr(robot_state, "joint_state", None)
+        target = self._joint_positions_by_name(solution_joint_state)
+        common_names = [name for name in current if name in target and name.startswith("joint")]
+        if not common_names:
+            return 0.0, "joint_delta=unknown"
+        evaluation = evaluate_joint_motion(
+            current_positions=current,
+            target_positions=target,
+            config=JointMotionPolicyConfig(
+                joint_distance_weight=float(self.get_parameter("candidate_score_joint_distance_weight").value),
+                joint6_weight=float(self.get_parameter("candidate_score_joint6_weight").value),
+                max_joint6_delta_rad=float(self.get_parameter("candidate_max_joint6_delta_rad").value),
+            ),
+        )
+        if not evaluation.accepted:
+            self.get_logger().warn(
+                "candidate IK filter rejected reachable grasp: "
+                f"joint6 delta too large "
+                f"({evaluation.joint6_delta:.3f}rad > "
+                f"{float(self.get_parameter('candidate_max_joint6_delta_rad').value):.3f}rad)"
+            )
+            return None, evaluation.reason
+        return evaluation.penalty, evaluation.reason
+
+    def _joint_positions_by_name(self, joint_state: JointState | None) -> dict[str, float]:
+        if joint_state is None:
+            return {}
+        names = list(getattr(joint_state, "name", []))
+        positions = list(getattr(joint_state, "position", []))
+        return {
+            str(name): float(position)
+            for name, position in zip(names, positions)
+            if math.isfinite(float(position))
+        }
+
+    def _target_debug_text(self, target: PoseTarget) -> str:
+        return (
+            f"target=({target.position[0]:.3f}, {target.position[1]:.3f}, {target.position[2]:.3f}), "
+            f"orientation=({target.orientation[0]:.4f}, {target.orientation[1]:.4f}, "
+            f"{target.orientation[2]:.4f}, {target.orientation[3]:.4f})"
+        )
 
     def _solve_ik(self, target: PoseTarget, label: str):
         if not self._ik_client.wait_for_service(timeout_sec=self._service_timeout_sec):
@@ -574,7 +413,7 @@ class CandidateIkFilterNode(Node):
         if not future.done():
             self.get_logger().warn(
                 f"candidate IK filter IK timed out for {label}: "
-                f"target=({target.position[0]:.3f}, {target.position[1]:.3f}, {target.position[2]:.3f})"
+                f"{self._target_debug_text(target)}"
             )
             return None
         result = future.result()
@@ -585,7 +424,7 @@ class CandidateIkFilterNode(Node):
         if error_code != 1:
             self.get_logger().warn(
                 f"candidate IK filter IK failed for {label}: error_code={error_code}, "
-                f"target=({target.position[0]:.3f}, {target.position[1]:.3f}, {target.position[2]:.3f})"
+                f"{self._target_debug_text(target)}"
             )
             return None
         return getattr(result, "solution", None)
@@ -631,7 +470,7 @@ class CandidateIkFilterNode(Node):
     def _publish_ranked(
         self,
         original: GraspCandidateArray,
-        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str]],
+        ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str, str]],
     ) -> None:
         ranked = sorted(ranked, key=lambda item: (-float(item[0]), int(item[1])))
         filtered = GraspCandidateArray()
@@ -642,8 +481,11 @@ class CandidateIkFilterNode(Node):
         self._candidates_pub.publish(filtered)
         plan = self._plan_from_filtered(filtered, targets)
         if ranked:
-            score, original_index, _candidate, _targets, label = ranked[0]
-            plan.reason = f"best_candidate original_index={original_index}, score={score:.2f}, variant={label}"
+            score, original_index, _candidate, _targets, label, motion_reason = ranked[0]
+            plan.reason = (
+                f"best_candidate original_index={original_index}, score={score:.2f}, "
+                f"variant={label}, {motion_reason}"
+            )
             self.get_logger().info(f"candidate IK filter best: {plan.reason}")
         self._plan_pub.publish(plan)
 

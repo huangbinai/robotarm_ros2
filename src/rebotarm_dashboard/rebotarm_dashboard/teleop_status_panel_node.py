@@ -36,6 +36,7 @@ from rebotarm_motion.replay_runtime_monitor import ReplayRuntimeMonitor, ReplayR
 from .status_panel_http import create_status_panel_server
 from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
+from .web_command_gateway import WebCommandGateway, WebCommandRequest
 from rebotarm_teleop.teleop_core import validate_web_keyboard_command
 from rebotarm_teach.teach_record_client import TeachRecordClient
 from rebotarm_teach.teach_replay_coordinator import TeachReplayCoordinator, TeachReplayLimits
@@ -194,6 +195,7 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("max_tracking_error_rad", 0.25)
         self.declare_parameter("max_live_velocity_rad_s", 3.0)
         self.declare_parameter("use_hardware", False)
+        self.declare_parameter("execution_mode", "dry_run")
         self.declare_parameter("panel_mode", "control")
         self.declare_parameter(
             "joint_names",
@@ -261,6 +263,7 @@ class TeleopStatusPanelNode(Node):
             gripper_lower, gripper_upper = gripper_upper, gripper_lower
         self._gripper_limits = (gripper_lower, gripper_upper)
         self._use_hardware = bool(self.get_parameter("use_hardware").value)
+        self._web_command_gateway = WebCommandGateway()
         self._sim_gripper_position = gripper_lower
         self._store = TeleopStatusStore()
         self._action_client = ActionClient(
@@ -538,6 +541,7 @@ class TeleopStatusPanelNode(Node):
                 "use_hardware": bool(self.get_parameter("use_hardware").value) if self.has_parameter("use_hardware") else False,
             },
             "panel_mode": str(self.get_parameter("panel_mode").value),
+            "execution_mode": str(self.get_parameter("execution_mode").value),
         }
 
     def _teach_record_info(self, record_path: str | None = None) -> dict:
@@ -708,6 +712,31 @@ class TeleopStatusPanelNode(Node):
     def _target_runtime(self) -> str:
         return "hardware" if bool(self.get_parameter("use_hardware").value) else "simulation"
 
+    def _route_web_command(self, intent: str, payload: dict | None = None) -> dict | None:
+        request_payload = dict(payload or {})
+        request_payload["intent"] = intent
+        result = self._web_command_gateway.route(
+            WebCommandRequest.from_payload(
+                request_payload,
+                execution_mode=str(self.get_parameter("execution_mode").value),
+            )
+        )
+        if result.get("state") == "dry_run":
+            return result
+        if not result.get("accepted", False):
+            return result
+        return None
+
+    def _legacy_blocked_response(self, intent: str, message: str, payload: dict | None = None) -> dict:
+        payload = dict(payload or {})
+        return self._web_command_gateway.blocked_legacy_response(
+            intent=intent,
+            message=message,
+            execution_mode=str(self.get_parameter("execution_mode").value),
+            request_id=str(payload.get("request_id", "") or ""),
+            blocked_legacy_execution=True,
+        )
+
     def _teach_trajectory(self, record_path: str | None = None, max_points: int = 500) -> dict:
         path = record_path or str(self._teach_record_info(None).get("path", self.get_parameter("record_path").value))
         try:
@@ -794,8 +823,13 @@ class TeleopStatusPanelNode(Node):
     def _handle_teach_replay_execute(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
             message = "web teach replay disabled; launch with web_execute_enabled:=true"
-            self._store.update_teleop_status("replay", {"state": "blocked", "message": message})
-            return {"accepted": False, "state": "blocked", "message": message}
+            result = self._legacy_blocked_response("teach_replay_execute", message, payload)
+            self._store.update_teleop_status("replay", result)
+            return result
+        gateway_result = self._route_web_command("teach_replay_execute", payload)
+        if gateway_result is not None:
+            self._store.update_teleop_status("replay", gateway_result)
+            return gateway_result
         record_path = payload.get("record_path")
         info_payload = self._teach_record_info(str(record_path) if record_path else None)
         settings = self._teach_replay_settings_from_payload(
@@ -908,6 +942,10 @@ class TeleopStatusPanelNode(Node):
         return result
 
     def _handle_teach_replay_stop(self) -> dict:
+        gateway_result = self._route_web_command("stop_robot", {"command": "teach_replay_stop"})
+        if gateway_result is not None:
+            self._store.update_teleop_status("replay", gateway_result)
+            return gateway_result
         with self._teach_replay_lock:
             goal_handle = self._teach_replay_goal_handle
         result = self._teach_replay_client.stop(
@@ -936,7 +974,8 @@ class TeleopStatusPanelNode(Node):
         command = normalize_arm_command(command) or ""
         if not bool(self.get_parameter("web_execute_enabled").value):
             message = "web arm command disabled; launch with web_execute_enabled:=true"
-            result = {"accepted": False, "state": "blocked", "command": command, "message": message}
+            gateway_intent = "move_home" if command == "safe_home" else "stop_robot"
+            result = {**self._legacy_blocked_response(gateway_intent, message, {"command": command}), "command": command}
             self._store.update_teleop_status("arm_command", result)
             return result
         replay_state = status_state(self._store.snapshot().teleop.get("replay", {}))
@@ -949,6 +988,12 @@ class TeleopStatusPanelNode(Node):
             result = {"accepted": False, "state": "rejected", "command": command, "message": "unknown arm command"}
             self._store.update_teleop_status("arm_command", result)
             return result
+        gateway_intent = "move_home" if command == "safe_home" else "stop_robot"
+        gateway_result = self._route_web_command(gateway_intent, {"command": command})
+        if gateway_result is not None:
+            gateway_result = {**gateway_result, "command": command}
+            self._store.update_teleop_status("arm_command", gateway_result)
+            return gateway_result
         if should_stop_trajectory_before_arm_command(command):
             with self._execute_lock:
                 self._execute_goal_handle = None
@@ -1190,8 +1235,9 @@ class TeleopStatusPanelNode(Node):
     def _handle_keyboard_enable(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
             message = "web keyboard disabled; launch with web_execute_enabled:=true"
-            self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "blocked", "message": message})
-            return {"accepted": False, "message": message}
+            result = self._legacy_blocked_response("keyboard_step", message, payload)
+            self._store.update_teleop_status("status", {**result, "source": "web_keyboard"})
+            return result
         if str(self.get_parameter("panel_mode").value).lower() == "check":
             message = "web keyboard blocked: check mode is read-only"
             self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "blocked", "message": message})
@@ -1226,6 +1272,10 @@ class TeleopStatusPanelNode(Node):
         return result
 
     def _handle_keyboard_disable(self) -> dict:
+        gateway_result = self._route_web_command("stop_robot", {"command": "keyboard_disable"})
+        if gateway_result is not None:
+            self._store.update_teleop_status("status", {**gateway_result, "source": "web_keyboard"})
+            return gateway_result
         with self._web_keyboard_lock:
             self._web_keyboard_enabled = False
         stop_requested = self._request_controller_trajectory_stop(timeout_sec=0.2)
@@ -1276,6 +1326,10 @@ class TeleopStatusPanelNode(Node):
                 {"source": "web_keyboard", "state": "rejected", "message": decision.message, "last_key": payload.get("key")},
             )
             return _keyboard_decision_response(decision)
+        gateway_result = self._route_web_command("keyboard_step", request_payload)
+        if gateway_result is not None:
+            self._store.update_teleop_status("status", {**gateway_result, "source": "web_keyboard", "last_key": payload.get("key")})
+            return gateway_result
         if not self._action_client.wait_for_server(timeout_sec=0.05):
             message = "follow_joint_trajectory action unavailable"
             self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "unavailable", "message": message, "last_key": decision.key})
@@ -1327,10 +1381,15 @@ class TeleopStatusPanelNode(Node):
 
     def _handle_execute_preview(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
-            return {
-                "accepted": False,
-                "message": "web execute disabled; launch with web_execute_enabled:=true",
-            }
+            return self._legacy_blocked_response(
+                "move_relative",
+                "web execute disabled; launch with web_execute_enabled:=true",
+                payload,
+            )
+        gateway_result = self._route_web_command("move_relative", payload)
+        if gateway_result is not None:
+            self._store.update_teleop_status("web_execute", gateway_result)
+            return gateway_result
         snapshot = self._store.snapshot()
         current_positions = {
             name: float(data["position"])
@@ -1355,6 +1414,10 @@ class TeleopStatusPanelNode(Node):
         return decision_response(decision)
 
     def _handle_stop_execute(self) -> dict:
+        gateway_result = self._route_web_command("stop_robot", {"command": "stop_execute"})
+        if gateway_result is not None:
+            self._store.update_teleop_status("web_execute", gateway_result)
+            return gateway_result
         with self._execute_lock:
             goal_handle = self._execute_goal_handle
         result = self._web_teleop_client.stop(
@@ -1377,10 +1440,15 @@ class TeleopStatusPanelNode(Node):
 
     def _handle_set_gripper(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
-            return {
-                "accepted": False,
-                "message": "web gripper disabled; launch with web_execute_enabled:=true",
-            }
+            return self._legacy_blocked_response(
+                "set_gripper",
+                "web gripper disabled; launch with web_execute_enabled:=true",
+                payload,
+            )
+        gateway_result = self._route_web_command("set_gripper", payload)
+        if gateway_result is not None:
+            self._store.update_teleop_status("web_gripper", gateway_result)
+            return gateway_result
         result = self._web_teleop_client.set_gripper(
             payload,
             use_hardware=self._use_hardware,

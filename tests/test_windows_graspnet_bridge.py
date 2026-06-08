@@ -27,6 +27,120 @@ def test_windows_graspnet_bridge_parser_defaults_to_local_http_service():
     assert args.output_path.endswith("graspnet_candidates.json")
     assert args.max_grasps == 20
     assert args.device == "cuda:0"
+    assert args.open3d_visualize is False
+    assert args.visualize_top_n == 5
+    assert args.visualize_max_points == 8000
+    assert args.visualize_every_n == 10
+
+
+def test_windows_graspnet_bridge_parser_accepts_open3d_visualization_options():
+    module = _load_bridge()
+
+    args = module.build_arg_parser().parse_args(
+        [
+            "--open3d-visualize",
+            "--visualize-top-n",
+            "4",
+            "--visualize-max-points",
+            "1234",
+            "--visualize-every-n",
+            "6",
+        ]
+    )
+
+    assert args.open3d_visualize is True
+    assert args.visualize_top_n == 4
+    assert args.visualize_max_points == 1234
+    assert args.visualize_every_n == 6
+
+
+def test_windows_graspnet_visualizer_downsamples_points_and_limits_candidates(monkeypatch):
+    module = _load_bridge()
+    created = {}
+
+    class FakeUtility:
+        @staticmethod
+        def Vector3dVector(values):
+            return list(values)
+
+        @staticmethod
+        def Vector2iVector(values):
+            return list(values)
+
+    class FakePointCloud:
+        def __init__(self):
+            self.points = None
+            self.colors = None
+
+    class FakeLineSet:
+        def __init__(self):
+            self.points = None
+            self.lines = None
+            self.colors = None
+
+    class FakeTriangleMesh:
+        @staticmethod
+        def create_coordinate_frame(size=1.0):
+            return {"kind": "frame", "size": size}
+
+    class FakeVisualizer:
+        def create_window(self, *args, **kwargs):
+            created["window"] = (args, kwargs)
+
+        def clear_geometries(self):
+            created["cleared"] = True
+
+        def add_geometry(self, geometry):
+            created.setdefault("geometries", []).append(geometry)
+
+        def poll_events(self):
+            created["polled"] = True
+
+        def update_renderer(self):
+            created["updated"] = True
+
+    class FakeOpen3D:
+        class geometry:
+            PointCloud = FakePointCloud
+            LineSet = FakeLineSet
+            TriangleMesh = FakeTriangleMesh
+
+        class utility(FakeUtility):
+            pass
+
+        class visualization:
+            Visualizer = FakeVisualizer
+
+    monkeypatch.setattr(module.importlib, "import_module", lambda name: FakeOpen3D)
+
+    visualizer = module.Open3DGraspVisualizer(
+        top_n=1,
+        max_points=2,
+        window_name="test",
+    )
+    visualizer.update(
+        color_bgr=np.zeros((2, 2, 3), dtype=np.uint8),
+        depth_mm=np.ones((2, 2), dtype=np.uint16) * 500,
+        camera_info={"fx": 500.0, "fy": 500.0, "cx": 0.0, "cy": 0.0},
+        candidates=[
+            {
+                "score": 0.9,
+                "translation_xyz": [0.0, 0.0, 0.5],
+                "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "width_m": 0.04,
+            },
+            {
+                "score": 0.5,
+                "translation_xyz": [0.1, 0.0, 0.5],
+                "rotation_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                "width_m": 0.03,
+            },
+        ],
+    )
+
+    point_cloud = created["geometries"][0]
+    assert len(point_cloud.points) == 2
+    assert len(created["geometries"]) == 3
 
 
 def test_windows_graspnet_bridge_writes_backend_missing_payload(tmp_path):

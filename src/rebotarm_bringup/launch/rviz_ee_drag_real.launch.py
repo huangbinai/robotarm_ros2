@@ -32,8 +32,6 @@ def _include_system(context: LaunchContext):
                 "use_hardware": "true",
                 "use_local_rviz": "true",
                 "use_moveit_preview": "true",
-                "execution_mode": "real",
-                "start_interaction_nodes": "false",
                 "start_passive_joint_state_publisher": "false",
                 "use_moveit_fake_joint_states": "false",
             }.items(),

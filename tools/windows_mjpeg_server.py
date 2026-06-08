@@ -35,6 +35,7 @@ class CameraState:
         depth_width: int,
         depth_height: int,
         depth_fps: int,
+        depth_downsample_filter: int,
         graspnet_candidates_path: str,
     ):
         self.camera_index = camera_index
@@ -54,6 +55,7 @@ class CameraState:
         self.depth_width = depth_width
         self.depth_height = depth_height
         self.depth_fps = depth_fps
+        self.depth_downsample_filter = max(1, int(depth_downsample_filter))
         self.graspnet_candidates_path = graspnet_candidates_path
         self.lock = threading.Lock()
         self.latest_jpeg: bytes | None = None
@@ -64,8 +66,13 @@ class CameraState:
             "depth_frame_id": "camera_depth_frame",
             "color_width": width,
             "color_height": height,
+            "color_fps": fps,
+            "color_format": "requested",
             "depth_width": depth_width,
             "depth_height": depth_height,
+            "depth_fps": depth_fps,
+            "depth_format": "requested",
+            "depth_downsample_filter": self.depth_downsample_filter,
             "fx": 0.0,
             "fy": 0.0,
             "cx": 0.0,
@@ -205,38 +212,32 @@ class CameraState:
             if color_profile is None:
                 color_profile = color_profiles.get_default_video_stream_profile()
             config.enable_stream(color_profile)
+            self._record_video_profile("color", color_profile)
 
             depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
             depth_profile = None
             if self.depth_width > 0 and self.depth_height > 0:
-                try:
-                    depth_profile = depth_profiles.get_video_stream_profile(
-                        self.depth_width,
-                        self.depth_height,
-                        OBFormat.Y16,
-                        self.depth_fps,
-                    )
-                except Exception:
-                    depth_profile = None
+                for fmt in (OBFormat.Y16, OBFormat.Y14):
+                    try:
+                        depth_profile = depth_profiles.get_video_stream_profile(
+                            self.depth_width,
+                            self.depth_height,
+                            fmt,
+                            self.depth_fps,
+                        )
+                        break
+                    except Exception:
+                        pass
             if depth_profile is None:
                 depth_profile = depth_profiles.get_default_video_stream_profile()
             config.enable_stream(depth_profile)
+            self._record_video_profile("depth", depth_profile)
             config.set_align_mode(OBAlignMode.HW_MODE)
             pipeline.start(config)
             self.camera_debug = "orbbec opened=True align=HW_MODE"
 
             try:
-                intr = pipeline.get_camera_param().rgb_intrinsic
-                with self.lock:
-                    self.latest_camera_info.update(
-                        {
-                            "fx": float(intr.fx),
-                            "fy": float(intr.fy),
-                            "cx": float(intr.cx),
-                            "cy": float(intr.cy),
-                            "timestamp": time.time(),
-                        }
-                    )
+                self._record_camera_param(pipeline.get_camera_param())
             except Exception as exc:
                 self.detector_error = f"camera info unavailable: {type(exc).__name__}: {exc}"
 
@@ -287,6 +288,14 @@ class CameraState:
             height = color_frame.get_height()
             raw = np.frombuffer(bytes(color_frame.get_data()), dtype=np.uint8)
             fmt = color_frame.get_format()
+            with self.lock:
+                self.latest_camera_info.update(
+                    {
+                        "actual_color_width": int(width),
+                        "actual_color_height": int(height),
+                        "actual_color_format": str(fmt),
+                    }
+                )
             if fmt == OBFormat.MJPG:
                 return cv2.imdecode(raw, cv2.IMREAD_COLOR)
             if fmt == OBFormat.RGB:
@@ -303,10 +312,127 @@ class CameraState:
                 return None
             width = depth_frame.get_width()
             height = depth_frame.get_height()
-            return np.frombuffer(bytes(depth_frame.get_data()), dtype=np.uint16).reshape(height, width)
+            depth = np.frombuffer(bytes(depth_frame.get_data()), dtype=np.uint16).reshape(height, width)
+            with self.lock:
+                self.latest_camera_info.update(
+                    {
+                        "actual_depth_width": int(width),
+                        "actual_depth_height": int(height),
+                        "actual_depth_format": str(depth_frame.get_format()),
+                    }
+                )
+            if self.depth_downsample_filter > 1:
+                step = self.depth_downsample_filter
+                depth = depth[::step, ::step]
+            return depth
         except Exception as exc:
             self.latest_error = f"orbbec depth decode failed: {type(exc).__name__}: {exc}"
             return None
+
+    def _record_video_profile(self, prefix: str, profile) -> None:
+        try:
+            with self.lock:
+                self.latest_camera_info.update(
+                    {
+                        f"{prefix}_width": int(profile.get_width()),
+                        f"{prefix}_height": int(profile.get_height()),
+                        f"{prefix}_fps": int(profile.get_fps()),
+                        f"{prefix}_format": str(profile.get_format()),
+                    }
+                )
+        except Exception as exc:
+            with self.lock:
+                self.latest_camera_info[f"{prefix}_profile_error"] = f"{type(exc).__name__}: {exc}"
+
+    def _record_camera_param(self, camera_param) -> None:
+        color_intrinsic = self._intrinsic_to_dict(getattr(camera_param, "rgb_intrinsic", None))
+        depth_intrinsic = self._intrinsic_to_dict(getattr(camera_param, "depth_intrinsic", None))
+        color_distortion = self._distortion_to_dict(getattr(camera_param, "rgb_distortion", None))
+        depth_distortion = self._distortion_to_dict(getattr(camera_param, "depth_distortion", None))
+        depth_to_color = self._transform_to_dict(getattr(camera_param, "transform", None))
+
+        update = {
+            "sdk_camera_param_available": True,
+            "color_intrinsic": color_intrinsic,
+            "depth_intrinsic": depth_intrinsic,
+            "color_distortion": color_distortion,
+            "depth_distortion": depth_distortion,
+            "depth_to_color": depth_to_color,
+            "timestamp": time.time(),
+        }
+        if color_intrinsic:
+            update.update(
+                {
+                    "fx": color_intrinsic.get("fx", 0.0),
+                    "fy": color_intrinsic.get("fy", 0.0),
+                    "cx": color_intrinsic.get("cx", 0.0),
+                    "cy": color_intrinsic.get("cy", 0.0),
+                    "color_width": int(color_intrinsic.get("width", self.width) or self.width),
+                    "color_height": int(color_intrinsic.get("height", self.height) or self.height),
+                }
+            )
+        if depth_intrinsic:
+            update.update(
+                {
+                    "depth_fx": depth_intrinsic.get("fx", 0.0),
+                    "depth_fy": depth_intrinsic.get("fy", 0.0),
+                    "depth_cx": depth_intrinsic.get("cx", 0.0),
+                    "depth_cy": depth_intrinsic.get("cy", 0.0),
+                    "depth_intrinsic_width": int(depth_intrinsic.get("width", 0) or 0),
+                    "depth_intrinsic_height": int(depth_intrinsic.get("height", 0) or 0),
+                }
+            )
+        with self.lock:
+            self.latest_camera_info.update(update)
+
+    @staticmethod
+    def _intrinsic_to_dict(intrinsic) -> dict:
+        if intrinsic is None:
+            return {}
+        result = {}
+        for key in ("fx", "fy", "cx", "cy", "width", "height"):
+            if hasattr(intrinsic, key):
+                value = getattr(intrinsic, key)
+                result[key] = int(value) if key in ("width", "height") else float(value)
+        return result
+
+    @staticmethod
+    def _distortion_to_dict(distortion) -> dict:
+        if distortion is None:
+            return {}
+        result = {}
+        for key in ("k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2"):
+            if hasattr(distortion, key):
+                result[key] = float(getattr(distortion, key))
+        return result
+
+    @staticmethod
+    def _transform_to_dict(transform) -> dict:
+        if transform is None:
+            return {}
+
+        def values_from_attr(*names):
+            for name in names:
+                if hasattr(transform, name):
+                    value = getattr(transform, name)
+                    try:
+                        import numpy as _np
+
+                        array = _np.asarray(value, dtype=float).reshape(-1)
+                        return [float(item) for item in array]
+                    except Exception:
+                        try:
+                            return [float(item) for item in value]
+                        except TypeError:
+                            return [float(value)]
+            return []
+
+        rotation = values_from_attr("rot", "rotation", "r")
+        translation = values_from_attr("trans", "translation", "t")
+        return {
+            "rotation": rotation,
+            "translation": translation,
+        }
 
     def _store_color_frame(self, frame) -> None:
         ok, encoded = cv2.imencode(
@@ -636,6 +762,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth-width", type=int, default=1280)
     parser.add_argument("--depth-height", type=int, default=720)
     parser.add_argument("--depth-fps", type=int, default=30)
+    parser.add_argument("--depth-downsample-filter", type=int, default=1)
     parser.add_argument("--jpeg-quality", type=int, default=80)
     parser.add_argument("--model-path", default=r"D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main\tools\yolo26s-seg.pt")
     parser.add_argument("--yolo-device", default="0")
@@ -684,6 +811,7 @@ def main() -> None:
         args.depth_width,
         args.depth_height,
         args.depth_fps,
+        args.depth_downsample_filter,
         args.graspnet_candidates_path,
     )
     camera_thread = threading.Thread(target=state.run, daemon=True)

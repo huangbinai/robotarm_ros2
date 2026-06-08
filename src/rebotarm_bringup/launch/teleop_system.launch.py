@@ -11,6 +11,7 @@ def generate_launch_description():
     arm_namespace = LaunchConfiguration("arm_namespace")
     use_hardware = LaunchConfiguration("use_hardware")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
+    channel = LaunchConfiguration("channel")
     panel = LaunchConfiguration("panel")
     web_execute_enabled = LaunchConfiguration("web_execute_enabled")
     record = LaunchConfiguration("record")
@@ -25,6 +26,7 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("use_hardware", default_value="false"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
+            DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("panel", default_value="true"),
             DeclareLaunchArgument("web_execute_enabled", default_value="false"),
             DeclareLaunchArgument("record", default_value="false"),
@@ -47,6 +49,7 @@ def generate_launch_description():
                     "arm_namespace": arm_namespace,
                     "use_hardware": use_hardware,
                     "use_local_rviz": use_local_rviz,
+                    "channel": channel,
                     "teach_record_path": record_path,
                     "teleop_config": teleop_config,
                     "keyboard_prefix": keyboard_prefix,

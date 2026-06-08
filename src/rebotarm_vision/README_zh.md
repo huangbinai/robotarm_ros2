@@ -241,15 +241,13 @@ ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
 
 ```bash
 ros2 topic echo /grasp/plan --once
-ros2 topic echo /rebotarm/interactive_control/pose_target --once
-ros2 topic echo /rebotarm/interactive_control/preview --once
-ros2 service list | grep -E "interactive_control|trajectory_stop|disable|gripper"
+ros2 service list | grep -E "motion_execution|trajectory_stop|disable|gripper"
 ```
 
 执行当前预抓取目标：
 
 ```bash
-ros2 service call /rebotarm/interactive_control/execute_preview std_srvs/srv/Trigger "{}"
+ros2 service call /rebotarm/motion_execution/execute_pose rebotarm_msgs/srv/ExecutePose "{pose: {header: {frame_id: base_link}, pose: {orientation: {w: 1.0}}}}"
 ```
 
 完整靠近夹取流程使用独立服务。启动时关闭持续预览发送节点，并显式开启完整抓取执行节点：

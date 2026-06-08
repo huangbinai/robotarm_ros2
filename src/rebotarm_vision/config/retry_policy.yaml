@@ -14,4 +14,4 @@ rebotarm_visual_grasp_executor:
     place_open_position_m: 0.08
     place_open_max_effort: 0.25
     place_retreat_z_m: 0.06
-    trajectory_precheck_enabled: false
+    trajectory_precheck_enabled: true

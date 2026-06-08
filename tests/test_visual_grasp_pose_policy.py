@@ -150,6 +150,23 @@ def test_preserve_candidate_pose_keeps_graspnet_tcp_orientation_and_uses_end_lin
     assert pregrasp.position != pytest.approx((0.42, 0.03, 0.055))
 
 
+def test_parallel_jaw_symmetric_orientation_preserves_approach_axis_and_flips_open_axis():
+    from rebotarm_vision.visual_grasp_pose_policy import (
+        build_parallel_jaw_symmetric_orientation,
+        quaternion_to_rotation_matrix,
+    )
+
+    original = (0.0, 0.0, 0.0, 1.0)
+    symmetric = build_parallel_jaw_symmetric_orientation(original)
+    original_rotation = quaternion_to_rotation_matrix(original)
+    symmetric_rotation = quaternion_to_rotation_matrix(symmetric)
+
+    assert symmetric == pytest.approx((1.0, 0.0, 0.0, 0.0))
+    assert [row[0] for row in symmetric_rotation] == pytest.approx([row[0] for row in original_rotation])
+    assert [row[1] for row in symmetric_rotation] == pytest.approx([-row[1] for row in original_rotation])
+    assert [row[2] for row in symmetric_rotation] == pytest.approx([-row[2] for row in original_rotation])
+
+
 def test_candidate_workspace_gate_accepts_only_base_link_workspace_box_and_object_distance():
     from rebotarm_vision.candidate_workspace_gate import CandidateWorkspaceGateConfig, candidate_workspace_gate
 

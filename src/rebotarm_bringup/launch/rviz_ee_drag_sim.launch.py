@@ -21,8 +21,6 @@ def generate_launch_description():
                     "use_hardware": "false",
                     "use_local_rviz": "true",
                     "use_moveit_preview": "true",
-                    "execution_mode": "simulation",
-                    "start_interaction_nodes": "false",
                     "start_passive_joint_state_publisher": "true",
                     "use_moveit_fake_joint_states": "true",
                 }.items(),

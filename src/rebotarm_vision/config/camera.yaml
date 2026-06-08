@@ -6,8 +6,8 @@ rebotarm_vision_node:
     camera.color_fps: 30
     camera.color_format: MJPG
     camera.enable_depth: false
-    camera.depth_width: 0
-    camera.depth_height: 0
+    camera.depth_width: 1280
+    camera.depth_height: 800
     camera.depth_fps: 30
     camera.enable_align: false
     camera.warmup_frames: 15
@@ -33,8 +33,8 @@ rebotarm_vision_node:
       - tool
     ros.frame_id_color: camera_color_frame
     ros.frame_id_depth: camera_depth_frame
-    ros.publish_annotated: true
-    ros.show_preview: true
+    ros.publish_annotated: false
+    ros.show_preview: false
     ros.preview_window_name: RebotArm Vision Preview
     ros.loop_rate_hz: 15.0
     ros.enable_detection: false
@@ -49,10 +49,10 @@ rebotarm_ordinary_grasp_node:
     ordinary_grasp.grasp_pose_topic: /grasp/grasp_pose
     ordinary_grasp.root: /home/u24/rebot_grasp
     ordinary_grasp.output_frame_id: camera_depth_frame
-    ordinary_grasp.fx: 692.562744140625
-    ordinary_grasp.fy: 692.2272338867188
-    ordinary_grasp.cx: 641.2417602539062
-    ordinary_grasp.cy: 361.8166198730469
+    ordinary_grasp.fx: 519.422
+    ordinary_grasp.fy: 519.17
+    ordinary_grasp.cx: 320.681
+    ordinary_grasp.cy: 241.362
     ordinary_grasp.depth_quantile: 0.75
     ordinary_grasp.pregrasp_offset_m: 0.08
     depth_quality.enabled: true

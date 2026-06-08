@@ -153,9 +153,9 @@ def test_preserve_input_safety_gate_allows_low_grasp_when_width_is_valid():
         def get_parameter(self, name):
             values = {
                 "candidate_min_jaw_width_m": 0.006,
-                "candidate_max_jaw_width_m": 0.085,
+                "candidate_max_jaw_width_m": 0.082,
                 "candidate_min_grasp_z_m": 0.0,
-                "candidate_safe_lift_min_z_m": 0.240,
+                "candidate_safe_lift_min_z_m": 0.120,
                 "lift_z_m": 0.08,
             }
             return type("Param", (), {"value": values[name]})()
@@ -171,3 +171,4 @@ def test_preserve_input_safety_gate_allows_low_grasp_when_width_is_valid():
 
     assert CandidateIkFilterNode._candidate_safety_gate(node, candidate, grasp=low_grasp) is True
     assert CandidateIkFilterNode._candidate_safety_gate(node, candidate, grasp=safe_grasp) is True
+

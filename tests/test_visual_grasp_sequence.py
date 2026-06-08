@@ -147,7 +147,7 @@ def test_build_sequence_uses_jaw_width_for_open_close():
         open_before_approach=True,
         auto_gripper_width=True,
         detected_jaw_width_m=0.04,
-        open_clearance_m=0.02,
+        open_clearance_m=0.0,
         close_margin_m=0.012,
         min_open_position_m=0.035,
         max_open_position_m=0.09,
@@ -164,7 +164,7 @@ def test_build_sequence_uses_jaw_width_for_open_close():
         "close_gripper",
         "lift",
     ]
-    assert stages[0].gripper_position_m == pytest.approx(0.06)
+    assert stages[0].gripper_position_m == pytest.approx(0.04)
     assert stages[3].gripper_position_m == pytest.approx(0.028)
 
 
@@ -186,7 +186,7 @@ def test_auto_gripper_width_clamps_to_safe_range():
     assert close_width == pytest.approx(0.08)
 
 
-def test_gripper_policy_adapts_width_and_effort_to_object_size():
+def test_gripper_policy_adapts_width_but_uses_fixed_default_effort():
     from rebotarm_vision.gripper_policy import GripperPolicyConfig, resolve_gripper_command
 
     narrow = resolve_gripper_command(
@@ -206,8 +206,28 @@ def test_gripper_policy_adapts_width_and_effort_to_object_size():
     assert wide.allowed
     assert narrow.open_width_m < wide.open_width_m
     assert narrow.close_width_m < wide.close_width_m
-    assert narrow.max_effort < wide.max_effort
-    assert wide.max_effort == pytest.approx(0.48)
+    assert narrow.max_effort == pytest.approx(0.4)
+    assert wide.max_effort == pytest.approx(0.4)
+
+
+def test_gripper_policy_does_not_add_class_based_effort_bonus():
+    from rebotarm_vision.gripper_policy import GripperPolicyConfig, resolve_gripper_command
+
+    bottle = resolve_gripper_command(
+        jaw_width_m=0.060,
+        object_length_m=0.20,
+        class_name="bottle",
+        config=GripperPolicyConfig(auto_width=True, auto_effort=True),
+    )
+    box = resolve_gripper_command(
+        jaw_width_m=0.060,
+        object_length_m=0.20,
+        class_name="box",
+        config=GripperPolicyConfig(auto_width=True, auto_effort=True),
+    )
+
+    assert bottle.max_effort == pytest.approx(0.4)
+    assert box.max_effort == pytest.approx(0.4)
 
 
 def test_gripper_policy_rejects_objects_outside_gripper_range():

@@ -22,6 +22,12 @@ setup(
     entry_points={
         "console_scripts": [
             "rebotarm_text_input = rebotarm_voice_control.text_input_node:main",
+            "rebotarm_llm_tool = rebotarm_voice_control.llm_tool_node:main",
+            "rebotarm_tool_call = rebotarm_voice_control.tool_call_node:main",
+            "rebotarm_realtime_event = rebotarm_voice_control.realtime_event_node:main",
+            "rebotarm_realtime_gateway = rebotarm_voice_control.realtime_voice_gateway_node:main",
+            "rebotarm_sim_move_relative_action = rebotarm_voice_control.sim_move_relative_action_node:main",
+            "rebotarm_sim_executor = rebotarm_voice_control.sim_executor:main",
             "rebotarm_voice_file = rebotarm_voice_control.voice_file_node:main",
             "rebotarm_voice_control_node = rebotarm_voice_control.voice_control_node:main",
         ],

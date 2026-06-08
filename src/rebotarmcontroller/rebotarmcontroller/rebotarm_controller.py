@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -52,12 +54,22 @@ class reBotArmController(Node):
             )
             cmd_arbitration = "reject"
 
+        self.hardware = None
+        self.joint_state_publisher = None
+        self.arm_services = None
+        self.teach_recorder = None
+        self.arm_actions = None
+        self.motor_passthrough = None
         self.hardware = HardwareManager(
             arm_cfg=arm_config,
             gripper_cfg=gripper_config,
             channel=channel,
         )
-        self.hardware.connect()
+        try:
+            self.hardware.connect()
+        except Exception as exc:
+            self.get_logger().error(f"hardware connect failed; disabled before exit: {exc}")
+            raise
 
         self.joint_state_publisher = JointStatePublisher(
             self,
@@ -91,35 +103,75 @@ class reBotArmController(Node):
         self.joint_state_publisher.publish_status()
 
     def shutdown(self) -> None:
-        self.teach_recorder.shutdown()
-        if (
-            bool(self.get_parameter("shutdown_safe_home").value)
-            and self.hardware.connected
-            and self.hardware.enabled
-        ):
-            try:
-                self.get_logger().warn("shutdown requested: running safe_home before disable")
-                self.hardware.stop_gravity_compensation()
-                self.hardware.ensure_pos_vel_control()
-                self.hardware.endpos_ctrl.safe_home()
-                self.get_logger().info("shutdown safe_home complete")
-            except Exception as exc:
-                self.get_logger().error(f"shutdown safe_home failed; disabling anyway: {exc}")
+        if self.teach_recorder is not None:
+            self.teach_recorder.shutdown()
+        if self.hardware is None:
+            return
+        if bool(self.get_parameter("shutdown_safe_home").value):
+            self._conditional_safe_home_before_shutdown()
         self.hardware.shutdown()
+
+    def _conditional_safe_home_before_shutdown(self) -> None:
+        if not (self.hardware is not None and self.hardware.connected and self.hardware.enabled):
+            return
+        initial_state = self.hardware.state_machine
+        try:
+            self.hardware.stop_active_motion()
+        except Exception as exc:
+            self.get_logger().error(f"shutdown trajectory stop/hold failed; disabling: {exc}")
+            return
+
+        allowed, reason = self._safe_home_shutdown_allowed(initial_state)
+        if not allowed:
+            self.get_logger().warn(f"shutdown safe_home skipped: {reason}; disabling")
+            return
+
+        try:
+            self.get_logger().warn("shutdown requested: running conditional safe_home before disable")
+            self.hardware.stop_gravity_compensation()
+            self.hardware.ensure_pos_vel_control()
+            self.hardware.endpos_ctrl.safe_home()
+            self.get_logger().info("shutdown conditional safe_home complete")
+        except Exception as exc:
+            self.get_logger().error(f"shutdown safe_home failed; disabling anyway: {exc}")
+
+    def _safe_home_shutdown_allowed(self, initial_state: str) -> tuple[bool, str]:
+        if self.hardware is None:
+            return False, "hardware unavailable"
+        if initial_state in ("LOWLEVEL_STREAMING", "GRAVITY_COMP"):
+            return False, f"unsafe controller state {initial_state}"
+        if self.hardware.gripper_active:
+            return False, f"gripper active in {self.hardware.gripper_mode}"
+        try:
+            positions, velocities, _effort = self.hardware.get_joint_state()
+        except Exception as exc:
+            return False, f"joint state unavailable: {exc}"
+        expected = len(self.hardware.joint_names)
+        if len(positions) != expected or len(velocities) != expected:
+            return False, "joint state size mismatch"
+        if not all(math.isfinite(float(value)) for value in positions):
+            return False, "joint positions are not finite"
+        if not all(math.isfinite(float(value)) for value in velocities):
+            return False, "joint velocities are not finite"
+        return True, "ok"
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = reBotArmController()
+    node = None
     executor = MultiThreadedExecutor(num_threads=4)
-    executor.add_node(node)
     try:
+        node = reBotArmController()
+        executor.add_node(node)
         executor.spin()
     finally:
-        node.shutdown()
+        if node is not None:
+            node.shutdown()
         executor.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

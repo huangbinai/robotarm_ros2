@@ -13,6 +13,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 
+from rebotarm_msgs.msg import JointMotorState
 from rebotarm_msgs.srv import SetGripper
 from trajectory_msgs.msg import JointTrajectory
 
@@ -46,6 +47,7 @@ class SimTrajectoryControllerNode(Node):
         self.declare_parameter("default_duration_sec", 2.0)
         self.declare_parameter("gripper_max_width_m", 0.09)
         self.declare_parameter("gripper_min_width_m", 0.0)
+        self.declare_parameter("initial_joint_positions", [0.0, -0.1, -0.2, 0.2, 0.0, 0.0])
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._joint_names = [str(v) for v in list(self.get_parameter("joint_names").value)]
@@ -54,11 +56,19 @@ class SimTrajectoryControllerNode(Node):
         self._gripper_max_width_m = max(float(self.get_parameter("gripper_max_width_m").value), 0.0)
         self._gripper_min_width_m = max(float(self.get_parameter("gripper_min_width_m").value), 0.0)
         self._positions_by_name = {name: 0.0 for name in self._joint_names}
+        for name, position in zip(self._joint_names, list(self.get_parameter("initial_joint_positions").value)):
+            self._positions_by_name[str(name)] = float(position)
         self._velocities_by_name = {name: 0.0 for name in self._joint_names}
+        self._last_gripper_width_m = self._gripper_min_width_m
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
 
         self._joint_state_pub = self.create_publisher(JointState, f"/{self._arm_namespace}/joint_states", 10)
+        self._gripper_state_pub = self.create_publisher(
+            JointMotorState,
+            f"/{self._arm_namespace}/gripper/state",
+            10,
+        )
         self._action_server = ActionServer(
             self,
             FollowJointTrajectory,
@@ -108,8 +118,20 @@ class SimTrajectoryControllerNode(Node):
                 self._velocities_by_name["right_finger_joint"] = 0.0
         response.success = True
         response.reached_position = width
+        self._last_gripper_width_m = width
+        self._publish_gripper_state(width)
         self.get_logger().info(f"sim gripper set: width={width:.4f} m")
         return response
+
+    def _publish_gripper_state(self, width_m: float) -> None:
+        msg = JointMotorState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.joint_name = "gripper"
+        msg.position = float(width_m)
+        msg.velocity = 0.0
+        msg.torque = 0.0
+        msg.status_code = 0
+        self._gripper_state_pub.publish(msg)
 
     def _execute_goal(self, goal_handle):
         self._stop_requested.clear()
@@ -207,6 +229,7 @@ class SimTrajectoryControllerNode(Node):
             msg.velocity = [float(self._velocities_by_name[name]) for name in self._joint_names]
         msg.effort = [0.0 for _ in self._joint_names]
         self._joint_state_pub.publish(msg)
+        self._publish_gripper_state(self._last_gripper_width_m)
 
 
 def main(args=None) -> None:

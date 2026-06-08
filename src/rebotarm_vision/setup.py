@@ -45,6 +45,7 @@ setup(
             "rebotarm_grasp_tcp_frame = rebotarm_vision.grasp_tcp_frame_node:main",
             "rebotarm_visual_ready = rebotarm_vision.visual_ready_node:main",
             "rebotarm_visual_grasp_benchmark = rebotarm_vision.visual_grasp_benchmark:main",
+            "rebotarm_hybrid_grasp_sim_benchmark = rebotarm_vision.hybrid_grasp_sim_benchmark:main",
             "rebotarm_tcp_calibration = rebotarm_vision.tcp_calibration_node:main",
             "rebotarm_debug_camera_preview = rebotarm_vision.debug_camera_preview:main",
             "rebotarm_grasp_depth_probe = rebotarm_vision.grasp_depth_probe_node:main",

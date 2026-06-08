@@ -6,6 +6,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Detection2D.msg"
@@ -27,8 +28,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetGripper.srv"
   "srv/GraspGripper.srv"
   "action/ExecuteGrasp.action"
+  "action/MoveRelative.action"
   "action/MoveToPose.action"
-  DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
+  DEPENDENCIES builtin_interfaces geometry_msgs std_msgs trajectory_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

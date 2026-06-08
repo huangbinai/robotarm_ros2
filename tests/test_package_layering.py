@@ -123,7 +123,6 @@ def test_teach_launches_use_teach_package_directly() -> None:
     launch_expectations = [
         (ROOT / "src/rebotarm_bringup/launch/teach_record.launch.py", "TeachRecorderNode"),
         (ROOT / "src/rebotarm_bringup/launch/teach_replay.launch.py", "TeachReplayNode"),
-        (ROOT / "src/rebotarm_bringup/launch/rebotarm_app.launch.py", "TeachReplayNode"),
         (ROOT / "src/rebotarm_bringup/launch/teleop_system.launch.py", "TeachRecorderNode"),
     ]
 
@@ -147,17 +146,15 @@ def test_keyboard_launches_use_teleop_package_directly() -> None:
         assert 'package="rebotarm_teleop"' in package_context
 
 
-def test_rviz_drag_launches_use_teleop_and_motion_packages_directly() -> None:
+def test_rviz_drag_launch_does_not_start_legacy_preview_execution_nodes() -> None:
     text = (ROOT / "src/rebotarm_bringup/launch/interactive_system.launch.py").read_text(
         encoding="utf-8"
     )
-    expectations = {"PreviewNode": "rebotarm_motion", "ExecutionNode": "rebotarm_motion"}
 
+    assert "PreviewNode" not in text
+    assert "ExecutionNode" not in text
     assert "MarkerServerNode" not in text
-    for executable, package in expectations.items():
-        node_index = text.index(f'executable="{executable}"')
-        package_context = text[max(0, node_index - 120):node_index]
-        assert f'package="{package}"' in package_context
+    assert "interactive_control/execute_preview" not in text
 
 
 def test_visual_gripper_launches_use_teleop_package_directly() -> None:
@@ -229,8 +226,8 @@ def test_rviz_moveit_drag_entrypoints_exist_without_custom_ee_target() -> None:
     assert "rviz_ee_drag_sim.launch.py" in feature_doc
     assert '"use_moveit_preview": "true"' in real_launch
     assert '"use_moveit_preview": "true"' in sim_launch
-    assert '"start_interaction_nodes": "false"' in real_launch
-    assert '"start_interaction_nodes": "false"' in sim_launch
+    assert "start_interaction_nodes" not in real_launch
+    assert "start_interaction_nodes" not in sim_launch
     assert "interactive_control/ee_target" not in feature_doc
     assert "EndEffectorTarget" not in rviz_config
     assert "InteractiveMarkers" not in rviz_config
@@ -241,3 +238,20 @@ def test_rviz_moveit_drag_entrypoints_exist_without_custom_ee_target() -> None:
     assert "InteractiveTargetNode" not in (
         ROOT / "src/rebotarm_teleop/setup.py"
     ).read_text(encoding="utf-8")
+
+
+def test_legacy_custom_interactive_preview_entrypoints_are_removed() -> None:
+    motion_setup = (ROOT / "src/rebotarm_motion/setup.py").read_text(encoding="utf-8")
+    compatibility_setup = (
+        ROOT / "src/rebotarm_interactive_control/setup.py"
+    ).read_text(encoding="utf-8")
+
+    for text in (motion_setup, compatibility_setup):
+        console_lines = [line.strip().strip('",') for line in text.splitlines()]
+        assert not any(line.startswith("PreviewNode =") for line in console_lines)
+        assert not any(line.startswith("ExecutionNode =") for line in console_lines)
+        assert "MarkerServerNode" not in text
+        assert "InteractiveTargetNode" not in text
+
+    assert not (ROOT / "src/rebotarm_motion/rebotarm_motion/preview_node.py").exists()
+    assert not (ROOT / "src/rebotarm_motion/rebotarm_motion/execution_node.py").exists()

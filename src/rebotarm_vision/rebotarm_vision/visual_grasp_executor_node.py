@@ -75,8 +75,8 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("input_topic", "/grasp/filtered_plan")
         self.declare_parameter("candidates_topic", "/grasp/filtered_candidates")
         self.declare_parameter("target_frame", "base_link")
-        self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("target_base_offset_xyz", [0.0, 0.01, 0.0])
+        self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
+        self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("pregrasp_base_z_offset_m", 0.05)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("pose_policy", "base_axis")
@@ -88,9 +88,9 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("open_before_approach", False)
         self.declare_parameter("open_position_m", 0.09)
         self.declare_parameter("close_position_m", 0.025)
-        self.declare_parameter("close_max_effort", 0.3)
+        self.declare_parameter("close_max_effort", 0.4)
         self.declare_parameter("auto_gripper_width", True)
-        self.declare_parameter("open_clearance_m", 0.02)
+        self.declare_parameter("open_clearance_m", 0.0)
         self.declare_parameter("close_margin_m", 0.012)
         self.declare_parameter("min_open_position_m", 0.035)
         self.declare_parameter("max_open_position_m", 0.09)
@@ -99,20 +99,18 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("auto_gripper_effort", True)
         self.declare_parameter("min_gripper_effort", 0.22)
         self.declare_parameter("max_gripper_effort", 0.60)
-        self.declare_parameter("gripper_effort_per_width_m", 3.0)
-        self.declare_parameter("gripper_effort_per_length_m", 0.3)
-        self.declare_parameter("max_allowed_grasp_width_m", 0.085)
+        self.declare_parameter("max_allowed_grasp_width_m", 0.082)
         self.declare_parameter("close_contact_success_enabled", True)
         self.declare_parameter("close_contact_margin_m", 0.004)
         self.declare_parameter("close_contact_min_closure_delta_m", 0.015)
         self.declare_parameter("gripper_grasp_enabled", True)
-        self.declare_parameter("gripper_grasp_close_force", 0.6)
+        self.declare_parameter("gripper_grasp_close_force", 0.4)
         self.declare_parameter("gripper_grasp_timeout_sec", 5.0)
         self.declare_parameter("gripper_grasp_min_close_time_sec", 0.08)
         self.declare_parameter("gripper_grasp_velocity_threshold", 0.04)
         self.declare_parameter("gripper_grasp_min_closure_distance_m", 0.006)
         self.declare_parameter("safe_retreat_enabled", True)
-        self.declare_parameter("safe_retreat_min_lift_z_m", 0.24)
+        self.declare_parameter("safe_retreat_min_lift_z_m", 0.12)
         self.declare_parameter("safe_retreat_distance_m", 0.06)
         self.declare_parameter("safe_retreat_axis_xyz", [-1.0, 0.0, 0.5])
         self.declare_parameter("safe_home_after_grasp", False)
@@ -358,8 +356,6 @@ class VisualGraspExecutorNode(Node):
                 max_close_width_m=float(self.get_parameter("max_close_position_m").value),
                 min_effort=float(self.get_parameter("min_gripper_effort").value),
                 max_effort=float(self.get_parameter("max_gripper_effort").value),
-                effort_per_width_m=float(self.get_parameter("gripper_effort_per_width_m").value),
-                effort_per_length_m=float(self.get_parameter("gripper_effort_per_length_m").value),
                 max_allowed_width_m=float(self.get_parameter("max_allowed_grasp_width_m").value),
             ),
         )

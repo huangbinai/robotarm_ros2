@@ -6,6 +6,40 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _registered_interfaces() -> list[str]:
+    cmake_text = (ROOT / "src" / "rebotarm_msgs" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    interfaces: list[str] = []
+    for line in cmake_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('"') and stripped.endswith('"'):
+            value = stripped.strip('"')
+            if value.startswith(("msg/", "srv/", "action/")):
+                interfaces.append(value)
+    return interfaces
+
+
+def test_rebotarm_msgs_registered_interfaces_exist():
+    missing = [
+        interface
+        for interface in _registered_interfaces()
+        if not (ROOT / "src" / "rebotarm_msgs" / interface).is_file()
+    ]
+
+    assert missing == []
+
+
+def test_visual_grasp_launch_uses_existing_motion_execution_package():
+    launch_text = (
+        ROOT / "src" / "rebotarm_bringup" / "launch" / "visual_grasp_system.launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'package="rebotarm_motion_execution"' not in launch_text
+    assert 'package="rebotarm_motion"' in launch_text
+    assert 'executable="PoseExecutionNode"' in launch_text
+
+
 def test_vision_launch_does_not_wrap_static_tf_in_ros2_run():
     text = (ROOT / "src" / "rebotarm_vision" / "launch" / "vision.launch.py").read_text(encoding="utf-8")
 
@@ -21,12 +55,12 @@ def test_vision_launch_configures_opencv_qt_font_environment():
     assert "export QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu" in text
 
 
-def test_interactive_launch_honors_start_interaction_nodes_flag():
+def test_interactive_launch_removes_legacy_start_interaction_nodes_flag():
     text = (ROOT / "src" / "rebotarm_bringup" / "launch" / "interactive_system.launch.py").read_text(encoding="utf-8")
 
-    assert "DeclareLaunchArgument(\"start_interaction_nodes\"" in text
-    assert "start_interaction_nodes = LaunchConfiguration(\"start_interaction_nodes\")" in text
-    assert "IfCondition(start_interaction_nodes)" in text
+    assert "start_interaction_nodes" not in text
+    assert "PreviewNode" not in text
+    assert "ExecutionNode" not in text
 
 
 def test_visual_grasp_launch_exposes_adaptive_gripper_and_retreat_params():

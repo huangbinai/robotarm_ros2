@@ -13,5 +13,5 @@ rebotarm_graspnet_baseline_node:
     checkpoint_path: ""
     device: cuda:0
     backend_module: graspnet_baseline_inference
-    max_grasps: 20
+    max_grasps: 10
     max_points: 20000

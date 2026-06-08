@@ -29,6 +29,7 @@ def generate_launch_description():
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
+    shutdown_safe_home = LaunchConfiguration("shutdown_safe_home")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
     use_moveit_preview = LaunchConfiguration("use_moveit_preview")
     use_hardware = LaunchConfiguration("use_hardware")
@@ -37,8 +38,6 @@ def generate_launch_description():
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
     interactive_config = LaunchConfiguration("interactive_config")
-    execution_mode = LaunchConfiguration("execution_mode")
-    start_interaction_nodes = LaunchConfiguration("start_interaction_nodes")
     start_passive_joint_state_publisher = LaunchConfiguration("start_passive_joint_state_publisher")
     use_moveit_fake_joint_states = LaunchConfiguration("use_moveit_fake_joint_states")
     rviz_config = LaunchConfiguration("rviz_config")
@@ -81,15 +80,14 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
+            DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
             DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("use_moveit_preview", default_value="false"),
-            DeclareLaunchArgument("use_hardware", default_value="true"),
+            DeclareLaunchArgument("use_hardware", default_value="false"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
-            DeclareLaunchArgument("execution_mode", default_value="simulation"),
-            DeclareLaunchArgument("start_interaction_nodes", default_value="true"),
             DeclareLaunchArgument("start_passive_joint_state_publisher", default_value="true"),
             DeclareLaunchArgument("use_moveit_fake_joint_states", default_value="true"),
             DeclareLaunchArgument(
@@ -132,6 +130,7 @@ def generate_launch_description():
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,
                         "channel": channel,
+                        "shutdown_safe_home": shutdown_safe_home,
                         "joint_state_rate": joint_state_rate,
                         "cmd_arbitration": cmd_arbitration,
                         "arm_namespace": arm_namespace,
@@ -158,34 +157,6 @@ def generate_launch_description():
                 condition=UnlessCondition(use_moveit_preview),
             ),
             Node(
-                package="rebotarm_motion",
-                executable="PreviewNode",
-                name="preview_node",
-                output="screen",
-                parameters=[
-                    interactive_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                        "preview_backend": "moveit",
-                    },
-                ],
-                condition=IfCondition(start_interaction_nodes),
-            ),
-            Node(
-                package="rebotarm_motion",
-                executable="PreviewNode",
-                name="preview_node",
-                output="screen",
-                parameters=[
-                    interactive_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                        "preview_backend": "sdk",
-                    },
-                ],
-                condition=IfCondition(start_interaction_nodes),
-            ),
-            Node(
                 package="joint_state_publisher",
                 executable="joint_state_publisher",
                 name="interactive_joint_state_publisher",
@@ -206,20 +177,6 @@ def generate_launch_description():
                     {"rate": 30.0},
                 ],
                 remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
-            ),
-            Node(
-                package="rebotarm_motion",
-                executable="ExecutionNode",
-                name="execution_node",
-                output="screen",
-                parameters=[
-                    interactive_config,
-                    {
-                        "arm_namespace": arm_namespace,
-                        "mode": execution_mode,
-                    },
-                ],
-                condition=IfCondition(start_interaction_nodes),
             ),
             Node(
                 package="rviz2",

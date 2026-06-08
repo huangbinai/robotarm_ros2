@@ -41,3 +41,17 @@ class RouteResult:
     mode: str
     params: dict[str, Any]
     dry_run: bool = True
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    tool: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    call_id: str = ""
+
+
+@dataclass(frozen=True)
+class ExecutionRouteResult:
+    execution_mode: str
+    route: RouteResult
+    simulated: bool = False

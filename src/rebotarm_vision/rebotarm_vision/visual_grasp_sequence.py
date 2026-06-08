@@ -17,12 +17,12 @@ class VisualGraspSequenceConfig:
     open_before_approach: bool = False
     open_position_m: float = 0.09
     close_position_m: float = 0.025
-    close_max_effort: float = 0.3
+    close_max_effort: float = 0.4
     lift_z_m: float = 0.08
     min_grasp_z_m: float = 0.0
     auto_gripper_width: bool = False
     detected_jaw_width_m: float = 0.0
-    open_clearance_m: float = 0.02
+    open_clearance_m: float = 0.0
     close_margin_m: float = 0.012
     min_open_position_m: float = 0.035
     max_open_position_m: float = 0.09

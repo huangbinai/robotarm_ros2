@@ -15,28 +15,28 @@ def _read(relative: str) -> str:
 def test_rebotarm_app_launch_exposes_simple_modes_and_profiles() -> None:
     launch_text = _read("src/rebotarm_bringup/launch/rebotarm_app.launch.py")
 
-    assert 'DeclareLaunchArgument("mode", default_value="app")' in launch_text
-    assert 'DeclareLaunchArgument("profile", default_value="safe")' in launch_text
+    assert 'DeclareLaunchArgument("use_hardware", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("web_execute_enabled", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("profile"' not in launch_text
     assert 'DeclareLaunchArgument("name", default_value="teach_record")' in launch_text
-    assert "teleop_system.launch.py" in launch_text
     assert "moveit_hardware.launch.py" in launch_text
     assert 'executable="TeachRecorderNode"' not in launch_text
-    assert 'executable="TeachReplayNode"' in launch_text
+    assert 'executable="TeachReplayNode"' not in launch_text
     assert "_idle_recorder_node(" not in launch_text
-    assert "controller internal recorder" in launch_text
-    assert "mode must be one of: app, teleop, record, check, replay" in launch_text
+    assert "Teach Trajectory card" in launch_text
+    assert 'DeclareLaunchArgument("mode"' not in launch_text
+    assert 'LaunchConfiguration("mode")' not in launch_text
+    assert 'if mode ==' not in launch_text
+    assert "mode must be one of" not in launch_text
+    assert "teleop_system.launch.py" not in launch_text
     assert "def _as_bool" in launch_text
-    assert '"dry_run": _as_bool(dry_run)' in launch_text
     assert '"use_hardware": _as_bool(use_hardware)' in launch_text
     assert '"web_execute_enabled": _as_bool(web_execute_enabled)' in launch_text
     assert '"panel_mode": panel_mode' in launch_text
-    assert 'panel_mode = "check" if mode == "check" else "control"' in launch_text
-    assert 'mode_web_execute_enabled = "false" if mode == "check" else web_execute_enabled' in launch_text
-    assert "web_execute_enabled=mode_web_execute_enabled" in launch_text
-    assert 'if mode == "teleop":' in launch_text
-    assert 'if mode == "app":' in launch_text
+    assert 'panel_mode="control"' in launch_text
     assert "full MoveIt + web teleop workbench" in launch_text
     assert 'DeclareLaunchArgument("channel", default_value="auto")' in launch_text
+    assert 'DeclareLaunchArgument("execution_mode", default_value="execute")' in launch_text
     assert "def _resolve_channel" in launch_text
     assert 'for candidate in ("/dev/ttyACM0", "/dev/ttyACM1")' in launch_text
     assert '"use_rviz": "false"' in launch_text
@@ -53,6 +53,8 @@ def test_web_teleop_rviz_is_robot_status_only() -> None:
     assert "rviz_default_plugins/RobotModel" in rviz_text
     assert "rviz_default_plugins/TF" in rviz_text
     assert "rviz_default_plugins/Interact" in rviz_text
+    assert "rviz_default_plugins/MoveCamera" not in rviz_text
+    assert "rviz_default_plugins/Select" not in rviz_text
     assert "moveit_rviz_plugin/MotionPlanning" not in rviz_text
     assert "InteractiveMarkers" not in rviz_text
     assert "EndEffectorTarget" not in rviz_text

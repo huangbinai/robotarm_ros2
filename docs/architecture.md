@@ -252,16 +252,17 @@ Required properties:
 - replay state can lock unsafe arm commands
 - web preview and execute are separate concepts unless explicitly confirmed
 
-### RViz drag control
+### RViz MoveIt Drag Control
 
-RViz drag control means an interactive marker creates a pose target, motion
-preview computes a reachable state, and execution sends a planned trajectory.
+RViz drag control is now the native MoveIt MotionPlanning workflow. It does not
+use the retired custom `ee_target` marker, `PreviewNode`, `ExecutionNode`, or
+`/interactive_control/execute_preview` service.
 
 Current split:
 
-- `rebotarm_teleop.MarkerServerNode` publishes pose targets
-- `rebotarm_motion.PreviewNode` computes preview
-- `rebotarm_motion.ExecutionNode` executes the latest preview
+- RViz MotionPlanning creates the goal pose and requests a MoveIt plan
+- MoveIt `move_group` computes the trajectory
+- `rebotarmcontroller` executes the resulting `FollowJointTrajectory`
 
 ## Where New Code Goes
 

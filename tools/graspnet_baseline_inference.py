@@ -5,11 +5,12 @@ import os
 import sys
 from typing import Any
 
-import cv2
 import numpy as np
 
 
 DEFAULT_NUM_POINT = 20000
+DEFAULT_WORKSPACE_MIN_DEPTH_M = 0.05
+DEFAULT_WORKSPACE_MAX_DEPTH_M = 1.5
 
 
 def add_windows_dll_directories() -> None:
@@ -26,11 +27,10 @@ def add_windows_dll_directories() -> None:
             os.add_dll_directory(str(path))
 
 
-def build_masked_cloud(
+def build_scene_cloud(
     *,
     color_bgr: np.ndarray,
     depth_mm: np.ndarray,
-    detection: dict[str, Any],
     camera_info: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray]:
     depth = np.asarray(depth_mm)
@@ -41,10 +41,10 @@ def build_masked_cloud(
         raise ValueError("color_bgr and depth_mm must have the same image size")
 
     height, width = depth.shape
-    mask = _detection_mask(detection, width=width, height=height)
     z = depth.astype(np.float32) * float(camera_info.get("depth_scale_m", 0.001))
-    valid = mask & np.isfinite(z) & (z > 0.0)
-    valid = _reject_far_background(valid, z)
+    min_depth_m = float(camera_info.get("workspace_min_depth_m", DEFAULT_WORKSPACE_MIN_DEPTH_M))
+    max_depth_m = float(camera_info.get("workspace_max_depth_m", DEFAULT_WORKSPACE_MAX_DEPTH_M))
+    valid = np.isfinite(z) & (z >= min_depth_m) & (z <= max_depth_m)
     v, u = np.nonzero(valid)
     if len(u) == 0:
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.float32)
@@ -61,64 +61,6 @@ def build_masked_cloud(
     return points, colors.astype(np.float32)
 
 
-def _detection_mask(detection: dict[str, Any], *, width: int, height: int) -> np.ndarray:
-    mask = np.zeros((height, width), dtype=np.uint8)
-    polygon = _detection_polygon(detection)
-    if polygon is not None:
-        points = np.rint(polygon).astype(np.int32)
-        points[:, 0] = np.clip(points[:, 0], 0, width - 1)
-        points[:, 1] = np.clip(points[:, 1], 0, height - 1)
-        cv2.fillPoly(mask, [points.reshape(-1, 1, 2)], 1)
-        return mask.astype(bool)
-
-    x_min, y_min, x_max, y_max = _detection_bbox(detection, width=width, height=height)
-    mask[y_min:y_max, x_min:x_max] = 1
-    return mask.astype(bool)
-
-
-def _detection_polygon(detection: dict[str, Any]) -> np.ndarray | None:
-    raw = None
-    mask = detection.get("mask")
-    if isinstance(mask, dict):
-        raw = mask.get("polygon_xy")
-    if raw is None:
-        raw = detection.get("mask_polygon_xy")
-    if raw is None:
-        return None
-    arr = np.asarray(raw, dtype=np.float32).reshape(-1, 2)
-    if arr.shape[0] < 3:
-        return None
-    return arr
-
-
-def _detection_bbox(detection: dict[str, Any], *, width: int, height: int) -> tuple[int, int, int, int]:
-    if "bbox_xyxy" in detection:
-        raw = np.asarray(detection.get("bbox_xyxy"), dtype=np.float32).reshape(-1)
-        if raw.size >= 4:
-            x_min, y_min, x_max, y_max = raw[:4]
-        else:
-            x_min, y_min, x_max, y_max = 0, 0, width, height
-    else:
-        x_min = detection.get("x_min", 0)
-        y_min = detection.get("y_min", 0)
-        x_max = detection.get("x_max", width)
-        y_max = detection.get("y_max", height)
-    ix_min = max(0, min(width - 1, int(round(float(x_min)))))
-    iy_min = max(0, min(height - 1, int(round(float(y_min)))))
-    ix_max = max(ix_min + 1, min(width, int(round(float(x_max)))))
-    iy_max = max(iy_min + 1, min(height, int(round(float(y_max)))))
-    return ix_min, iy_min, ix_max, iy_max
-
-
-def _reject_far_background(valid: np.ndarray, z_m: np.ndarray) -> np.ndarray:
-    values = z_m[valid]
-    if values.size < 32:
-        return valid
-    near = float(np.percentile(values, 10.0))
-    max_object_depth = near + 0.35
-    return valid & (z_m <= max_object_depth)
-
-
 def sample_cloud(points: np.ndarray, colors: np.ndarray, *, num_point: int) -> tuple[np.ndarray, np.ndarray]:
     if len(points) == 0:
         return points, colors
@@ -131,10 +73,19 @@ def sample_cloud(points: np.ndarray, colors: np.ndarray, *, num_point: int) -> t
     return points[indices].astype(np.float32), colors[indices].astype(np.float32)
 
 
-def graspnet_array_to_candidates(grasp_array, *, class_name: str, max_grasps: int) -> list[dict[str, Any]]:
+def graspnet_array_to_candidates(
+    grasp_array,
+    *,
+    class_name: str,
+    max_grasps: int,
+    target_detection: dict[str, Any] | None = None,
+    camera_info: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     array = np.asarray(grasp_array, dtype=np.float32)
     if array.ndim == 1:
         array = array.reshape(1, -1)
+    if target_detection is not None and camera_info is not None:
+        array = filter_grasp_array_by_detection_projection(array, target_detection=target_detection, camera_info=camera_info)
     candidates: list[dict[str, Any]] = []
     for row in array[: max(0, int(max_grasps))]:
         if row.size < 16:
@@ -152,9 +103,95 @@ def graspnet_array_to_candidates(grasp_array, *, class_name: str, max_grasps: in
                 "rotation_matrix": rotation.astype(float).tolist(),
                 "translation_xyz": translation.astype(float).tolist(),
                 "object_length_m": float(row[2]),
+                "target_filter": "yolo_projection" if target_detection is not None and camera_info is not None else "",
             }
         )
     return candidates
+
+
+def filter_grasp_array_by_detection_projection(
+    grasp_array,
+    *,
+    target_detection: dict[str, Any],
+    camera_info: dict[str, Any],
+) -> np.ndarray:
+    array = np.asarray(grasp_array, dtype=np.float32)
+    if array.ndim == 1:
+        array = array.reshape(1, -1)
+    if array.size == 0:
+        return array
+    translations = array[:, 13:16]
+    u, v = project_points_to_image(translations, camera_info=camera_info)
+    keep = detection_contains_pixels(target_detection, u=u, v=v)
+    return array[keep]
+
+
+def project_points_to_image(points_xyz: np.ndarray, *, camera_info: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    z = points[:, 2]
+    fx = float(camera_info["fx"])
+    fy = float(camera_info["fy"])
+    cx = float(camera_info["cx"])
+    cy = float(camera_info["cy"])
+    valid_z = np.where(np.abs(z) > 1e-6, z, np.nan)
+    u = fx * points[:, 0] / valid_z + cx
+    v = fy * points[:, 1] / valid_z + cy
+    return u, v
+
+
+def detection_contains_pixels(target_detection: dict[str, Any], *, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    u_values = np.asarray(u, dtype=np.float32).reshape(-1)
+    v_values = np.asarray(v, dtype=np.float32).reshape(-1)
+    finite = np.isfinite(u_values) & np.isfinite(v_values)
+    polygon = _detection_polygon(target_detection)
+    if polygon is not None:
+        return finite & _points_in_polygon(u_values, v_values, polygon)
+    x_min, y_min, x_max, y_max = _detection_bbox(target_detection)
+    return finite & (u_values >= x_min) & (u_values <= x_max) & (v_values >= y_min) & (v_values <= y_max)
+
+
+def _detection_polygon(detection: dict[str, Any]) -> np.ndarray | None:
+    raw = None
+    mask = detection.get("mask")
+    if isinstance(mask, dict):
+        raw = mask.get("polygon_xy")
+    if raw is None:
+        raw = detection.get("mask_polygon_xy")
+    if raw is None:
+        return None
+    arr = np.asarray(raw, dtype=np.float32).reshape(-1, 2)
+    if arr.shape[0] < 3:
+        return None
+    return arr
+
+
+def _detection_bbox(detection: dict[str, Any]) -> tuple[float, float, float, float]:
+    if "bbox_xyxy" in detection:
+        raw = np.asarray(detection.get("bbox_xyxy"), dtype=np.float32).reshape(-1)
+        if raw.size >= 4:
+            return float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3])
+    return (
+        float(detection.get("x_min", 0.0)),
+        float(detection.get("y_min", 0.0)),
+        float(detection.get("x_max", 0.0)),
+        float(detection.get("y_max", 0.0)),
+    )
+
+
+def _points_in_polygon(u: np.ndarray, v: np.ndarray, polygon: np.ndarray) -> np.ndarray:
+    x = np.asarray(u, dtype=np.float32)
+    y = np.asarray(v, dtype=np.float32)
+    px = polygon[:, 0]
+    py = polygon[:, 1]
+    inside = np.zeros(x.shape, dtype=bool)
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        crosses = ((py[i] > y) != (py[j] > y)) & (
+            x < (px[j] - px[i]) * (y - py[i]) / ((py[j] - py[i]) + 1e-12) + px[i]
+        )
+        inside ^= crosses
+        j = i
+    return inside
 
 
 class GraspNetBaselineInference:
@@ -233,10 +270,9 @@ class GraspNetBaselineInference:
         if not detections:
             return []
         detection = max(detections, key=lambda item: float(item.get("confidence", 0.0)))
-        points, colors = build_masked_cloud(
+        points, colors = build_scene_cloud(
             color_bgr=color_bgr,
             depth_mm=depth_mm,
-            detection=detection,
             camera_info=camera_info,
         )
         if len(points) == 0:
@@ -247,6 +283,8 @@ class GraspNetBaselineInference:
             grasp_array,
             class_name=str(detection.get("class_name", "")),
             max_grasps=max_grasps,
+            target_detection=detection,
+            camera_info=camera_info,
         )
 
     def _infer_grasp_array(self, points: np.ndarray, colors: np.ndarray, *, full_points: np.ndarray):

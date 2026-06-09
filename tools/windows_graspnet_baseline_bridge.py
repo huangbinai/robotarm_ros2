@@ -14,6 +14,9 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 
+DEFAULT_WORKSPACE_MIN_DEPTH_M = 0.05
+DEFAULT_WORKSPACE_MAX_DEPTH_M = 1.5
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -29,14 +32,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-hz", type=float, default=2.0)
     parser.add_argument("--timeout-ms", type=int, default=1000)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--manual-trigger",
+        action="store_true",
+        help="Wait for 'y' + Enter before each inference. Use 'q' + Enter to quit.",
+    )
     parser.add_argument("--open3d-visualize", action="store_true")
     parser.add_argument("--visualize-top-n", type=int, default=5)
-    parser.add_argument("--visualize-max-points", type=int, default=8000)
+    parser.add_argument("--visualize-max-points", type=int, default=30000)
     parser.add_argument("--visualize-every-n", type=int, default=10)
     parser.add_argument("--visualize-point-size", type=float, default=4.0)
     parser.add_argument("--visualize-axis-size", type=float, default=0.05)
     parser.add_argument("--visualize-zoom", type=float, default=0.28)
-    parser.add_argument("--visualize-crop-radius-m", type=float, default=0.18)
+    parser.add_argument("--visualize-crop-radius-m", type=float, default=0.0)
     return parser
 
 
@@ -112,11 +120,11 @@ class Open3DGraspVisualizer:
         self,
         *,
         top_n: int = 5,
-        max_points: int = 8000,
+        max_points: int = 30000,
         point_size: float = 4.0,
         axis_size: float = 0.05,
         zoom: float = 0.28,
-        crop_radius_m: float = 0.18,
+        crop_radius_m: float = 0.0,
         window_name: str = "GraspNet candidates",
     ) -> None:
         self._o3d = importlib.import_module("open3d")
@@ -128,7 +136,7 @@ class Open3DGraspVisualizer:
         self._crop_radius_m = max(0.0, float(crop_radius_m))
         self._window_name = window_name
         self._vis = None
-        self._view_initialized = False
+        self._GraspGroup = self._load_grasp_group()
 
     def update(
         self,
@@ -152,16 +160,19 @@ class Open3DGraspVisualizer:
             camera_info=camera_info,
             focus=focus,
         )
+        selected_candidates = list(candidates)[: self._top_n]
         geometries = [cloud]
-        for index, candidate in enumerate(list(candidates)[: self._top_n]):
-            geometries.append(self._build_gripper_lines(candidate))
-            geometries.append(self._build_candidate_axes(candidate, index=index))
+        gripper_geometries = self._build_official_gripper_geometries(selected_candidates)
+        if gripper_geometries:
+            geometries.extend(gripper_geometries)
+        else:
+            for index, candidate in enumerate(selected_candidates):
+                geometries.append(self._build_gripper_lines(candidate))
+                geometries.append(self._build_candidate_axes(candidate, index=index))
         self._vis.clear_geometries()
         for geometry in geometries:
             self._vis.add_geometry(geometry)
-        if not self._view_initialized:
-            self._fit_view(cloud, focus=focus)
-            self._view_initialized = True
+        self._fit_view(cloud, focus=focus)
         self._vis.poll_events()
         self._vis.update_renderer()
 
@@ -170,6 +181,62 @@ class Open3DGraspVisualizer:
             return
         self._vis.poll_events()
         self._vis.update_renderer()
+
+    def _load_grasp_group(self):
+        try:
+            return importlib.import_module("graspnetAPI").GraspGroup
+        except Exception:
+            return None
+
+    def _build_official_gripper_geometries(self, candidates: list[dict[str, Any]]) -> list[Any]:
+        if self._GraspGroup is None or not candidates:
+            return []
+        rows = []
+        for candidate in candidates:
+            row = self._candidate_to_graspnet_row(candidate)
+            if row is not None:
+                rows.append(row)
+        if not rows:
+            return []
+        try:
+            grasp_group = self._GraspGroup(np.asarray(rows, dtype=np.float64))
+            return self._flatten_geometries(grasp_group.to_open3d_geometry_list())
+        except Exception:
+            return []
+
+    @staticmethod
+    def _candidate_to_graspnet_row(candidate: dict[str, Any]) -> np.ndarray | None:
+        try:
+            score = float(candidate.get("score", candidate.get("confidence", 0.0)) or 0.0)
+            width = max(float(candidate.get("width_m", candidate.get("width", 0.04)) or 0.04), 0.001)
+            height = max(float(candidate.get("height_m", candidate.get("height", 0.02)) or 0.02), 0.001)
+            depth = max(float(candidate.get("depth_m", candidate.get("depth", 0.04)) or 0.04), 0.001)
+            rotation = np.asarray(candidate.get("rotation_matrix", candidate.get("rotation")), dtype=np.float64).reshape(3, 3)
+            translation = np.asarray(
+                candidate.get("translation_xyz", candidate.get("translation")),
+                dtype=np.float64,
+            ).reshape(3)
+            object_id = float(candidate.get("object_id", -1))
+            return np.concatenate(
+                [
+                    np.asarray([score, width, height, depth], dtype=np.float64),
+                    rotation.reshape(9),
+                    translation,
+                    np.asarray([object_id], dtype=np.float64),
+                ]
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _flatten_geometries(geometries) -> list[Any]:
+        flattened = []
+        for geometry in geometries:
+            if isinstance(geometry, (list, tuple)):
+                flattened.extend(geometry)
+            else:
+                flattened.append(geometry)
+        return flattened
 
     def _build_point_cloud(
         self,
@@ -185,7 +252,9 @@ class Open3DGraspVisualizer:
         fy = float(camera_info.get("fy", camera_info.get("depth_fy", 1.0)) or 1.0)
         cx = float(camera_info.get("cx", camera_info.get("depth_cx", width * 0.5)) or width * 0.5)
         cy = float(camera_info.get("cy", camera_info.get("depth_cy", height * 0.5)) or height * 0.5)
-        valid_v, valid_u = np.nonzero(np.isfinite(depth) & (depth > 0.0))
+        min_depth_m = float(camera_info.get("workspace_min_depth_m", DEFAULT_WORKSPACE_MIN_DEPTH_M))
+        max_depth_m = float(camera_info.get("workspace_max_depth_m", DEFAULT_WORKSPACE_MAX_DEPTH_M))
+        valid_v, valid_u = np.nonzero(np.isfinite(depth) & (depth >= min_depth_m) & (depth <= max_depth_m))
         if len(valid_u) > self._max_points:
             indices = np.linspace(0, len(valid_u) - 1, self._max_points, dtype=np.int64)
             valid_u = valid_u[indices]
@@ -285,8 +354,10 @@ class Open3DGraspVisualizer:
         points = np.asarray(cloud.points)
         if points.size == 0:
             return
-        center = focus if focus is not None else points.mean(axis=0)
+        center = points.mean(axis=0)
         view = self._vis.get_view_control()
+        if view is None:
+            return
         view.set_lookat(center.tolist())
         view.set_front([0.0, 0.0, -1.0])
         view.set_up([0.0, -1.0, 0.0])
@@ -336,6 +407,12 @@ def build_graspnet_payload(
     }
 
 
+def resolve_visualize_every_n(args) -> int:
+    if bool(getattr(args, "manual_trigger", False)):
+        return 1
+    return max(int(getattr(args, "visualize_every_n", 1) or 1), 1)
+
+
 def run_once(args, backend, visualizer: Open3DGraspVisualizer | None = None, *, iteration: int = 1) -> dict[str, Any]:
     color_bgr = fetch_image(args.server_url, "/snapshot.jpg", args.timeout_ms, cv2.IMREAD_COLOR)
     depth_mm = fetch_image(args.server_url, "/depth.png", args.timeout_ms, cv2.IMREAD_UNCHANGED)
@@ -352,7 +429,7 @@ def run_once(args, backend, visualizer: Open3DGraspVisualizer | None = None, *, 
         max_grasps=int(args.max_grasps),
     )
     atomic_write_json(args.output_path, payload)
-    every_n = max(int(getattr(args, "visualize_every_n", 1) or 1), 1)
+    every_n = resolve_visualize_every_n(args)
     if visualizer is not None and int(iteration) % every_n == 0:
         visualizer.update(
             color_bgr=color_bgr,
@@ -372,6 +449,49 @@ def sleep_with_visualizer(period_sec: float, visualizer: Open3DGraspVisualizer |
         if visualizer is not None:
             visualizer.poll_events()
         time.sleep(min(remaining, 0.03 if visualizer is not None else remaining))
+
+
+def wait_for_manual_trigger(
+    *,
+    input_func=input,
+    print_func=print,
+    prompt: str = "Press y + Enter to run one GraspNet inference, or q + Enter to quit: ",
+) -> bool:
+    while True:
+        response = str(input_func(prompt)).strip().lower()
+        if response in {"y", "yes"}:
+            return True
+        if response in {"q", "quit", "exit"}:
+            print_func("manual trigger quit")
+            return False
+        print_func("skipped: enter y to infer, or q to quit")
+
+
+def run_bridge_loop(
+    args,
+    backend,
+    visualizer: Open3DGraspVisualizer | None = None,
+    *,
+    input_func=input,
+    print_func=print,
+) -> None:
+    period = 1.0 / max(float(args.poll_hz), 0.1)
+    iteration = 0
+    while True:
+        if bool(getattr(args, "manual_trigger", False)):
+            if not wait_for_manual_trigger(input_func=input_func, print_func=print_func):
+                return
+        try:
+            iteration += 1
+            payload = run_once(args, backend, visualizer=visualizer, iteration=iteration)
+            print_func(f"wrote {len(payload.get('candidates', []))} grasp candidates to {args.output_path}")
+        except Exception as exc:
+            write_backend_missing_payload(args.output_path, reason=f"{type(exc).__name__}: {exc}")
+            print_func(f"graspnet bridge failed: {type(exc).__name__}: {exc}")
+        if args.once:
+            return
+        if not bool(getattr(args, "manual_trigger", False)):
+            sleep_with_visualizer(period, visualizer)
 
 
 def main() -> None:
@@ -405,24 +525,12 @@ def main() -> None:
             print(
                 "Open3D visualization enabled: "
                 f"top_n={args.visualize_top_n}, max_points={args.visualize_max_points}, "
-                f"every_n={args.visualize_every_n}"
+                f"every_n={resolve_visualize_every_n(args)}"
             )
         except Exception as exc:
             print(f"Open3D visualization disabled: {type(exc).__name__}: {exc}")
 
-    period = 1.0 / max(float(args.poll_hz), 0.1)
-    iteration = 0
-    while True:
-        try:
-            iteration += 1
-            payload = run_once(args, backend, visualizer=visualizer, iteration=iteration)
-            print(f"wrote {len(payload.get('candidates', []))} grasp candidates to {args.output_path}")
-        except Exception as exc:
-            write_backend_missing_payload(args.output_path, reason=f"{type(exc).__name__}: {exc}")
-            print(f"graspnet bridge failed: {type(exc).__name__}: {exc}")
-        if args.once:
-            return
-        sleep_with_visualizer(period, visualizer)
+    run_bridge_loop(args, backend, visualizer=visualizer)
 
 
 if __name__ == "__main__":

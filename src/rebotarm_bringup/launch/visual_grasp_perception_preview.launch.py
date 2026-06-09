@@ -22,7 +22,6 @@ def generate_launch_description():
     start_candidate_ik_filter = LaunchConfiguration("start_candidate_ik_filter")
     start_visual_grasp_markers = LaunchConfiguration("start_visual_grasp_markers")
 
-    grasp_candidates_topic = LaunchConfiguration("grasp_candidates_topic")
     graspnet_candidates_topic = LaunchConfiguration("graspnet_candidates_topic")
     graspnet_source_mode = LaunchConfiguration("graspnet_source_mode")
     graspnet_candidates_url = LaunchConfiguration("graspnet_candidates_url")
@@ -82,7 +81,6 @@ def generate_launch_description():
             DeclareLaunchArgument("start_graspnet_baseline", default_value="true"),
             DeclareLaunchArgument("start_candidate_ik_filter", default_value="true"),
             DeclareLaunchArgument("start_visual_grasp_markers", default_value="true"),
-            DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/graspnet_candidates"),
             DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates"),
             DeclareLaunchArgument("graspnet_source_mode", default_value="network"),
             DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json"),
@@ -177,7 +175,7 @@ def generate_launch_description():
                     grasp_pose_policy_params,
                     table_safety_params,
                     {
-                        "input_topic": grasp_candidates_topic,
+                        "input_topic": graspnet_candidates_topic,
                         "output_topic": filtered_candidates_topic,
                         "output_plan_topic": filtered_plan_topic,
                         "joint_state_topic": candidate_joint_state_topic,

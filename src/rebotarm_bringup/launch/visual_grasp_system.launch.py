@@ -30,7 +30,6 @@ def generate_launch_description():
     start_vision = LaunchConfiguration("start_vision")
     ordinary_depth_quality_enabled = LaunchConfiguration("ordinary_depth_quality_enabled")
     start_graspnet_baseline = LaunchConfiguration("start_graspnet_baseline")
-    grasp_candidates_topic = LaunchConfiguration("grasp_candidates_topic")
     graspnet_candidates_topic = LaunchConfiguration("graspnet_candidates_topic")
     graspnet_source_mode = LaunchConfiguration("graspnet_source_mode")
     graspnet_candidates_url = LaunchConfiguration("graspnet_candidates_url")
@@ -44,6 +43,7 @@ def generate_launch_description():
     graspnet_max_points = LaunchConfiguration("graspnet_max_points")
     start_grasp_preview = LaunchConfiguration("start_grasp_preview")
     start_candidate_ik_filter = LaunchConfiguration("start_candidate_ik_filter")
+    candidate_ik_input_topic = LaunchConfiguration("candidate_ik_input_topic")
     start_visual_ready = LaunchConfiguration("start_visual_ready")
     move_to_visual_ready_on_start = LaunchConfiguration("move_to_visual_ready_on_start")
     visual_ready_joint_positions = LaunchConfiguration("visual_ready_joint_positions")
@@ -285,7 +285,7 @@ def generate_launch_description():
                 grasp_pose_policy_params,
                 table_safety_params,
                 {
-                    "input_topic": grasp_candidates_topic,
+                    "input_topic": candidate_ik_input_topic,
                     "output_topic": filtered_candidates_topic,
                     "output_plan_topic": filtered_plan_topic,
                     "joint_state_topic": candidate_joint_state_topic,
@@ -441,19 +441,18 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value="auto"),
-            DeclareLaunchArgument("use_hardware", default_value="false"),
+            DeclareLaunchArgument("use_hardware", default_value="true"),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
-            DeclareLaunchArgument("execution_mode", default_value="dry_run"),
+            DeclareLaunchArgument("execution_mode", default_value="execute"),
             DeclareLaunchArgument("start_vision", default_value="true"),
             DeclareLaunchArgument("ordinary_depth_quality_enabled", default_value="true"),
-            DeclareLaunchArgument("start_graspnet_baseline", default_value="false"),
-            DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates"),
+            DeclareLaunchArgument("start_graspnet_baseline", default_value="true"),
             DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates"),
             DeclareLaunchArgument("graspnet_source_mode", default_value="network"),
             DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json"),
             DeclareLaunchArgument("graspnet_network_timeout_ms", default_value="1000"),
-            DeclareLaunchArgument("graspnet_network_poll_hz", default_value="5.0"),
+            DeclareLaunchArgument("graspnet_network_poll_hz", default_value="0.5"),
             DeclareLaunchArgument("graspnet_model_root", default_value=""),
             DeclareLaunchArgument("graspnet_checkpoint_path", default_value=""),
             DeclareLaunchArgument("graspnet_device", default_value="cuda:0"),
@@ -461,7 +460,8 @@ def generate_launch_description():
             DeclareLaunchArgument("graspnet_max_grasps", default_value="10"),
             DeclareLaunchArgument("graspnet_max_points", default_value="20000"),
             DeclareLaunchArgument("start_grasp_preview", default_value="false"),
-            DeclareLaunchArgument("start_candidate_ik_filter", default_value="false"),
+            DeclareLaunchArgument("start_candidate_ik_filter", default_value="true"),
+            DeclareLaunchArgument("candidate_ik_input_topic", default_value="/grasp/graspnet_candidates"),
             DeclareLaunchArgument("start_visual_ready", default_value="true"),
             DeclareLaunchArgument("move_to_visual_ready_on_start", default_value="true"),
             DeclareLaunchArgument("visual_ready_joint_positions", default_value="[0.0, -0.1, -0.2, 0.2, 0.0, 0.0]"),
@@ -478,7 +478,7 @@ def generate_launch_description():
             DeclareLaunchArgument("show_gripper_open_axis", default_value="true"),
             DeclareLaunchArgument("filtered_candidates_topic", default_value="/grasp/filtered_candidates"),
             DeclareLaunchArgument("filtered_plan_topic", default_value="/grasp/filtered_plan"),
-            DeclareLaunchArgument("executor_input_topic", default_value="/grasp/plan"),
+            DeclareLaunchArgument("executor_input_topic", default_value="/grasp/filtered_plan"),
             DeclareLaunchArgument("candidate_joint_state_topic", default_value="/rebotarm/visual_joint_states"),
             DeclareLaunchArgument("candidate_filter_service_timeout_sec", default_value="5.0"),
             DeclareLaunchArgument("candidate_collision_check_enabled", default_value="true"),
@@ -493,8 +493,8 @@ def generate_launch_description():
             DeclareLaunchArgument("pose_policy", default_value="base_axis"),
             DeclareLaunchArgument("fixed_grasp_orientation_xyzw", default_value="[0.0, 0.0, 0.0, 1.0]"),
             DeclareLaunchArgument("base_approach_axis_xyz", default_value="[1.0, 0.0, 0.0]"),
-            DeclareLaunchArgument("base_pregrasp_distance_m", default_value="0.08"),
-            DeclareLaunchArgument("candidate_pose_policy", default_value="hybrid_geometry_with_base_axis_fallback"),
+            DeclareLaunchArgument("base_pregrasp_distance_m", default_value="0.06"),
+            DeclareLaunchArgument("candidate_pose_policy", default_value="preserve_candidate_pose"),
             DeclareLaunchArgument("candidate_orientation_yaw_offsets_rad", default_value="[0.0]"),
             DeclareLaunchArgument("candidate_grasp_z_offsets_m", default_value="[0.0]"),
             DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20"),
@@ -503,7 +503,7 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0"),
             DeclareLaunchArgument("candidate_pregrasp_min_z_m", default_value="0.120"),
             DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120"),
-            DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="false"),
+            DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true"),
             DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]"),
             DeclareLaunchArgument("candidate_workspace_max_xyz", default_value="[0.64, 0.35, 0.45]"),
             DeclareLaunchArgument("candidate_max_grasp_to_object_center_m", default_value="0.15"),
@@ -512,7 +512,7 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_max_joint6_delta_rad", default_value="1.5708"),
             DeclareLaunchArgument("candidate_joint6_symmetry_enabled", default_value="true"),
             DeclareLaunchArgument("candidate_joint6_symmetry_angle_rad", default_value="3.141592653589793"),
-            DeclareLaunchArgument("lift_z_m", default_value="0.08"),
+            DeclareLaunchArgument("lift_z_m", default_value="0.04"),
             DeclareLaunchArgument("close_position_m", default_value="0.025"),
             DeclareLaunchArgument("close_max_effort", default_value="0.4"),
             DeclareLaunchArgument("open_before_approach", default_value="true"),
@@ -525,7 +525,7 @@ def generate_launch_description():
             DeclareLaunchArgument("max_allowed_grasp_width_m", default_value="0.082"),
             DeclareLaunchArgument("gripper_grasp_enabled", default_value="true"),
             DeclareLaunchArgument("gripper_grasp_close_force", default_value="0.4"),
-            DeclareLaunchArgument("gripper_grasp_timeout_sec", default_value="5.0"),
+            DeclareLaunchArgument("gripper_grasp_timeout_sec", default_value="8.0"),
             DeclareLaunchArgument("gripper_grasp_min_close_time_sec", default_value="0.08"),
             DeclareLaunchArgument("gripper_grasp_velocity_threshold", default_value="0.04"),
             DeclareLaunchArgument("gripper_grasp_min_closure_distance_m", default_value="0.006"),
@@ -534,8 +534,8 @@ def generate_launch_description():
             DeclareLaunchArgument("safe_retreat_distance_m", default_value="0.06"),
             DeclareLaunchArgument("safe_retreat_axis_xyz", default_value="[-1.0, 0.0, 0.5]"),
             DeclareLaunchArgument("safe_home_after_grasp", default_value="false"),
-            DeclareLaunchArgument("moveit_planning_time", default_value="2.0"),
-            DeclareLaunchArgument("moveit_num_planning_attempts", default_value="1"),
+            DeclareLaunchArgument("moveit_planning_time", default_value="8.0"),
+            DeclareLaunchArgument("moveit_num_planning_attempts", default_value="5"),
             DeclareLaunchArgument("plan_only_stage_pause_sec", default_value="3.0"),
             DeclareLaunchArgument("approach_visual_servo_enabled", default_value="false"),
             DeclareLaunchArgument("approach_visual_servo_max_iterations", default_value="5"),

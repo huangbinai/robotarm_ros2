@@ -7,14 +7,14 @@ import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CameraInfo, Image
 
 from rebotarm_msgs.msg import Detection2DArray
 
 from .camera.gemini2_driver import Gemini2Config, Gemini2Driver
 from .camera.network_mjpeg_driver import NetworkMjpegConfig, NetworkMjpegDriver
 from .converters.detection_msgs import result_to_detection_array_msg
-from .converters.image_msgs import color_to_msg, depth_to_msg
+from .converters.image_msgs import camera_info_to_msg, color_to_msg, depth_to_msg
 from .converters.network_detection_msgs import detection_json_to_msg
 from .detector.network_detection_client import NetworkDetectionClient, NetworkDetectionConfig
 from .detector.yolo_detector import YoloDetector
@@ -37,6 +37,11 @@ class RebotArmVisionNode(Node):
         self.depth_pub = self.create_publisher(
             Image,
             "/camera/depth/image_raw",
+            qos_profile_sensor_data,
+        )
+        self.depth_camera_info_pub = self.create_publisher(
+            CameraInfo,
+            "/camera/depth/camera_info",
             qos_profile_sensor_data,
         )
         self.detection_pub = self.create_publisher(
@@ -135,6 +140,7 @@ class RebotArmVisionNode(Node):
                     stream_url=self.network_stream_url,
                     frame_timeout_ms=self.frame_timeout_ms,
                     depth_url=self.network_depth_url,
+                    camera_info_url=self.network_camera_info_url,
                 )
             )
         raise RuntimeError(f"unsupported camera.type: {self.camera_type}")
@@ -156,6 +162,7 @@ class RebotArmVisionNode(Node):
         self.declare_parameter("camera.network_snapshot_url", "")
         self.declare_parameter("camera.network_stream_url", "")
         self.declare_parameter("camera.network_depth_url", "")
+        self.declare_parameter("camera.network_camera_info_url", "")
         self.declare_parameter("camera.network_detections_url", "")
         self.declare_parameter("camera.network_detections_timeout_ms", 1000)
         self.declare_parameter("yolo.model_path", "")
@@ -189,6 +196,7 @@ class RebotArmVisionNode(Node):
         self.network_snapshot_url = str(self.get_parameter("camera.network_snapshot_url").value)
         self.network_stream_url = str(self.get_parameter("camera.network_stream_url").value)
         self.network_depth_url = str(self.get_parameter("camera.network_depth_url").value)
+        self.network_camera_info_url = str(self.get_parameter("camera.network_camera_info_url").value)
         self.network_detections_url = str(self.get_parameter("camera.network_detections_url").value)
         self.network_detections_timeout_ms = int(
             self.get_parameter("camera.network_detections_timeout_ms").value
@@ -245,6 +253,9 @@ class RebotArmVisionNode(Node):
             self.color_pub.publish(color_to_msg(color_bgr, stamp, self.frame_id_color))
         if depth_mm is not None:
             self.depth_pub.publish(depth_to_msg(depth_mm, stamp, self.frame_id_depth))
+            camera_info = self._camera_info_payload(depth_mm)
+            if camera_info is not None:
+                self.depth_camera_info_pub.publish(camera_info_to_msg(camera_info, stamp, self.frame_id_depth))
 
         if self.network_detection_client is not None and color_bgr is not None:
             payload = self.network_detection_client.fetch()
@@ -286,6 +297,22 @@ class RebotArmVisionNode(Node):
                 cv2.destroyWindow(self.preview_window_name)
                 self._preview_window_created = False
                 self.get_logger().info("preview window closed")
+
+    def _camera_info_payload(self, depth_mm):
+        getter = getattr(self.camera, "get_camera_info", None)
+        if callable(getter):
+            camera_info = getter()
+            if isinstance(camera_info, dict):
+                return camera_info
+        height, width = depth_mm.shape[:2]
+        return {
+            "width": int(width),
+            "height": int(height),
+            "fx": float(max(width, 1)),
+            "fy": float(max(height, 1)),
+            "cx": float(width) * 0.5,
+            "cy": float(height) * 0.5,
+        }
 
     def destroy_node(self):
         try:

@@ -16,6 +16,7 @@ rebotarm_vision_node:
     camera.network_snapshot_url: http://192.168.145.1:8081/snapshot.jpg
     camera.network_stream_url: http://192.168.145.1:8081/video.mjpg
     camera.network_depth_url: http://192.168.145.1:8081/depth.png
+    camera.network_camera_info_url: http://192.168.145.1:8081/camera_info.json
     camera.network_detections_url: http://192.168.145.1:8081/detections.json
     camera.network_detections_timeout_ms: 1000
     yolo.model_path: /home/u24/rebot_grasp/models/yoloe-26s-seg.pt

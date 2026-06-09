@@ -12,7 +12,7 @@ rebotarm_visual_grasp_executor:
     max_allowed_grasp_width_m: 0.082
     gripper_grasp_enabled: true
     gripper_grasp_close_force: 0.4
-    gripper_grasp_timeout_sec: 5.0
+    gripper_grasp_timeout_sec: 8.0
     gripper_grasp_min_close_time_sec: 0.08
     gripper_grasp_velocity_threshold: 0.04
     gripper_grasp_min_closure_distance_m: 0.006

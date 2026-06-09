@@ -1,9 +1,8 @@
 param(
     [string]$RepoRoot = "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main",
-    [bool]$Open3DVisualize = $true,
-    [int]$VisualizeTopN = 5,
-    [int]$VisualizeMaxPoints = 8000,
-    [int]$VisualizeEveryN = 10
+    [int]$MaxGrasps = 50,
+    [int]$VisualizeTopN = 10,
+    [int]$VisualizeMaxPoints = 8000
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,8 +23,7 @@ Start-Process powershell.exe -ArgumentList @(
     "-NoExit",
     "-ExecutionPolicy", "Bypass",
     "-File", $graspnetScript,
-    "-Open3DVisualize:$Open3DVisualize",
+    "-MaxGrasps", $MaxGrasps,
     "-VisualizeTopN", $VisualizeTopN,
-    "-VisualizeMaxPoints", $VisualizeMaxPoints,
-    "-VisualizeEveryN", $VisualizeEveryN
+    "-VisualizeMaxPoints", $VisualizeMaxPoints
 )

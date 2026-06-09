@@ -105,7 +105,7 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("close_contact_min_closure_delta_m", 0.015)
         self.declare_parameter("gripper_grasp_enabled", True)
         self.declare_parameter("gripper_grasp_close_force", 0.4)
-        self.declare_parameter("gripper_grasp_timeout_sec", 5.0)
+        self.declare_parameter("gripper_grasp_timeout_sec", 8.0)
         self.declare_parameter("gripper_grasp_min_close_time_sec", 0.08)
         self.declare_parameter("gripper_grasp_velocity_threshold", 0.04)
         self.declare_parameter("gripper_grasp_min_closure_distance_m", 0.006)

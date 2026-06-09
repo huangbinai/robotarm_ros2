@@ -32,7 +32,7 @@ def generate_launch_description():
                     "graspnet_source_mode": "network",
                     "graspnet_candidates_url": graspnet_candidates_url,
                     "graspnet_network_poll_hz": "0.5",
-                    "grasp_candidates_topic": "/grasp/graspnet_candidates",
+                    "candidate_ik_input_topic": "/grasp/graspnet_candidates",
                     "start_candidate_ik_filter": "true",
                     "candidate_pose_policy": "preserve_candidate_pose",
                     "candidate_max_candidates_per_frame": "20",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Optional
 from urllib.request import Request, urlopen
 
@@ -14,6 +15,7 @@ class NetworkMjpegConfig:
     stream_url: str
     frame_timeout_ms: int
     depth_url: str = ""
+    camera_info_url: str = ""
 
 
 class NetworkMjpegDriver:
@@ -22,6 +24,7 @@ class NetworkMjpegDriver:
         self._capture = None
         self._last_color_bgr: Optional[np.ndarray] = None
         self._last_depth_mm: Optional[np.ndarray] = None
+        self._last_camera_info: Optional[dict] = None
         self._last_debug_message = "driver_not_opened"
 
     def open(self) -> None:
@@ -98,6 +101,22 @@ class NetworkMjpegDriver:
         except Exception as exc:
             self._last_debug_message = f"depth_exception:{type(exc).__name__}:{exc}"
             return self._last_depth_mm
+
+    def get_camera_info(self) -> Optional[dict]:
+        if not self._config.camera_info_url:
+            return self._last_camera_info
+        timeout = max(self._config.frame_timeout_ms, 1) / 1000.0
+        try:
+            request = Request(self._config.camera_info_url, headers={"User-Agent": "rebotarm_vision/0.1"})
+            with urlopen(request, timeout=timeout) as response:
+                payload = response.read().decode("utf-8")
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                self._last_camera_info = parsed
+            return self._last_camera_info
+        except Exception as exc:
+            self._last_debug_message = f"camera_info_exception:{type(exc).__name__}:{exc}"
+            return self._last_camera_info
 
     def _get_stream_frame(self) -> Optional[np.ndarray]:
         if self._capture is None:

@@ -180,6 +180,17 @@ def _ensure_ros_stubs() -> None:
             self.velocity = []
             self.effort = []
 
+    class CameraInfo:
+        def __init__(self):
+            self.header = Header()
+            self.height = 0
+            self.width = 0
+            self.distortion_model = ""
+            self.d = []
+            self.k = [0.0] * 9
+            self.r = [0.0] * 9
+            self.p = [0.0] * 12
+
     class _Request:
         pass
 
@@ -228,6 +239,7 @@ def _ensure_ros_stubs() -> None:
     sensor_msgs_msg = _module("sensor_msgs.msg")
     sensor_msgs_msg.Image = Image
     sensor_msgs_msg.JointState = JointState
+    sensor_msgs_msg.CameraInfo = CameraInfo
     _module("sensor_msgs").msg = sensor_msgs_msg
 
     rclpy = _module("rclpy")

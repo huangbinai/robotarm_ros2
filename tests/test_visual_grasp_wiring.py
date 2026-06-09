@@ -100,14 +100,12 @@ def test_rebotarm_vision_exposes_grasp_console_entrypoints():
     }.issubset(scripts)
 
 
-def test_visual_grasp_system_launch_defaults_to_safe_preview_before_executor():
+def test_visual_grasp_system_launch_defaults_to_real_execute_mode():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
 
-    assert (
-        'DeclareLaunchArgument("execution_mode", default_value="simulation")' in launch_text
-        or 'DeclareLaunchArgument("execution_mode", default_value="plan_only")' in launch_text
-        or 'DeclareLaunchArgument("execution_mode", default_value="dry_run")' in launch_text
-    )
+    assert 'DeclareLaunchArgument("use_hardware", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("use_local_rviz", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("execution_mode", default_value="execute")' in launch_text
     assert 'DeclareLaunchArgument("start_grasp_preview",' in launch_text
     assert (
         'DeclareLaunchArgument("start_visual_grasp_executor", default_value="false")'
@@ -167,6 +165,31 @@ def test_visual_grasp_strategy_defaults_are_split_into_yaml_profiles():
     assert "grasp_pose_policy_params,\n                gripper_policy_params," in launch_text
     assert "retry_policy_params,\n                retreat_policy_params," in launch_text
     assert "visual_servo_params,\n                table_safety_params," in launch_text
+
+
+def test_visual_grasp_system_uses_graspnet_candidates_directly_before_ik():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+
+    assert 'DeclareLaunchArgument("candidate_ik_input_topic", default_value="/grasp/graspnet_candidates")' in launch_text
+    assert 'executable="rebotarm_regular_object_candidate_node"' not in launch_text
+    assert 'executable="rebotarm_grasp_candidate_merge_node"' not in launch_text
+    assert "/grasp/regular_candidates" not in launch_text
+    assert "/grasp/merged_candidates" not in launch_text
+    assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
+    assert '"input_topic": candidate_ik_input_topic' in launch_text
+
+
+def test_visual_grasp_vision_publishes_live_depth_camera_info():
+    camera_config = _read("src/rebotarm_vision/config/camera.yaml")
+    vision_text = _read("src/rebotarm_vision/rebotarm_vision/vision_node.py")
+    network_driver_text = _read("src/rebotarm_vision/rebotarm_vision/camera/network_mjpeg_driver.py")
+
+    assert "camera.network_camera_info_url: http://192.168.145.1:8081/camera_info.json" in camera_config
+    assert '"/camera/depth/camera_info"' in vision_text
+    assert "CameraInfo" in vision_text
+    assert "camera_info_to_msg" in vision_text
+    assert "network_camera_info_url" in vision_text
+    assert "camera_info_url" in network_driver_text
 
 
 def test_visual_grasp_system_can_move_to_visual_ready_on_start():
@@ -248,10 +271,10 @@ def test_visual_grasp_perception_preview_launch_avoids_second_controller_stack()
     assert 'executable="rviz2"' in launch_text
     assert 'PathJoinSubstitution([bringup_share, "rviz", "visual_grasp.rviz"])' in launch_text
     assert 'DeclareLaunchArgument("start_graspnet_baseline", default_value="true")' in launch_text
-    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/graspnet_candidates")' in launch_text
     assert 'DeclareLaunchArgument("candidate_pose_policy", default_value="preserve_candidate_pose")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_joint6_delta_rad", default_value="0.0")' in launch_text
+    assert '"input_topic": graspnet_candidates_topic' in launch_text
     assert "interactive_system.launch.py" not in launch_text
     assert "rebotarm_visual_ready" not in launch_text
     assert "rebotarm_sim_trajectory_controller" not in launch_text
@@ -287,7 +310,7 @@ def test_real_perception_sim_execution_launch_uses_independent_sim_namespace():
     assert '"execution_mode": "execute"' in launch_text
     assert '"start_vision": "true"' in launch_text
     assert '"start_graspnet_baseline": "true"' in launch_text
-    assert '"grasp_candidates_topic": "/grasp/graspnet_candidates"' in launch_text
+    assert '"candidate_ik_input_topic": "/grasp/graspnet_candidates"' in launch_text
     assert '"candidate_pose_policy": "preserve_candidate_pose"' in launch_text
     assert '"candidate_max_candidates_per_frame": "20"' in launch_text
     assert '"candidate_joint_state_topic": ["/", sim_arm_namespace, "/visual_joint_states"]' in launch_text
@@ -327,8 +350,8 @@ def test_visual_grasp_system_forwards_hardware_channel_and_disables_on_shutdown(
     assert '"shutdown_safe_home": shutdown_safe_home' in interactive_text
     assert 'DeclareLaunchArgument("start_motion_execution", default_value="true")' in launch_text
     assert 'executable="PoseExecutionNode"' in launch_text
-    assert 'DeclareLaunchArgument("moveit_planning_time", default_value="2.0")' in launch_text
-    assert 'DeclareLaunchArgument("moveit_num_planning_attempts", default_value="1")' in launch_text
+    assert 'DeclareLaunchArgument("moveit_planning_time", default_value="8.0")' in launch_text
+    assert 'DeclareLaunchArgument("moveit_num_planning_attempts", default_value="5")' in launch_text
     assert '"moveit_planning_time": moveit_planning_time' in launch_text
     assert '"moveit_num_planning_attempts": moveit_num_planning_attempts' in launch_text
     assert 'f"/{self._arm_namespace}/motion_execution/execute_pose"' in _read(
@@ -418,8 +441,7 @@ def test_graspnet_baseline_v13_is_wired_as_candidate_source_without_replacing_ex
     node_text = _read("src/rebotarm_vision/rebotarm_vision/graspnet_baseline_node.py")
 
     assert "rebotarm_graspnet_baseline_node" in setup_scripts
-    assert 'DeclareLaunchArgument("start_graspnet_baseline", default_value="false")' in launch_text
-    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates")' in launch_text
+    assert 'DeclareLaunchArgument("start_graspnet_baseline", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates")' in launch_text
     assert 'DeclareLaunchArgument("graspnet_source_mode", default_value="network")' in launch_text
     assert 'DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json")' in launch_text
@@ -428,10 +450,12 @@ def test_graspnet_baseline_v13_is_wired_as_candidate_source_without_replacing_ex
     assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
     assert '"source_mode": graspnet_source_mode' in launch_text
     assert '"network_candidates_url": graspnet_candidates_url' in launch_text
-    assert '"input_topic": grasp_candidates_topic' in launch_text
+    assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
+    assert 'DeclareLaunchArgument("candidate_ik_input_topic", default_value="/grasp/graspnet_candidates")' in launch_text
+    assert '"input_topic": candidate_ik_input_topic' in launch_text
     assert "candidate_scoring_mode" not in launch_text
     assert '"scoring_mode"' not in launch_text
-    assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/plan")' in launch_text
+    assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/filtered_plan")' in launch_text
     assert "GraspNetBaselineBackend" in node_text
     assert "NetworkGraspNetClient" in node_text
     assert "GraspCandidateArray" in node_text
@@ -494,15 +518,15 @@ def test_rebotarm_vision_exposes_candidate_ik_filter_entrypoint():
 def test_visual_grasp_system_launch_wires_candidate_ik_filter():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
 
-    assert 'DeclareLaunchArgument("start_candidate_ik_filter", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("start_candidate_ik_filter", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("filtered_candidates_topic", default_value="/grasp/filtered_candidates")' in launch_text
     assert 'DeclareLaunchArgument("filtered_plan_topic", default_value="/grasp/filtered_plan")' in launch_text
     assert 'DeclareLaunchArgument("candidate_collision_check_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("candidate_collision_check_service", default_value="/check_state_validity")' in launch_text
     assert 'DeclareLaunchArgument("candidate_collision_group_name", default_value="arm_with_gripper")' in launch_text
     assert 'executable="rebotarm_grasp_candidate_ik_filter"' in launch_text
-    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates")' in launch_text
-    assert '"input_topic": grasp_candidates_topic' in launch_text
+    assert 'DeclareLaunchArgument("grasp_candidates_topic", default_value="/grasp/candidates")' not in launch_text
+    assert '"input_topic": candidate_ik_input_topic' in launch_text
     assert '"output_topic": filtered_candidates_topic' in launch_text
     assert '"output_plan_topic": filtered_plan_topic' in launch_text
     assert '"collision_check_enabled": candidate_collision_check_enabled' in launch_text
@@ -529,7 +553,7 @@ def test_visual_grasp_executor_consumes_grasp_plan_by_default():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
 
-    assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/plan")' in launch_text
+    assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/filtered_plan")' in launch_text
     assert 'executor_input_topic = LaunchConfiguration("executor_input_topic")' in launch_text
     assert '"input_topic": executor_input_topic' in launch_text
     assert 'if str(getattr(plan, "source", "")).strip() == "candidate_ik_filter":' in executor_text
@@ -727,7 +751,7 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert "execute_pose" not in node_text
     assert 'DeclareLaunchArgument("candidate_joint_state_topic", default_value="/rebotarm/visual_joint_states")' in launch_text
     assert 'DeclareLaunchArgument("candidate_filter_service_timeout_sec", default_value="5.0")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_pose_policy", default_value="hybrid_geometry_with_base_axis_fallback")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_pose_policy", default_value="preserve_candidate_pose")' in launch_text
     assert 'DeclareLaunchArgument("candidate_orientation_yaw_offsets_rad",' in launch_text
     assert 'DeclareLaunchArgument("candidate_grasp_z_offsets_m",' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20")' in launch_text
@@ -742,7 +766,7 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0")' in launch_text
     assert 'DeclareLaunchArgument("candidate_pregrasp_min_z_m", default_value="0.120")' in launch_text
     assert 'DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]")' in launch_text
     assert 'DeclareLaunchArgument("candidate_workspace_max_xyz", default_value="[0.64, 0.35, 0.45]")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_grasp_to_object_center_m", default_value="0.15")' in launch_text

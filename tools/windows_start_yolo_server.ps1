@@ -1,6 +1,7 @@
 param(
     [string]$PythonExe = "D:\anaconda3\envs\orbbec_yolo\python.exe",
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$ModelPath = "tools\yolo26s-seg.pt",
     [string]$GraspNetCandidatesPath = "D:\tmp\graspnet_candidates.json"
 )
 
@@ -8,6 +9,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $RepoRoot
 
 & $PythonExe tools\windows_mjpeg_server.py `
+    --model-path $ModelPath `
     --capture-source orbbec `
     --host 0.0.0.0 `
     --port 8081 `

@@ -13,7 +13,7 @@ from rebotarm_msgs.msg import GraspCandidateArray
 class GraspDepthProbeNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_grasp_depth_probe")
-        self.declare_parameter("input_topic", "/grasp/candidates")
+        self.declare_parameter("input_topic", "/grasp/graspnet_candidates")
         self.declare_parameter("sample_count", 20)
         self.declare_parameter("min_reliable_depth_m", 0.20)
         self.declare_parameter("absolute_min_depth_m", 0.15)

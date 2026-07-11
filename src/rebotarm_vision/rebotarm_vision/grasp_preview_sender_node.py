@@ -91,7 +91,7 @@ def apply_tcp_offset_to_pose(
 class GraspPreviewSenderNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_grasp_preview_sender")
-        self.declare_parameter("input_topic", "/grasp/plan")
+        self.declare_parameter("input_topic", "/grasp/filtered_plan")
         self.declare_parameter("output_topic", "/rebotarm/interactive_control/pose_target")
         self.declare_parameter("pose_mode", "pregrasp")
         self.declare_parameter("target_frame", "base_link")

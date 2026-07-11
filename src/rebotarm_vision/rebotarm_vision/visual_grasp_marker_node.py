@@ -323,7 +323,7 @@ class VisualGraspMarkerNode(Node):
 
     def __init__(self) -> None:
         super().__init__("rebotarm_visual_grasp_markers")
-        self.declare_parameter("input_topic", "/grasp/plan")
+        self.declare_parameter("input_topic", "/grasp/filtered_plan")
         self.declare_parameter("output_topic", "/grasp/visual_markers")
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("object_min_diameter_m", 0.06)

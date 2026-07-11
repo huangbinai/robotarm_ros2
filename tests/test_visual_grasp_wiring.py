@@ -53,6 +53,32 @@ def _console_scripts(setup_relative: str) -> set[str]:
     raise AssertionError(f"setup() entry_points not found in {setup_relative}")
 
 
+def test_ordinary_grasp_runtime_branch_is_removed():
+    setup_text = _read("src/rebotarm_vision/setup.py")
+    launch_text = _read("src/rebotarm_vision/launch/vision.launch.py")
+    camera_text = _read("src/rebotarm_vision/config/camera.yaml")
+
+    combined = "\n".join((setup_text, launch_text, camera_text))
+    assert "rebotarm_ordinary_grasp_node" not in combined
+    assert "ordinary_grasp." not in combined
+    assert "rebotarm_vision.ordinary_grasp_node" not in combined
+    assert "/grasp/candidates" not in combined
+
+
+def test_graspnet_only_defaults_use_graspnet_candidates_and_filtered_plan():
+    candidate_filter = _read(
+        "src/rebotarm_vision/rebotarm_vision/candidate_ik_filter_node.py"
+    )
+    depth_probe = _read("src/rebotarm_vision/rebotarm_vision/grasp_depth_probe_node.py")
+    preview = _read("src/rebotarm_vision/rebotarm_vision/grasp_preview_sender_node.py")
+    markers = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_marker_node.py")
+
+    assert 'self.declare_parameter("input_topic", "/grasp/graspnet_candidates")' in candidate_filter
+    assert 'self.declare_parameter("input_topic", "/grasp/graspnet_candidates")' in depth_probe
+    assert 'self.declare_parameter("input_topic", "/grasp/filtered_plan")' in preview
+    assert 'self.declare_parameter("input_topic", "/grasp/filtered_plan")' in markers
+
+
 def test_status_panel_page_is_split_from_ros_node():
     panel_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     page_text = _read_file("src/rebotarm_interactive_control/rebotarm_interactive_control/status_panel_page.py")
@@ -88,7 +114,6 @@ def test_rebotarm_vision_exposes_grasp_console_entrypoints():
     scripts = _console_scripts("src/rebotarm_vision/setup.py")
 
     assert {
-        "rebotarm_ordinary_grasp_node",
         "rebotarm_graspnet_baseline_node",
         "rebotarm_send_grasp_preview",
         "rebotarm_visual_grasp_executor",
@@ -429,7 +454,7 @@ def test_visual_grasp_commands_document_strict_stability_test():
     assert "/rebotarm/visual_ready/move" in doc_text
     assert "/rebotarm/visual_grasp/execute" in doc_text
     assert "failed_stage" in doc_text
-    assert "V1.1" in readme_text
+    assert "YOLO + GraspNet" in readme_text
     assert "20" in readme_text
     assert "rebotarm_visual_grasp_benchmark" in readme_text
     assert "rebotarm_visual_grasp_benchmark" in readme_text
@@ -493,20 +518,6 @@ def test_rebotarm_msgs_exports_grasp_gripper_service():
     assert "float64 hold_force" in srv_text
     assert "bool contact_detected" in srv_text
     assert "float64 contact_position" in srv_text
-
-
-def test_ordinary_grasp_node_publishes_candidate_array_topic():
-    node_text = _read("src/rebotarm_vision/rebotarm_vision/ordinary_grasp_node.py")
-    launch_text = _read("src/rebotarm_vision/launch/vision.launch.py")
-    camera_config = _read("src/rebotarm_vision/config/camera.yaml")
-
-    assert "GraspCandidateArray" in node_text
-    assert 'ordinary_grasp.candidates_topic", "/grasp/candidates"' in node_text
-    assert "self.candidates_pub.publish(candidates)" in node_text
-    assert "plan_and_candidates_from_detections_and_depth" in node_text
-    assert "-p ordinary_grasp.candidates_topic:=/grasp/candidates " in launch_text
-    assert "depth_quality.max_depth_m: 1.2" in camera_config
-    assert "DepthQualityConfig" in node_text
 
 
 def test_rebotarm_vision_exposes_candidate_ik_filter_entrypoint():

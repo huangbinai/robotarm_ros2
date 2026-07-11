@@ -36,7 +36,6 @@ setup(
     entry_points={
         "console_scripts": [
             "rebotarm_vision_node = rebotarm_vision.vision_node:main",
-            "rebotarm_ordinary_grasp_node = rebotarm_vision.ordinary_grasp_node:main",
             "rebotarm_graspnet_baseline_node = rebotarm_vision.graspnet_baseline_node:main",
             "rebotarm_send_grasp_preview = rebotarm_vision.grasp_preview_sender_node:main",
             "rebotarm_visual_grasp_markers = rebotarm_vision.visual_grasp_marker_node:main",

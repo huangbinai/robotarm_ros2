@@ -17,7 +17,7 @@ from .graspnet_baseline_adapter import (
     predictions_to_candidate_array,
 )
 from .network_graspnet_client import NetworkGraspNetClient, NetworkGraspNetConfig
-from .ordinary_grasp_node import depth_image_to_array
+from .depth_utils import depth_image_to_array
 
 
 def color_image_to_array(msg: Image) -> np.ndarray:

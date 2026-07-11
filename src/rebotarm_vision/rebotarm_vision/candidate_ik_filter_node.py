@@ -42,7 +42,7 @@ class CandidateIkFilterNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_grasp_candidate_ik_filter")
         self._callback_group = ReentrantCallbackGroup()
-        self.declare_parameter("input_topic", "/grasp/candidates")
+        self.declare_parameter("input_topic", "/grasp/graspnet_candidates")
         self.declare_parameter("output_topic", "/grasp/filtered_candidates")
         self.declare_parameter("output_plan_topic", "/grasp/filtered_plan")
         self.declare_parameter("target_frame", "base_link")

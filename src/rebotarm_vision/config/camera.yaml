@@ -19,7 +19,7 @@ rebotarm_vision_node:
     camera.network_camera_info_url: http://192.168.145.1:8081/camera_info.json
     camera.network_detections_url: http://192.168.145.1:8081/detections.json
     camera.network_detections_timeout_ms: 1000
-    yolo.model_path: /home/u24/rebot_grasp/models/yoloe-26s-seg.pt
+    yolo.model_path: /home/u24/rebot_ai_models/yoloe-26s-seg.pt
     yolo.device: cpu
     yolo.conf_threshold: 0.25
     yolo.iou_threshold: 0.45
@@ -41,31 +41,6 @@ rebotarm_vision_node:
     ros.enable_detection: false
     ros.enable_network_detection: true
 
-rebotarm_ordinary_grasp_node:
-  ros__parameters:
-    ordinary_grasp.input_detections_topic: /grasp/detections
-    ordinary_grasp.input_depth_topic: /camera/depth/image_raw
-    ordinary_grasp.output_topic: /grasp/plan
-    ordinary_grasp.pregrasp_pose_topic: /grasp/pregrasp_pose
-    ordinary_grasp.grasp_pose_topic: /grasp/grasp_pose
-    ordinary_grasp.root: /home/u24/rebot_grasp
-    ordinary_grasp.output_frame_id: camera_depth_frame
-    ordinary_grasp.fx: 519.422
-    ordinary_grasp.fy: 519.17
-    ordinary_grasp.cx: 320.681
-    ordinary_grasp.cy: 241.362
-    ordinary_grasp.depth_quantile: 0.75
-    ordinary_grasp.pregrasp_offset_m: 0.08
-    depth_quality.enabled: true
-    depth_quality.min_valid_pixels: 80
-    depth_quality.min_valid_ratio: 0.20
-    depth_quality.min_depth_m: 0.15
-    depth_quality.max_depth_m: 1.2
-    depth_quality.max_depth_mad_m: 0.025
-    depth_quality.max_depth_span_m: 0.080
-    depth_quality.center_window_px: 9
-    depth_quality.min_center_valid_ratio: 0.30
-
 rebotarm_grasp_tcp_frame:
   ros__parameters:
     parent_frame: end_link
@@ -76,7 +51,7 @@ rebotarm_grasp_tcp_frame:
 
 rebotarm_grasp_preview_sender:
   ros__parameters:
-    input_topic: /grasp/plan
+    input_topic: /grasp/filtered_plan
     output_topic: /rebotarm/interactive_control/pose_target
     pose_mode: pregrasp
     target_frame: base_link

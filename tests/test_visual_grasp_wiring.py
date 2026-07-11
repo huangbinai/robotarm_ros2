@@ -306,6 +306,7 @@ def test_visual_grasp_perception_preview_launch_avoids_second_controller_stack()
     assert "PoseExecutionNode" not in launch_text
     assert "reBotArmController" not in launch_text
     assert "move_group" not in launch_text
+    assert "ordinary_depth_quality_enabled" not in launch_text
 
 
 def test_visual_ready_hold_launch_starts_real_controller_without_moveit_stack():

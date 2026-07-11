@@ -28,7 +28,6 @@ def generate_launch_description():
     use_local_rviz = LaunchConfiguration("use_local_rviz")
     execution_mode = LaunchConfiguration("execution_mode")
     start_vision = LaunchConfiguration("start_vision")
-    ordinary_depth_quality_enabled = LaunchConfiguration("ordinary_depth_quality_enabled")
     start_graspnet_baseline = LaunchConfiguration("start_graspnet_baseline")
     graspnet_candidates_topic = LaunchConfiguration("graspnet_candidates_topic")
     graspnet_source_mode = LaunchConfiguration("graspnet_source_mode")
@@ -199,9 +198,6 @@ def generate_launch_description():
                 PathJoinSubstitution([vision_share, "launch", "vision.launch.py"])
             ),
             condition=IfCondition(start_vision),
-            launch_arguments={
-                "ordinary_depth_quality_enabled": ordinary_depth_quality_enabled,
-            }.items(),
         ),
         Node(
             package="rebotarm_vision",
@@ -446,7 +442,6 @@ def generate_launch_description():
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("execution_mode", default_value="execute"),
             DeclareLaunchArgument("start_vision", default_value="true"),
-            DeclareLaunchArgument("ordinary_depth_quality_enabled", default_value="true"),
             DeclareLaunchArgument("start_graspnet_baseline", default_value="true"),
             DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates"),
             DeclareLaunchArgument("graspnet_source_mode", default_value="network"),

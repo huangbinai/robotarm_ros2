@@ -132,6 +132,7 @@ def test_visual_grasp_system_launch_defaults_to_real_execute_mode():
     assert 'DeclareLaunchArgument("use_local_rviz", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("execution_mode", default_value="execute")' in launch_text
     assert 'DeclareLaunchArgument("start_grasp_preview",' in launch_text
+    assert "ordinary_depth_quality_enabled" not in launch_text
     assert (
         'DeclareLaunchArgument("start_visual_grasp_executor", default_value="false")'
         in launch_text

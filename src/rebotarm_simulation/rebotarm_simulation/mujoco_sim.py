@@ -94,6 +94,16 @@ class RebotArmMujoco:
         self._ensure_open()
         return float(self._model.opt.timestep)
 
+    def _unsafe_viewer_handles(self):
+        """Return mutable native handles for the package's viewer adapter.
+
+        The returned MuJoCo objects are only valid while this simulation is
+        open.  Callers must not retain them or mutate physics outside the
+        simulation's owning thread.
+        """
+        self._ensure_open()
+        return self._model, self._data
+
     @property
     def control_targets(self) -> tuple[float, ...]:
         self._ensure_open()

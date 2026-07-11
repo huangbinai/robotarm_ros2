@@ -64,7 +64,6 @@ def generate_launch_description():
 
     tcp_offset_xyz = LaunchConfiguration("tcp_offset_xyz")
     target_base_offset_xyz = LaunchConfiguration("target_base_offset_xyz")
-    base_z_offset_m = LaunchConfiguration("base_z_offset_m")
     grasp_base_z_offset_m = LaunchConfiguration("grasp_base_z_offset_m")
     lift_z_m = LaunchConfiguration("lift_z_m")
     gripper_open_axis_local_xyz = LaunchConfiguration("gripper_open_axis_local_xyz")
@@ -120,7 +119,6 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_joint6_symmetry_angle_rad", default_value="3.141592653589793"),
             DeclareLaunchArgument("tcp_offset_xyz", default_value="[-0.04, 0.0, 0.0]"),
             DeclareLaunchArgument("target_base_offset_xyz", default_value="[0.0, 0.0, 0.0]"),
-            DeclareLaunchArgument("base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("grasp_base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("lift_z_m", default_value="0.04"),
             DeclareLaunchArgument("gripper_open_axis_local_xyz", default_value="[0.0, 1.0, 0.0]"),
@@ -205,7 +203,6 @@ def generate_launch_description():
                         "candidate_joint6_symmetry_angle_rad": candidate_joint6_symmetry_angle_rad,
                         "tcp_offset_xyz": tcp_offset_xyz,
                         "target_base_offset_xyz": target_base_offset_xyz,
-                        "pregrasp_base_z_offset_m": base_z_offset_m,
                         "grasp_base_z_offset_m": grasp_base_z_offset_m,
                     },
                 ],

@@ -97,7 +97,6 @@ class GraspPreviewSenderNode(Node):
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("tcp_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("base_z_offset_m", 0.0)
         self.declare_parameter("min_target_z_m", 0.0)
         self.declare_parameter("publish_count", 5)
         self.declare_parameter("exit_after_publish", True)
@@ -108,7 +107,6 @@ class GraspPreviewSenderNode(Node):
         self.target_frame = str(self.get_parameter("target_frame").value)
         self.tcp_offset_xyz = self._tuple3("tcp_offset_xyz")
         self.target_base_offset_xyz = self._tuple3("target_base_offset_xyz")
-        self.base_z_offset_m = float(self.get_parameter("base_z_offset_m").value)
         self.min_target_z_m = float(self.get_parameter("min_target_z_m").value)
         self.publish_count = max(1, int(self.get_parameter("publish_count").value))
         self.exit_after_publish = bool(self.get_parameter("exit_after_publish").value)
@@ -129,7 +127,6 @@ class GraspPreviewSenderNode(Node):
             f"pose_mode={self.pose_mode}, target_frame={self.target_frame}, "
             f"tcp_offset_xyz={self.tcp_offset_xyz}, "
             f"target_base_offset_xyz={self.target_base_offset_xyz}, "
-            f"base_z_offset_m={self.base_z_offset_m:.3f}, "
             f"min_target_z_m={self.min_target_z_m:.3f}"
         )
 
@@ -172,7 +169,6 @@ class GraspPreviewSenderNode(Node):
         pose.position.x = round(float(pose.position.x) + self.target_base_offset_xyz[0], 6)
         pose.position.y = round(float(pose.position.y) + self.target_base_offset_xyz[1], 6)
         pose.position.z = round(float(pose.position.z) + self.target_base_offset_xyz[2], 6)
-        pose.position.z = round(float(pose.position.z) + self.base_z_offset_m, 6)
         if self.min_target_z_m > 0.0:
             pose.position.z = max(float(pose.position.z), self.min_target_z_m)
         for _ in range(self.publish_count):

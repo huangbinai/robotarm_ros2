@@ -204,8 +204,6 @@ lift_z_m=0.04
 moveit_planning_time=8.0
 moveit_num_planning_attempts=5
 base_pregrasp_distance_m=0.06
-base_z_offset_m=0.0
-candidate_pregrasp_min_z_m=0.0
 safe_home_after_grasp=false
 ```
 

@@ -77,7 +77,6 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("pregrasp_base_z_offset_m", 0.0)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("pose_policy", "base_axis")
         self.declare_parameter("fixed_grasp_orientation_xyzw", [0.0, 0.0, 0.0, 1.0])
@@ -157,7 +156,6 @@ class VisualGraspExecutorNode(Node):
         self._target_frame = str(self.get_parameter("target_frame").value).strip()
         self._tcp_offset_xyz = self._tuple3("tcp_offset_xyz")
         self._target_base_offset_xyz = self._tuple3("target_base_offset_xyz")
-        self._pregrasp_base_z_offset_m = float(self.get_parameter("pregrasp_base_z_offset_m").value)
         self._grasp_base_z_offset_m = float(self.get_parameter("grasp_base_z_offset_m").value)
         self._service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
         self._motion_result_timeout_sec = float(self.get_parameter("motion_result_timeout_sec").value)
@@ -640,7 +638,7 @@ class VisualGraspExecutorNode(Node):
         policy = str(self.get_parameter("pose_policy").value).strip().lower()
         if policy in ("visual_pose", "source_pose", "legacy"):
             return (
-                self._convert_plan_pose(plan, plan.pregrasp_pose, self._pregrasp_base_z_offset_m),
+                self._convert_plan_pose(plan, plan.pregrasp_pose, 0.0),
                 self._convert_plan_pose(plan, plan.grasp_pose, self._grasp_base_z_offset_m),
             )
         if policy != "base_axis":
@@ -658,7 +656,6 @@ class VisualGraspExecutorNode(Node):
                 pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
                 tcp_offset_xyz=self._tcp_offset_xyz,
                 target_base_offset_xyz=self._target_base_offset_xyz,
-                pregrasp_z_offset_m=self._pregrasp_base_z_offset_m,
                 grasp_z_offset_m=self._grasp_base_z_offset_m,
             ),
         )
@@ -682,7 +679,7 @@ class VisualGraspExecutorNode(Node):
             converted = transform_pose_message(converted, _transform_from_msg(tf_msg))
         return converted
 
-    def _convert_plan_pose(self, plan: GraspPlan, pose: Pose, base_z_offset_m: float) -> PoseTarget:
+    def _convert_plan_pose(self, plan: GraspPlan, pose: Pose, z_offset_m: float) -> PoseTarget:
         converted = deepcopy(pose)
         source_frame = str(plan.header.frame_id)
         if self._target_frame and source_frame and source_frame != self._target_frame:
@@ -696,7 +693,7 @@ class VisualGraspExecutorNode(Node):
         converted = apply_tcp_offset_to_pose(converted, self._tcp_offset_xyz)
         converted.position.x = round(float(converted.position.x) + self._target_base_offset_xyz[0], 6)
         converted.position.y = round(float(converted.position.y) + self._target_base_offset_xyz[1], 6)
-        converted.position.z = round(float(converted.position.z) + self._target_base_offset_xyz[2] + base_z_offset_m, 6)
+        converted.position.z = round(float(converted.position.z) + self._target_base_offset_xyz[2] + z_offset_m, 6)
         return pose_to_target(converted)
 
     def _run_stage(self, stage: VisualGraspStage) -> tuple[bool, str]:

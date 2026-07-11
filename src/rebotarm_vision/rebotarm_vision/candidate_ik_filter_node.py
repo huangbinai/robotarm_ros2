@@ -64,8 +64,6 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("lift_z_m", 0.08)
         self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("pregrasp_base_z_offset_m", 0.0)
-        self.declare_parameter("candidate_pregrasp_min_z_m", 0.0)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("candidate_min_jaw_width_m", 0.006)
         self.declare_parameter("candidate_max_jaw_width_m", 0.082)
@@ -321,8 +319,6 @@ class CandidateIkFilterNode(Node):
                 base_pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
                 tcp_offset_xyz=self._tuple3("tcp_offset_xyz"),
                 target_base_offset_xyz=self._tuple3("target_base_offset_xyz"),
-                pregrasp_base_z_offset_m=float(self.get_parameter("pregrasp_base_z_offset_m").value),
-                pregrasp_min_z_m=float(self.get_parameter("candidate_pregrasp_min_z_m").value),
                 grasp_base_z_offset_m=float(self.get_parameter("grasp_base_z_offset_m").value),
                 orientation_yaw_offsets_rad=tuple(self._list_float_parameter("orientation_yaw_offsets_rad")),
                 candidate_grasp_z_offsets_m=tuple(self._list_float_parameter("candidate_grasp_z_offsets_m")),

@@ -690,11 +690,11 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'deltas["joint6"] = _symmetric_parallel_jaw_delta' not in node_text
     assert "build_candidate_target_variants(" in node_text
     assert "CandidateTargetPolicyConfig(" in node_text
-    assert 'self.declare_parameter("candidate_pregrasp_min_z_m", 0.0)' in node_text
-    assert 'self.declare_parameter("pregrasp_base_z_offset_m", 0.0)' in node_text
-    assert 'pregrasp_min_z_m=float(self.get_parameter("candidate_pregrasp_min_z_m").value)' in node_text
+    assert "candidate_pregrasp_min_z_m" not in node_text
+    assert "pregrasp_base_z_offset_m" not in node_text
     assert "build_parallel_jaw_pose_variants(" in target_policy_text
-    assert "pregrasp_min_z_m: float = 0.0" in target_policy_text
+    assert "pregrasp_min_z_m" not in target_policy_text
+    assert "pregrasp_base_z_offset_m" not in target_policy_text
     assert "build_parallel_jaw_symmetric_orientation" in pose_variant_text
     assert "parallel_jaw_symmetric" in pose_variant_text
     assert 'self.declare_parameter("candidate_min_grasp_z_m", 0.0)' in node_text
@@ -778,8 +778,9 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_joint6_symmetry_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("candidate_joint6_symmetry_angle_rad", default_value="3.141592653589793")' in launch_text
     assert 'DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_pregrasp_min_z_m", default_value="0.0")' in launch_text
-    assert 'DeclareLaunchArgument("base_z_offset_m", default_value="0.0")' in launch_text
+    assert "candidate_pregrasp_min_z_m" not in launch_text
+    assert 'LaunchConfiguration("base_z_offset_m")' not in launch_text
+    assert 'DeclareLaunchArgument("base_z_offset_m"' not in launch_text
     assert 'DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120")' in launch_text
     assert 'DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]")' in launch_text
@@ -794,7 +795,6 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert '"max_variants_per_candidate": candidate_max_variants_per_candidate' not in launch_text
     assert '"candidate_min_jaw_width_m": candidate_min_jaw_width_m' in launch_text
     assert '"candidate_max_jaw_width_m": candidate_max_jaw_width_m' in launch_text
-    assert '"candidate_pregrasp_min_z_m": candidate_pregrasp_min_z_m' in launch_text
     assert '"candidate_workspace_gate_enabled": candidate_workspace_gate_enabled' in launch_text
     assert '"candidate_workspace_min_xyz": candidate_workspace_min_xyz' in launch_text
     assert '"candidate_workspace_max_xyz": candidate_workspace_max_xyz' in launch_text
@@ -812,7 +812,7 @@ def test_flat_graspnet_profile_preserves_pose_and_uses_end_link_center():
     assert "candidate_workspace_max_xyz: [0.64, 0.35, 0.45]" in profile_text
     assert "candidate_max_grasp_to_object_center_m: 0.15" in profile_text
     assert "candidate_max_candidates_per_frame: 20" in profile_text
-    assert "candidate_pregrasp_min_z_m: 0.0" in profile_text
+    assert "candidate_pregrasp_min_z_m" not in profile_text
     assert "candidate_max_variants_per_candidate" not in profile_text
 
 

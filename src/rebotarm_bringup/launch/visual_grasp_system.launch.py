@@ -68,7 +68,6 @@ def generate_launch_description():
     pose_mode = LaunchConfiguration("pose_mode")
     tcp_offset_xyz = LaunchConfiguration("tcp_offset_xyz")
     target_base_offset_xyz = LaunchConfiguration("target_base_offset_xyz")
-    base_z_offset_m = LaunchConfiguration("base_z_offset_m")
     min_target_z_m = LaunchConfiguration("min_target_z_m")
     grasp_base_z_offset_m = LaunchConfiguration("grasp_base_z_offset_m")
     pose_policy = LaunchConfiguration("pose_policy")
@@ -82,7 +81,6 @@ def generate_launch_description():
     candidate_min_jaw_width_m = LaunchConfiguration("candidate_min_jaw_width_m")
     candidate_max_jaw_width_m = LaunchConfiguration("candidate_max_jaw_width_m")
     candidate_min_grasp_z_m = LaunchConfiguration("candidate_min_grasp_z_m")
-    candidate_pregrasp_min_z_m = LaunchConfiguration("candidate_pregrasp_min_z_m")
     candidate_safe_lift_min_z_m = LaunchConfiguration("candidate_safe_lift_min_z_m")
     candidate_workspace_gate_enabled = LaunchConfiguration("candidate_workspace_gate_enabled")
     candidate_workspace_min_xyz = LaunchConfiguration("candidate_workspace_min_xyz")
@@ -214,7 +212,6 @@ def generate_launch_description():
                     "target_frame": "base_link",
                     "tcp_offset_xyz": tcp_offset_xyz,
                     "target_base_offset_xyz": target_base_offset_xyz,
-                    "base_z_offset_m": base_z_offset_m,
                     "min_target_z_m": min_target_z_m,
                     "publish_count": 5,
                     "exit_after_publish": False,
@@ -316,8 +313,6 @@ def generate_launch_description():
                     "candidate_joint6_symmetry_angle_rad": candidate_joint6_symmetry_angle_rad,
                     "tcp_offset_xyz": tcp_offset_xyz,
                     "target_base_offset_xyz": target_base_offset_xyz,
-                    "pregrasp_base_z_offset_m": base_z_offset_m,
-                    "candidate_pregrasp_min_z_m": candidate_pregrasp_min_z_m,
                     "grasp_base_z_offset_m": grasp_base_z_offset_m,
                 }
             ],
@@ -373,7 +368,6 @@ def generate_launch_description():
                     "target_frame": "base_link",
                     "tcp_offset_xyz": tcp_offset_xyz,
                     "target_base_offset_xyz": target_base_offset_xyz,
-                    "pregrasp_base_z_offset_m": base_z_offset_m,
                     "grasp_base_z_offset_m": grasp_base_z_offset_m,
                     "pose_policy": pose_policy,
                     "fixed_grasp_orientation_xyzw": fixed_grasp_orientation_xyzw,
@@ -482,7 +476,6 @@ def generate_launch_description():
             DeclareLaunchArgument("pose_mode", default_value="pregrasp"),
             DeclareLaunchArgument("tcp_offset_xyz", default_value="[-0.04, 0.0, 0.0]"),
             DeclareLaunchArgument("target_base_offset_xyz", default_value="[0.0, 0.0, 0.0]"),
-            DeclareLaunchArgument("base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("min_target_z_m", default_value="0.0"),
             DeclareLaunchArgument("grasp_base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("pose_policy", default_value="base_axis"),
@@ -496,7 +489,6 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006"),
             DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.082"),
             DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0"),
-            DeclareLaunchArgument("candidate_pregrasp_min_z_m", default_value="0.0"),
             DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120"),
             DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true"),
             DeclareLaunchArgument("candidate_workspace_min_xyz", default_value="[0.18, -0.35, 0.0]"),

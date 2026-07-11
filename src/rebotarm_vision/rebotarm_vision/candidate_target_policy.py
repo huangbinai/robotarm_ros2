@@ -30,8 +30,6 @@ class CandidateTargetPolicyConfig:
     base_pregrasp_distance_m: float = 0.08
     tcp_offset_xyz: tuple[float, float, float] = (-0.04, 0.0, 0.0)
     target_base_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    pregrasp_base_z_offset_m: float = 0.0
-    pregrasp_min_z_m: float = 0.0
     grasp_base_z_offset_m: float = 0.0
     orientation_yaw_offsets_rad: tuple[float, ...] = (0.0,)
     candidate_grasp_z_offsets_m: tuple[float, ...] = (0.0,)
@@ -59,8 +57,6 @@ def _base_axis_config(
         pregrasp_distance_m=float(config.base_pregrasp_distance_m),
         tcp_offset_xyz=config.tcp_offset_xyz,
         target_base_offset_xyz=config.target_base_offset_xyz,
-        pregrasp_z_offset_m=float(config.pregrasp_base_z_offset_m),
-        pregrasp_min_z_m=float(config.pregrasp_min_z_m),
         grasp_z_offset_m=float(grasp_z_offset_m),
     )
 
@@ -74,8 +70,6 @@ def _official_config(
         pregrasp_distance_m=float(config.base_pregrasp_distance_m),
         tcp_offset_xyz=config.tcp_offset_xyz,
         target_base_offset_xyz=config.target_base_offset_xyz,
-        pregrasp_z_offset_m=float(config.pregrasp_base_z_offset_m),
-        pregrasp_min_z_m=float(config.pregrasp_min_z_m),
         grasp_z_offset_m=float(grasp_z_offset_m),
     )
 

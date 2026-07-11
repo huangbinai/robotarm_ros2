@@ -77,7 +77,7 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("target_frame", "base_link")
         self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
-        self.declare_parameter("pregrasp_base_z_offset_m", 0.05)
+        self.declare_parameter("pregrasp_base_z_offset_m", 0.0)
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("pose_policy", "base_axis")
         self.declare_parameter("fixed_grasp_orientation_xyzw", [0.0, 0.0, 0.0, 1.0])

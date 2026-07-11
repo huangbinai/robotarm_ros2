@@ -120,7 +120,7 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_joint6_symmetry_angle_rad", default_value="3.141592653589793"),
             DeclareLaunchArgument("tcp_offset_xyz", default_value="[-0.04, 0.0, 0.0]"),
             DeclareLaunchArgument("target_base_offset_xyz", default_value="[0.0, 0.0, 0.0]"),
-            DeclareLaunchArgument("base_z_offset_m", default_value="0.05"),
+            DeclareLaunchArgument("base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("grasp_base_z_offset_m", default_value="0.0"),
             DeclareLaunchArgument("lift_z_m", default_value="0.04"),
             DeclareLaunchArgument("gripper_open_axis_local_xyz", default_value="[0.0, 1.0, 0.0]"),

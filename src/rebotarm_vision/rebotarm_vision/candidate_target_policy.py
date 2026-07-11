@@ -30,7 +30,7 @@ class CandidateTargetPolicyConfig:
     base_pregrasp_distance_m: float = 0.08
     tcp_offset_xyz: tuple[float, float, float] = (-0.04, 0.0, 0.0)
     target_base_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    pregrasp_base_z_offset_m: float = 0.05
+    pregrasp_base_z_offset_m: float = 0.0
     pregrasp_min_z_m: float = 0.0
     grasp_base_z_offset_m: float = 0.0
     orientation_yaw_offsets_rad: tuple[float, ...] = (0.0,)

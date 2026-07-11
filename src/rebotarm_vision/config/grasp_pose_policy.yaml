@@ -11,7 +11,7 @@ rebotarm_grasp_candidate_ik_filter:
     candidate_min_jaw_width_m: 0.006
     candidate_max_jaw_width_m: 0.082
     candidate_min_grasp_z_m: 0.0
-    candidate_pregrasp_min_z_m: 0.120
+    candidate_pregrasp_min_z_m: 0.0
     candidate_safe_lift_min_z_m: 0.120
     candidate_workspace_gate_enabled: false
     candidate_workspace_min_xyz: [0.18, -0.35, 0.0]
@@ -24,7 +24,7 @@ rebotarm_grasp_candidate_ik_filter:
     candidate_joint6_symmetry_angle_rad: 3.141592653589793
     tcp_offset_xyz: [-0.04, 0.0, 0.0]
     target_base_offset_xyz: [0.0, 0.0, 0.0]
-    pregrasp_base_z_offset_m: 0.05
+    pregrasp_base_z_offset_m: 0.0
     grasp_base_z_offset_m: 0.0
 
 rebotarm_visual_grasp_executor:
@@ -37,7 +37,7 @@ rebotarm_visual_grasp_executor:
     lift_z_m: 0.08
     tcp_offset_xyz: [-0.04, 0.0, 0.0]
     target_base_offset_xyz: [0.0, 0.0, 0.0]
-    pregrasp_base_z_offset_m: 0.05
+    pregrasp_base_z_offset_m: 0.0
     grasp_base_z_offset_m: 0.0
 
 rebotarm_grasp_preview_sender:
@@ -46,7 +46,7 @@ rebotarm_grasp_preview_sender:
     target_frame: base_link
     tcp_offset_xyz: [-0.04, 0.0, 0.0]
     target_base_offset_xyz: [0.0, 0.0, 0.0]
-    base_z_offset_m: 0.05
+    base_z_offset_m: 0.0
     min_target_z_m: 0.0
 
 rebotarm_visual_grasp_markers:

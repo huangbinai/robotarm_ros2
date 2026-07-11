@@ -1,7 +1,7 @@
 rebotarm_grasp_candidate_ik_filter:
   ros__parameters:
     candidate_min_grasp_z_m: 0.0
-    candidate_pregrasp_min_z_m: 0.120
+    candidate_pregrasp_min_z_m: 0.0
     candidate_safe_lift_min_z_m: 0.120
     candidate_workspace_gate_enabled: false
     candidate_workspace_min_xyz: [0.18, -0.35, 0.0]

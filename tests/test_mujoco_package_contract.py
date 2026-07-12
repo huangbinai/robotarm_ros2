@@ -117,3 +117,15 @@ def test_package_declares_ros_adapter_dependencies() -> None:
         "trajectory_msgs",
     ):
         assert dependency in exec_dependencies
+
+
+def test_abandoned_vhacd_pipeline_is_not_shipped() -> None:
+    forbidden = (
+        PACKAGE / "config/vhacd_collision.json",
+        PACKAGE / "requirements-vhacd.txt",
+        PACKAGE / "tools/generate_vhacd_collision.py",
+        PACKAGE / "models/rebotarm/collision_sources_repaired",
+        PACKAGE / "models/rebotarm/collision_vhacd",
+        PACKAGE / "models/rebotarm/collision_vhacd_manifest.json",
+    )
+    assert not [path for path in forbidden if path.exists()]

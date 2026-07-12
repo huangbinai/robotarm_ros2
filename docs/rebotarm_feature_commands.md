@@ -2,6 +2,18 @@
 
 这个文档只放仍然保留的独立功能启动指令和测试顺序。
 
+## MuJoCo 无硬件仿真
+
+完整安装、健康检查、Viewer、ROS 2 接口和排障说明见
+[MuJoCo 仿真底座](../src/rebotarm_simulation/README_mujoco.md)。快速入口：
+
+```bash
+rebotarm_mujoco_cli --headless --duration 5
+ros2 launch rebotarm_simulation mujoco_sim.launch.py
+```
+
+与 MoveIt 联调时必须保持 `use_hardware:=false`，不得启动实机控制器。
+
 ## RViz MoveIt 末端拖动
 
 这两个入口保留，但路线是 MoveIt 原生 MotionPlanning：

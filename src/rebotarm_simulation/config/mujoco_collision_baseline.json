@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "model_kind": "primitive_collision",
+  "steps": 10000,
+  "samples": 3,
+  "mujoco_version": "3.10.0",
+  "python_version": "3.12.3",
+  "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+  "cpu_count": 2,
+  "scene_sha256": "460180e3617d7b6dd0ad1b680b1f3c7a22e7530d9ab5e00e0a61242069651595",
+  "robot_sha256": "40c84e14ed043dccc15ce30ad842b6e444f6a998b3f5fef2ef5eb641f0055866",
+  "measurements": [
+    {
+      "steps": 10000,
+      "elapsed_seconds": 0.48192408098839223,
+      "realtime_factor": 41.5003125782414,
+      "peak_contacts": 4
+    },
+    {
+      "steps": 10000,
+      "elapsed_seconds": 0.4262406500056386,
+      "realtime_factor": 46.92185036724073,
+      "peak_contacts": 4
+    },
+    {
+      "steps": 10000,
+      "elapsed_seconds": 0.41663877900282387,
+      "realtime_factor": 48.003212873913604,
+      "peak_contacts": 4
+    }
+  ],
+  "median_elapsed_seconds": 0.4262406500056386
+}

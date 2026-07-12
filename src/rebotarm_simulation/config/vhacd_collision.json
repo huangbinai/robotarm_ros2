@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "package": "vhacdx",
+    "version": "0.0.10"
+  },
+  "common": {
+    "resolution": 400000,
+    "minimum_volume_percent_error_allowed": 1.0,
+    "max_recursion_depth": 10,
+    "shrink_wrap": true,
+    "fill_mode": "flood",
+    "max_num_vertices_per_hull": 64,
+    "async_acd": false,
+    "min_edge_length": 2,
+    "find_best_plane": false
+  },
+  "parts": {
+    "base_link": {"source": "base_link.STL", "max_convex_hulls": 8},
+    "link1": {"source": "link1.STL", "max_convex_hulls": 8},
+    "link2": {"source": "link2.STL", "max_convex_hulls": 8},
+    "link3": {"source": "link3.STL", "max_convex_hulls": 8},
+    "link4": {"source": "link4.STL", "max_convex_hulls": 8},
+    "link5": {"source": "link5.STL", "max_convex_hulls": 8},
+    "link6": {"source": "link6.STL", "max_convex_hulls": 8},
+    "gripper_base": {"source": "gripper_base.stl", "max_convex_hulls": 12},
+    "left_finger": {"source": "left_finger.stl", "max_convex_hulls": 20},
+    "right_finger": {"source": "right_finger.stl", "max_convex_hulls": 20}
+  }
+}

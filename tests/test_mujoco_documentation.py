@@ -108,3 +108,20 @@ def test_feature_commands_links_to_mujoco_readme_and_safe_entry_points():
     assert "ros2 launch rebotarm_simulation mujoco_sim.launch.py" in text
     assert "rebotarm_mujoco_cli --headless --duration" in text
     assert "use_hardware:=false" in text
+
+
+def test_mujoco_readme_documents_local_urdf_to_mjcf_workflow() -> None:
+    text = _text(README)
+    required = (
+        "src/rebotarm_moveit_config/config/rebotarm.urdf",
+        "src/rebotarm_simulation/models/rebotarm/robot.xml",
+        "rebotarm_urdf_to_mjcf --repo-root",
+        "rebotarm_urdf_to_mjcf --repo-root . --check",
+        "mujoco>=3.3,<4",
+        "原始 STL",
+        "Get-FileHash",
+        "sha256sum",
+        "不连接实机",
+    )
+    for value in required:
+        assert value in text

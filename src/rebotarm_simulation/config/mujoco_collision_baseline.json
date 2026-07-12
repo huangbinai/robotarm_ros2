@@ -5,29 +5,33 @@
   "samples": 3,
   "mujoco_version": "3.10.0",
   "python_version": "3.12.3",
+  "hostname": "u24-VMware-Virtual-Platform",
+  "machine": "x86_64",
+  "cpu_model": "AMD Ryzen 7 7840H w/Radeon 780M Graphics",
   "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
   "cpu_count": 2,
+  "hash_mode": "newline_normalized_sha256",
   "scene_sha256": "460180e3617d7b6dd0ad1b680b1f3c7a22e7530d9ab5e00e0a61242069651595",
   "robot_sha256": "40c84e14ed043dccc15ce30ad842b6e444f6a998b3f5fef2ef5eb641f0055866",
   "measurements": [
     {
       "steps": 10000,
-      "elapsed_seconds": 0.48192408098839223,
-      "realtime_factor": 41.5003125782414,
+      "elapsed_seconds": 0.33563592401333153,
+      "realtime_factor": 59.58837707493312,
       "peak_contacts": 4
     },
     {
       "steps": 10000,
-      "elapsed_seconds": 0.4262406500056386,
-      "realtime_factor": 46.92185036724073,
+      "elapsed_seconds": 0.33349515999725554,
+      "realtime_factor": 59.970885335081284,
       "peak_contacts": 4
     },
     {
       "steps": 10000,
-      "elapsed_seconds": 0.41663877900282387,
-      "realtime_factor": 48.003212873913604,
+      "elapsed_seconds": 0.36299235600745305,
+      "realtime_factor": 55.09757896827269,
       "peak_contacts": 4
     }
   ],
-  "median_elapsed_seconds": 0.4262406500056386
+  "median_elapsed_seconds": 0.33563592401333153
 }

@@ -122,6 +122,29 @@ def test_canonical_stl_bytes_are_deterministic_and_reject_non_triangles():
         generator.canonical_stl_bytes(bad)
 
 
+def test_canonical_stl_normalizes_cyclic_faces_order_and_signed_zero():
+    mesh = trimesh.creation.box()
+    changed = mesh.copy()
+    changed.vertices[changed.vertices == 0] = -0.0
+    changed.faces = np.roll(changed.faces[::-1], 1, axis=1)
+    assert generator.canonical_stl_bytes(changed) == generator.canonical_stl_bytes(mesh)
+
+
+def test_hull_sort_key_has_geometry_hash_tie_breaker():
+    class Mesh:
+        volume = 1.0
+        centroid = np.zeros(3)
+        bounds = np.array([[-1, -1, -1], [1, 1, 1]])
+
+        def __init__(self, vertices):
+            self.vertices = np.asarray(vertices, dtype=float)
+            self.faces = np.array([[0, 1, 2]])
+
+    first = Mesh([[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    second = Mesh([[0, 0, 0], [1, 0, 0], [0, 0, 1]])
+    assert generator.hull_sort_key(first) != generator.hull_sort_key(second)
+
+
 def test_decompose_part_flattens_faces_and_passes_locked_parameters(tmp_path, monkeypatch):
     source = tmp_path / "source.stl"
     trimesh.creation.box().export(source)
@@ -166,7 +189,7 @@ def test_build_and_check_manifest_detect_tampering_extra_and_traversal(tmp_path,
     manifest_path = tmp_path / "collision_vhacd" / "manifest.json"
     assert manifest_path.is_file()
     assert manifest["parameters"] == config["common"]
-    assert manifest["generator_script_sha256"] == generator.sha256_file(generator.__file__)
+    assert manifest["generator_script_sha256"] == generator._normalized_text_sha256(generator.__file__)
     assert generator.check_outputs(tmp_path, config, manifest_path) == manifest
 
     hull = tmp_path / "collision_vhacd" / "part" / "hull_000.stl"
@@ -221,3 +244,66 @@ def test_check_is_read_only_and_does_not_import_vhacdx(tmp_path, monkeypatch):
     generator.check_outputs(tmp_path, config, manifest_path)
     after = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
     assert before == after and "vhacdx" not in sys.modules
+
+
+def test_build_failure_preserves_existing_tree_without_transaction_debris(tmp_path, monkeypatch):
+    config = _small_config(tmp_path)
+    second = tmp_path / "assets" / "second.stl"
+    trimesh.creation.box().export(second)
+    config["parts"]["second"] = {"source": "second.stl", "max_convex_hulls": 2}
+    config["_config_path"].write_text(json.dumps({k: v for k, v in config.items() if not k.startswith("_")}))
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    calls = iter(([trimesh.creation.box()], RuntimeError("injected second-part failure")))
+
+    def fail_second(*_):
+        result = next(calls)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(generator, "decompose_part", fail_second)
+    with pytest.raises(RuntimeError, match="injected"):
+        generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    after = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+    assert not list(tmp_path.glob(".collision_vhacd.*"))
+
+
+def test_provenance_hashes_normalize_json_and_newlines(tmp_path):
+    value = _config()
+    compact = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    pretty = json.dumps(value, indent=2).replace("\n", "\r\n")
+    lf_config = tmp_path / "lf.json"
+    crlf_config = tmp_path / "crlf.json"
+    lf_config.write_text(compact, encoding="utf-8", newline="\n")
+    crlf_config.write_text(pretty, encoding="utf-8", newline="")
+    assert generator._config_hash(generator.load_config(lf_config)) == generator._config_hash(
+        generator.load_config(crlf_config)
+    )
+    lf_script = tmp_path / "lf.py"
+    crlf_script = tmp_path / "crlf.py"
+    lf_script.write_bytes(b"one\ntwo\n")
+    crlf_script.write_bytes(b"one\r\ntwo\r\n")
+    assert generator._normalized_text_sha256(lf_script) == generator._normalized_text_sha256(crlf_script)
+
+
+@pytest.mark.parametrize("mutation", ["top", "part", "output", "nested"])
+def test_check_rejects_malformed_manifest_as_value_error(tmp_path, monkeypatch, mutation):
+    config = _small_config(tmp_path)
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    path = tmp_path / "collision_vhacd" / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "top":
+        manifest["extra"] = 1
+    elif mutation == "part":
+        manifest["parts"]["part"]["extra"] = 1
+    elif mutation == "output":
+        manifest["parts"]["part"]["outputs"][0]["extra"] = 1
+    else:
+        manifest["parts"]["part"]["input"] = []
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest"):
+        generator.check_outputs(tmp_path, config, path)

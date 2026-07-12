@@ -7,9 +7,11 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 EXPECTED_GENERATOR = {"package": "vhacdx", "version": "0.0.10"}
@@ -57,7 +59,9 @@ def _rounded(values):
 
 
 def hull_sort_key(mesh):
-    return (-round(float(mesh.volume), 12), _rounded(mesh.centroid), _rounded(mesh.bounds.reshape(-1)))
+    geometry_hash = hashlib.sha256(canonical_stl_bytes(mesh)).hexdigest()
+    return (-round(float(mesh.volume), 12), _rounded(mesh.centroid),
+            _rounded(mesh.bounds.reshape(-1)), geometry_hash)
 
 
 def load_config(path):
@@ -147,7 +151,8 @@ def decompose_part(source, settings):
 
 def canonical_stl_bytes(mesh):
     import numpy as np
-    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    vertices[vertices == 0] = np.float32(0.0)
     faces = np.asarray(mesh.faces)
     if faces.ndim != 2 or faces.shape[1:] != (3,):
         raise ValueError("STL output requires triangular faces")
@@ -155,9 +160,13 @@ def canonical_stl_bytes(mesh):
     records = []
     for face in faces:
         triangle = vertices[face]
-        normal = np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
+        rotations = [np.roll(triangle, -offset, axis=0) for offset in range(3)]
+        triangle = min(rotations, key=lambda item: tuple(float(value) for value in item.reshape(-1)))
+        normal = np.cross(triangle[1].astype(np.float64) - triangle[0],
+                          triangle[2].astype(np.float64) - triangle[0])
         length = np.linalg.norm(normal)
-        normal = normal / length if length else np.zeros(3)
+        normal = np.asarray(normal / length if length else np.zeros(3), dtype=np.float32)
+        normal[normal == 0] = np.float32(0.0)
         payload = struct.pack("<12fH", *(normal.tolist() + triangle.reshape(-1).tolist()), 0)
         records.append(payload)
     records.sort()
@@ -176,11 +185,15 @@ def _inside(path, root, label):
 
 
 def _config_hash(config):
-    path = getattr(config, "config_path", None) or config.get("_config_path")
-    if path:
-        return sha256_file(path)
     clean = {key: value for key, value in config.items() if not key.startswith("_")}
-    return hashlib.sha256(json.dumps(clean, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    payload = json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _normalized_text_sha256(path):
+    text = Path(path).read_text(encoding="utf-8")
+    payload = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _mesh_metadata(path):
@@ -209,48 +222,99 @@ def _atomic_json(path, value):
             os.unlink(temporary)
 
 
+def _validate_manifest_schema(manifest):
+    top_keys = {"schema_version", "generator", "generator_script_sha256", "config_sha256",
+                "parameters", "parts"}
+    if not isinstance(manifest, dict) or set(manifest) != top_keys:
+        raise ValueError("invalid manifest top-level schema")
+    if not isinstance(manifest.get("parameters"), dict):
+        raise ValueError("invalid manifest parameters type")
+    if (type(manifest["schema_version"]) is not int
+            or not isinstance(manifest["generator"], dict)
+            or not isinstance(manifest["generator_script_sha256"], str)
+            or not isinstance(manifest["config_sha256"], str)
+            or not isinstance(manifest["parts"], dict)):
+        raise ValueError("invalid manifest top-level types")
+    for name, part in manifest["parts"].items():
+        if not isinstance(name, str) or not isinstance(part, dict) or set(part) != {"input", "outputs"}:
+            raise ValueError("invalid manifest part schema")
+        input_record = part["input"]
+        outputs = part["outputs"]
+        if (not isinstance(input_record, dict) or set(input_record) != {"path", "sha256"}
+                or not all(isinstance(input_record[key], str) for key in input_record)
+                or not isinstance(outputs, list)):
+            raise ValueError("invalid manifest input or outputs schema")
+        for output in outputs:
+            expected = {"path", "sha256", "vertices", "faces", "volume", "bounds"}
+            if not isinstance(output, dict) or set(output) != expected:
+                raise ValueError("invalid manifest output schema")
+            if (not isinstance(output["path"], str) or not isinstance(output["sha256"], str)
+                    or type(output["vertices"]) is not int or type(output["faces"]) is not int
+                    or output["vertices"] <= 0 or output["faces"] <= 0
+                    or type(output["volume"]) not in {int, float}
+                    or not isinstance(output["bounds"], list) or len(output["bounds"]) != 2
+                    or any(not isinstance(row, list) or len(row) != 3 for row in output["bounds"])
+                    or any(type(value) not in {int, float} for row in output["bounds"] for value in row)):
+                raise ValueError("invalid manifest output types")
+
+
 def build_manifest(model_dir, config, output_root):
     model_dir = Path(model_dir).resolve()
     output_root = _inside(output_root, model_dir, "output root")
     if output_root != model_dir / "collision_vhacd":
         raise ValueError("output root must be model_dir/collision_vhacd")
-    output_root.mkdir(parents=True, exist_ok=True)
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".collision_vhacd.tmp.", dir=output_root.parent)).resolve()
+    backup = output_root.parent / f".collision_vhacd.backup.{uuid.uuid4().hex}"
+    _inside(temporary, output_root.parent, "temporary output")
+    _inside(backup, output_root.parent, "backup output")
     manifest = {
         "schema_version": 1,
         "generator": EXPECTED_GENERATOR,
-        "generator_script_sha256": sha256_file(__file__),
+        "generator_script_sha256": _normalized_text_sha256(__file__),
         "config_sha256": _config_hash(config),
         "parameters": config["common"],
         "parts": {},
     }
-    for name, part in config["parts"].items():
-        if Path(name).name != name:
-            raise ValueError(f"unsafe part name: {name}")
-        if Path(part["source"]).is_absolute() or ".." in Path(part["source"]).parts:
-            raise ValueError(f"unsafe input path for {name}")
-        source = _inside(model_dir / "assets" / part["source"], model_dir, "input")
-        part_dir = _inside(output_root / name, output_root, "part output")
-        if part_dir.exists():
-            for old in part_dir.iterdir():
-                _inside(old, part_dir, "old output")
-                if old.is_file() or old.is_symlink():
-                    old.unlink()
-                else:
-                    raise ValueError(f"unexpected directory in output: {old}")
-        part_dir.mkdir(parents=True, exist_ok=True)
-        settings = {**config["common"], "max_convex_hulls": part["max_convex_hulls"]}
-        outputs = []
-        for number, hull in enumerate(decompose_part(source, settings)):
-            path = part_dir / f"hull_{number:03d}.stl"
-            path.write_bytes(canonical_stl_bytes(hull))
-            relative = path.relative_to(model_dir).as_posix()
-            outputs.append({"path": relative, "sha256": sha256_file(path), **_mesh_metadata(path)})
-        manifest["parts"][name] = {
-            "input": {"path": source.relative_to(model_dir).as_posix(), "sha256": sha256_file(source)},
-            "outputs": outputs,
-        }
-    _atomic_json(output_root / "manifest.json", manifest)
-    return manifest
+    old_moved = False
+    try:
+        for name, part in config["parts"].items():
+            if Path(name).name != name:
+                raise ValueError(f"unsafe part name: {name}")
+            if Path(part["source"]).is_absolute() or ".." in Path(part["source"]).parts:
+                raise ValueError(f"unsafe input path for {name}")
+            source = _inside(model_dir / "assets" / part["source"], model_dir, "input")
+            part_dir = _inside(temporary / name, temporary, "part output")
+            part_dir.mkdir(parents=True)
+            settings = {**config["common"], "max_convex_hulls": part["max_convex_hulls"]}
+            outputs = []
+            for number, hull in enumerate(decompose_part(source, settings)):
+                path = part_dir / f"hull_{number:03d}.stl"
+                path.write_bytes(canonical_stl_bytes(hull))
+                final_path = output_root / name / path.name
+                relative = final_path.relative_to(model_dir).as_posix()
+                outputs.append({"path": relative, "sha256": sha256_file(path), **_mesh_metadata(path)})
+            manifest["parts"][name] = {
+                "input": {"path": source.relative_to(model_dir).as_posix(), "sha256": sha256_file(source)},
+                "outputs": outputs,
+            }
+        _atomic_json(temporary / "manifest.json", manifest)
+        if output_root.exists():
+            os.replace(output_root, backup)
+            old_moved = True
+        os.replace(temporary, output_root)
+        if old_moved:
+            shutil.rmtree(backup)
+        return manifest
+    except Exception:
+        if old_moved and not output_root.exists() and backup.exists():
+            os.replace(backup, output_root)
+        raise
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        if backup.exists() and output_root.exists():
+            shutil.rmtree(backup)
 
 
 def check_outputs(model_dir, config, manifest_path):
@@ -262,9 +326,10 @@ def check_outputs(model_dir, config, manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid manifest: {exc}") from exc
+    _validate_manifest_schema(manifest)
     if manifest.get("schema_version") != 1 or manifest.get("generator") != EXPECTED_GENERATOR:
         raise ValueError("manifest schema or generator mismatch")
-    if manifest.get("generator_script_sha256") != sha256_file(__file__):
+    if manifest.get("generator_script_sha256") != _normalized_text_sha256(__file__):
         raise ValueError("generator script hash mismatch")
     if manifest.get("parameters") != config["common"]:
         raise ValueError("manifest parameters mismatch")

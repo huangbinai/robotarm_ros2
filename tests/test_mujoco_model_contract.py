@@ -221,6 +221,8 @@ def test_position_actuator_force_limits_match_urdf_effort_limits() -> None:
         actuator = actuators[joint_name]
         assert actuator.attrib["forcelimited"] == "true"
         assert _numbers(actuator.attrib["forcerange"]) == pytest.approx((-effort, effort))
+        assert math.isfinite(float(actuator.attrib["kv"]))
+        assert float(actuator.attrib["kv"]) > 0
 
 
 def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -> None:
@@ -290,3 +292,81 @@ def test_mujoco_zero_pose_fk_matches_independent_urdf_rpy_math_when_runtime_is_a
         )
         expected_rotation = tuple(expected[row][column] for row in range(3) for column in range(3))
         assert tuple(float(value) for value in data.xmat[body_id]) == pytest.approx(expected_rotation, abs=1e-6)
+
+
+def _robot_self_contact_pairs(mujoco, model, data) -> set[frozenset[str]]:
+    robot_bodies = {
+        "base_link", "link1", "link2", "link3", "link4", "link5", "link6",
+        "end_link", "left_finger_link", "right_finger_link",
+    }
+    pairs: set[frozenset[str]] = set()
+    for contact in data.contact:
+        body1 = mujoco.mj_id2name(
+            model, mujoco.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[contact.geom1])
+        )
+        body2 = mujoco.mj_id2name(
+            model, mujoco.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[contact.geom2])
+        )
+        if body1 in robot_bodies and body2 in robot_bodies:
+            pairs.add(frozenset((body1, body2)))
+    return pairs
+
+
+def test_canonical_zero_pose_has_no_false_robot_self_contacts_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert _robot_self_contact_pairs(mujoco, model, data) == set()
+
+
+def test_default_ros_target_eventually_settles_without_robot_self_contacts_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    target = (0.0, -0.1, -0.2, 0.2, 0.0, 0.0, 0.02, -0.02)
+    data.ctrl[:] = target
+    self_contacts: set[frozenset[str]] = set()
+    settled_samples = 0
+    arm_joint_ids = [
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        for name in ARM_JOINTS
+    ]
+    qpos_addresses = [int(model.jnt_qposadr[joint_id]) for joint_id in arm_joint_ids]
+    dof_addresses = [int(model.jnt_dofadr[joint_id]) for joint_id in arm_joint_ids]
+
+    for step in range(5_000):
+        mujoco.mj_step(model, data)
+        if step >= 4_800:
+            self_contacts.update(_robot_self_contact_pairs(mujoco, model, data))
+
+            arm_error = max(
+                abs(float(data.qpos[address]) - target[index])
+                for index, address in enumerate(qpos_addresses)
+            )
+            arm_speed = max(abs(float(data.qvel[address])) for address in dof_addresses)
+            if arm_error <= 0.02 and arm_speed <= 0.05:
+                settled_samples += 1
+
+    assert self_contacts == set()
+    assert settled_samples == 200
+
+
+def test_folded_valid_pose_still_detects_non_adjacent_self_collision_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    folded_arm_q = (
+        2.644410583,
+        -2.207802494,
+        -0.455216834,
+        0.883963023,
+        -0.764293556,
+        -0.833907491,
+    )
+    data.qpos[:6] = folded_arm_q
+    data.qpos[6:8] = (0.02, -0.02)
+    mujoco.mj_forward(model, data)
+
+    pairs = _robot_self_contact_pairs(mujoco, model, data)
+    assert frozenset(("base_link", "link6")) in pairs

@@ -186,7 +186,7 @@ def test_build_and_check_manifest_detect_tampering_extra_and_traversal(tmp_path,
     config = _small_config(tmp_path)
     monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
     manifest = generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
-    manifest_path = tmp_path / "collision_vhacd" / "manifest.json"
+    manifest_path = tmp_path / "collision_vhacd_manifest.json"
     assert manifest_path.is_file()
     assert manifest["parameters"] == config["common"]
     assert manifest["generator_script_sha256"] == generator._normalized_text_sha256(generator.__file__)
@@ -218,7 +218,7 @@ def test_check_rejects_stl_in_unknown_directory(tmp_path, monkeypatch):
     unknown.parent.mkdir(parents=True)
     unknown.write_bytes((root / "part" / "hull_000.stl").read_bytes())
     with pytest.raises(ValueError, match="extra"):
-        generator.check_outputs(tmp_path, config, root / "manifest.json")
+        generator.check_outputs(tmp_path, config, tmp_path / "collision_vhacd_manifest.json")
 
 
 @pytest.mark.parametrize("field", ["parameters", "generator_script_sha256"])
@@ -226,7 +226,7 @@ def test_check_rejects_manifest_provenance_tampering(tmp_path, monkeypatch, fiel
     config = _small_config(tmp_path)
     monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
     generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
-    path = tmp_path / "collision_vhacd" / "manifest.json"
+    path = tmp_path / "collision_vhacd_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest[field] = "tampered"
     path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -238,7 +238,7 @@ def test_check_is_read_only_and_does_not_import_vhacdx(tmp_path, monkeypatch):
     config = _small_config(tmp_path)
     monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
     generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
-    manifest_path = tmp_path / "collision_vhacd" / "manifest.json"
+    manifest_path = tmp_path / "collision_vhacd_manifest.json"
     before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
     sys.modules.pop("vhacdx", None)
     generator.check_outputs(tmp_path, config, manifest_path)
@@ -294,7 +294,7 @@ def test_check_rejects_malformed_manifest_as_value_error(tmp_path, monkeypatch, 
     config = _small_config(tmp_path)
     monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
     generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
-    path = tmp_path / "collision_vhacd" / "manifest.json"
+    path = tmp_path / "collision_vhacd_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if mutation == "top":
         manifest["extra"] = 1

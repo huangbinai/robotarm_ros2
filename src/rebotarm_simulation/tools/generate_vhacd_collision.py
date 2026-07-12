@@ -266,6 +266,9 @@ def build_manifest(model_dir, config, output_root):
     output_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".collision_vhacd.tmp.", dir=output_root.parent)).resolve()
     backup = output_root.parent / f".collision_vhacd.backup.{uuid.uuid4().hex}"
+    manifest_path = model_dir / "collision_vhacd_manifest.json"
+    temporary_manifest = model_dir / f".collision_vhacd_manifest.tmp.{uuid.uuid4().hex}.json"
+    backup_manifest = model_dir / f".collision_vhacd_manifest.backup.{uuid.uuid4().hex}.json"
     _inside(temporary, output_root.parent, "temporary output")
     _inside(backup, output_root.parent, "backup output")
     manifest = {
@@ -277,6 +280,7 @@ def build_manifest(model_dir, config, output_root):
         "parts": {},
     }
     old_moved = False
+    old_manifest_moved = False
     try:
         for name, part in config["parts"].items():
             if Path(name).name != name:
@@ -298,15 +302,23 @@ def build_manifest(model_dir, config, output_root):
                 "input": {"path": source.relative_to(model_dir).as_posix(), "sha256": sha256_file(source)},
                 "outputs": outputs,
             }
-        _atomic_json(temporary / "manifest.json", manifest)
+        _atomic_json(temporary_manifest, manifest)
         if output_root.exists():
             os.replace(output_root, backup)
             old_moved = True
+        if manifest_path.exists():
+            os.replace(manifest_path, backup_manifest)
+            old_manifest_moved = True
         os.replace(temporary, output_root)
+        os.replace(temporary_manifest, manifest_path)
         if old_moved:
             shutil.rmtree(backup)
+        if old_manifest_moved:
+            backup_manifest.unlink()
         return manifest
     except Exception:
+        if old_manifest_moved and not manifest_path.exists() and backup_manifest.exists():
+            os.replace(backup_manifest, manifest_path)
         if old_moved and not output_root.exists() and backup.exists():
             os.replace(backup, output_root)
         raise
@@ -315,13 +327,17 @@ def build_manifest(model_dir, config, output_root):
             shutil.rmtree(temporary)
         if backup.exists() and output_root.exists():
             shutil.rmtree(backup)
+        if temporary_manifest.exists():
+            temporary_manifest.unlink()
+        if backup_manifest.exists() and manifest_path.exists():
+            backup_manifest.unlink()
 
 
 def check_outputs(model_dir, config, manifest_path):
     model_dir = Path(model_dir).resolve()
     manifest_path = _inside(manifest_path, model_dir, "manifest")
-    if manifest_path != model_dir / "collision_vhacd" / "manifest.json":
-        raise ValueError("manifest path must be collision_vhacd/manifest.json")
+    if manifest_path != model_dir / "collision_vhacd_manifest.json":
+        raise ValueError("manifest path must be model_dir/collision_vhacd_manifest.json")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -335,7 +351,7 @@ def check_outputs(model_dir, config, manifest_path):
         raise ValueError("manifest parameters mismatch")
     if manifest.get("config_sha256") != _config_hash(config):
         raise ValueError("config hash mismatch")
-    expected_root = manifest_path.parent.resolve()
+    expected_root = (model_dir / "collision_vhacd").resolve()
     if set(manifest.get("parts", {})) != set(config["parts"]):
         raise ValueError("manifest parts mismatch")
     expected_stls = set()
@@ -387,12 +403,13 @@ def main(argv=None):
     try:
         config = load_config(args.config)
         output = args.model_dir / "collision_vhacd"
+        manifest = args.model_dir / "collision_vhacd_manifest.json"
         if args.check:
-            check_outputs(args.model_dir, config, output / "manifest.json")
+            check_outputs(args.model_dir, config, manifest)
             print("VHACD collision outputs are valid")
         else:
             build_manifest(args.model_dir, config, output)
-            print(f"Wrote {output / 'manifest.json'}")
+            print(f"Wrote {manifest}")
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

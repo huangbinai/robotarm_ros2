@@ -1,5 +1,13 @@
 import json
+import sys
 from pathlib import Path
+
+import numpy as np
+import pytest
+import trimesh
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "rebotarm_simulation" / "tools"))
+import generate_vhacd_collision as generator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,3 +66,110 @@ def test_vhacd_requirements_are_exactly_pinned():
         "trimesh==4.12.2",
         "vhacdx==0.0.10",
     ]
+
+
+def test_sha256_file_streams(tmp_path):
+    path = tmp_path / "payload"
+    path.write_bytes(b"abc" * 500_000)
+    assert generator.sha256_file(path) == "206c8387a6fd09a951f4945cb98bd65ae2b9a59d4069f70e00a9d9acd7c86515"
+
+
+def test_hull_sort_key_orders_volume_then_geometry():
+    small = trimesh.creation.box(extents=(1, 1, 1))
+    shifted = small.copy()
+    shifted.apply_translation((2, 0, 0))
+    large = trimesh.creation.box(extents=(2, 1, 1))
+    assert sorted([shifted, small, large], key=generator.hull_sort_key) == [large, small, shifted]
+
+
+def test_load_config_validates_contract(tmp_path):
+    valid = _config()
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(valid), encoding="utf-8")
+    assert generator.load_config(path) == valid
+    valid["generator"]["version"] = "latest"
+    path.write_text(json.dumps(valid), encoding="utf-8")
+    with pytest.raises(ValueError, match="vhacdx 0.0.10"):
+        generator.load_config(path)
+
+
+def test_canonical_stl_bytes_are_deterministic_and_reject_non_triangles():
+    mesh = trimesh.creation.box()
+    assert generator.canonical_stl_bytes(mesh) == generator.canonical_stl_bytes(mesh.copy())
+    bad = type("Mesh", (), {"vertices": mesh.vertices, "faces": np.array([[0, 1, 2, 3]])})()
+    with pytest.raises(ValueError, match="triangular"):
+        generator.canonical_stl_bytes(bad)
+
+
+def test_decompose_part_flattens_faces_and_passes_locked_parameters(tmp_path, monkeypatch):
+    source = tmp_path / "source.stl"
+    trimesh.creation.box().export(source)
+    calls = {}
+
+    def fake_compute(vertices, faces, **kwargs):
+        calls.update(vertices=vertices, faces=faces, kwargs=kwargs)
+        hull = trimesh.creation.box()
+        return [(hull.vertices, hull.faces)]
+
+    monkeypatch.setitem(sys.modules, "vhacdx", type("V", (), {"compute_vhacd": staticmethod(fake_compute)}))
+    settings = {**_config()["common"], "max_convex_hulls": 8}
+    hulls = generator.decompose_part(source, settings)
+    assert len(hulls) == 1 and hulls[0].is_convex
+    assert calls["faces"].dtype == np.uint32
+    assert calls["faces"].ndim == 1
+    assert np.all(calls["faces"].reshape((-1, 4))[:, 0] == 3)
+    assert calls["kwargs"] == {
+        "maxConvexHulls": 8, "resolution": 400000,
+        "minimumVolumePercentErrorAllowed": 1.0, "maxRecursionDepth": 10,
+        "shrinkWrap": True, "fillMode": "flood", "maxNumVerticesPerCH": 64,
+        "asyncACD": False, "minEdgeLength": 2, "findBestPlane": False,
+    }
+
+
+def _small_config(tmp_path):
+    source = tmp_path / "assets" / "part.stl"
+    source.parent.mkdir()
+    trimesh.creation.box().export(source)
+    config = _config()
+    config["parts"] = {"part": {"source": "part.stl", "max_convex_hulls": 2}}
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    config["_config_path"] = config_path
+    return config
+
+
+def test_build_and_check_manifest_detect_tampering_extra_and_traversal(tmp_path, monkeypatch):
+    config = _small_config(tmp_path)
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    manifest = generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    manifest_path = tmp_path / "collision_vhacd" / "manifest.json"
+    assert manifest_path.is_file()
+    assert generator.check_outputs(tmp_path, config, manifest_path) == manifest
+
+    hull = tmp_path / "collision_vhacd" / "part" / "hull_001.stl"
+    original = hull.read_bytes()
+    hull.write_bytes(original + b"tamper")
+    with pytest.raises(ValueError, match="hash"):
+        generator.check_outputs(tmp_path, config, manifest_path)
+    hull.write_bytes(original)
+    (hull.parent / "hull_999.stl").write_bytes(original)
+    with pytest.raises(ValueError, match="extra"):
+        generator.check_outputs(tmp_path, config, manifest_path)
+    (hull.parent / "hull_999.stl").unlink()
+    data = json.loads(manifest_path.read_text())
+    data["parts"]["part"]["outputs"][0]["path"] = "../escape.stl"
+    manifest_path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="path"):
+        generator.check_outputs(tmp_path, config, manifest_path)
+
+
+def test_check_is_read_only_and_does_not_import_vhacdx(tmp_path, monkeypatch):
+    config = _small_config(tmp_path)
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    manifest_path = tmp_path / "collision_vhacd" / "manifest.json"
+    before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
+    sys.modules.pop("vhacdx", None)
+    generator.check_outputs(tmp_path, config, manifest_path)
+    after = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
+    assert before == after and "vhacdx" not in sys.modules

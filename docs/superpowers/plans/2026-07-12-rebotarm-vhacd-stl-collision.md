@@ -4,9 +4,9 @@
 
 **Goal:** Replace reBotArm's primitive MuJoCo collision geoms with reproducible VHACD-decomposed STL hulls while preserving dynamics, ROS 2 interfaces, and no-hardware safety.
 
-**Architecture:** Original STL files remain non-colliding visual assets. A pinned Python generator uses `vhacdx` synchronously, normalizes and deterministically sorts hulls, writes versioned collision STL files plus a SHA-256 manifest, and supports a read-only `--check` mode. MJCF references every generated hull as a collision-only mesh geom; tests validate asset provenance, geometry, contact behavior, performance, integration, and Windows/Ubuntu equality.
+**Architecture:** Original STL files remain non-colliding visual assets. Because the finger meshes contain intersecting, non-watertight components, a pinned voxel-repair stage first creates deterministic watertight finger collision sources; a pinned Python generator then uses `vhacdx` synchronously, normalizes and deterministically sorts hulls, writes versioned collision STL files plus a SHA-256 manifest, and supports a read-only `--check` mode. MJCF references every generated hull as a collision-only mesh geom; tests validate both repair and decomposition provenance, geometry, contact behavior, performance, integration, and Windows/Ubuntu equality.
 
-**Tech Stack:** Python 3.12, NumPy, trimesh 4.12.2, vhacdx 0.0.10, MuJoCo 3.10.0, pytest, MJCF, ROS 2 Jazzy, PowerShell/SSH for explicit VM sync.
+**Tech Stack:** Python 3.12, NumPy, trimesh 4.12.2, scikit-image 0.26.0, vhacdx 0.0.10, MuJoCo 3.10.0, pytest, MJCF, ROS 2 Jazzy, PowerShell/SSH for explicit VM sync.
 
 ---
 
@@ -15,6 +15,7 @@
 - Create `src/rebotarm_simulation/tools/generate_vhacd_collision.py`: deterministic generation and `--check` entry point.
 - Create `src/rebotarm_simulation/config/vhacd_collision.json`: per-part source names and fixed decomposition budgets.
 - Create `src/rebotarm_simulation/requirements-vhacd.txt`: generation-only pinned dependencies.
+- Create `src/rebotarm_simulation/models/rebotarm/collision_sources_repaired/{left_finger,right_finger}.stl`: deterministic watertight finger collision sources.
 - Create `src/rebotarm_simulation/models/rebotarm/collision_vhacd_manifest.json`: generated provenance and hash manifest.
 - Create `src/rebotarm_simulation/models/rebotarm/collision_vhacd/<part>/hull_NNN.stl`: generated convex assets.
 - Modify `src/rebotarm_simulation/models/rebotarm/robot.xml`: visual-only original meshes and collision-only hull meshes/geoms.
@@ -57,6 +58,7 @@ Expected: FAIL because `vhacd_collision.json` does not exist.
 ```text
 numpy==2.4.2
 trimesh==4.12.2
+scikit-image==0.26.0
 vhacdx==0.0.10
 ```
 
@@ -213,7 +215,93 @@ git add tests/test_mujoco_collision_performance.py \
 git commit -m "test: record primitive MuJoCo collision baseline"
 ```
 
-### Task 4: Generate and validate all collision hull assets
+### Task 4A: Repair the finger collision sources
+
+**Files:**
+- Modify: `src/rebotarm_simulation/requirements-vhacd.txt`
+- Modify: `src/rebotarm_simulation/config/vhacd_collision.json`
+- Modify: `src/rebotarm_simulation/tools/generate_vhacd_collision.py`
+- Modify: `tests/test_vhacd_collision_assets.py`
+- Create: `src/rebotarm_simulation/models/rebotarm/collision_sources_repaired/left_finger.stl`
+- Create: `src/rebotarm_simulation/models/rebotarm/collision_sources_repaired/right_finger.stl`
+
+- [ ] **Step 1: Add failing repair-contract tests**
+
+Add tests that require `scikit-image==0.26.0`, require both finger parts to declare a repair profile, and require the profile to contain exactly:
+
+```json
+{
+  "method": "voxel_marching_cubes",
+  "pitch_m": 0.00025,
+  "fallback_pitch_m": 0.00020,
+  "closing_iterations": 1,
+  "fill_holes": true,
+  "random_seed": 20260712,
+  "surface_samples": 6000,
+  "repair_p95_limit_m": 0.00035,
+  "repair_max_limit_m": 0.00075,
+  "bounds_limit_m": 0.0005
+}
+```
+
+The tests must fail before the profile, dependency, repaired files, and generator behavior exist.
+
+- [ ] **Step 2: Add small-mesh TDD tests for voxel repair**
+
+Construct two intersecting non-watertight boxes in `tmp_path`. Test that `repair_mesh(source, profile)` returns one finite, consistently wound, watertight `Trimesh`; repeated calls return identical canonical STL bytes; and an injected reconstruction failure leaves existing repaired STL, hull tree, and manifest byte-for-byte unchanged.
+
+- [ ] **Step 3: Implement the repair functions**
+
+Add focused helpers:
+
+```python
+def repair_mesh(source: Path, profile: Mapping[str, object]) -> trimesh.Trimesh:
+    mesh = load_single_mesh(source)
+    pitch = float(profile["pitch_m"])
+    surface_points = []
+    for component in stable_components(mesh):
+        voxels = component.voxelized(pitch=pitch, method="subdivide")
+        surface_points.append(voxels.points)
+    occupied = quantize_and_union(surface_points, pitch)
+    occupied = binary_close_once(occupied)
+    occupied = fill_binary_holes(occupied)
+    repaired = trimesh.voxel.ops.points_to_marching_cubes(occupied, pitch=pitch)
+    repaired.remove_unreferenced_vertices()
+    trimesh.repair.fix_normals(repaired, multibody=False)
+    validate_repaired_mesh(repaired)
+    return repaired
+```
+
+The actual implementation must preserve the global voxel origin when converting occupancy back to a mesh, reject empty or non-finite occupancy, use only one closing iteration, and never modify the original visual STL.
+
+- [ ] **Step 4: Implement collision-solid fidelity measurement**
+
+Use a fixed NumPy generator seed. For original→repaired under-coverage, sample the original surface and assign zero distance to points inside/on the repaired solid; otherwise use closest surface distance. For repaired→original over-coverage, sample the repaired outer surface and use closest original-triangle distance. Return p95, maximum, bounds error, sample count, and seed. Reject results above 0.35 mm p95, 0.75 mm max, or 0.5 mm bounds.
+
+- [ ] **Step 5: Generate at 0.25 mm, with one permitted fallback**
+
+Run the repair for both fingers at `0.00025 m`. If either side fails a repair fidelity gate, run both sides once at `0.00020 m` and record that selected pitch. If the second pitch fails, stop with the measured topology and error evidence; do not call VHACD.
+
+- [ ] **Step 6: Record repair provenance transactionally**
+
+Generate repaired files in the same sibling temporary tree as hull outputs. Record original and repaired relative paths/hashes, selected profile, topology before/after, and fidelity metrics in `collision_vhacd_manifest.json`. Swap repaired sources, hull tree, and manifest with rollback so any failure restores all previous artifacts.
+
+- [ ] **Step 7: Verify deterministic repair**
+
+Generate twice and compare the two repaired STL SHA-256 values and manifest repair records. Expected: exact equality and `--check` exit 0 without writing.
+
+- [ ] **Step 8: Commit the repair stage**
+
+```bash
+git add src/rebotarm_simulation/requirements-vhacd.txt \
+  src/rebotarm_simulation/config/vhacd_collision.json \
+  src/rebotarm_simulation/tools/generate_vhacd_collision.py \
+  src/rebotarm_simulation/models/rebotarm/collision_sources_repaired \
+  tests/test_vhacd_collision_assets.py
+git commit -m "feat: add deterministic finger collision source repair"
+```
+
+### Task 4B: Generate and validate all collision hull assets
 
 **Files:**
 - Create: `src/rebotarm_simulation/models/rebotarm/collision_vhacd_manifest.json`
@@ -222,12 +310,12 @@ git commit -m "test: record primitive MuJoCo collision baseline"
 
 - [ ] **Step 1: Write failing repository-asset tests**
 
-Tests must assert that the manifest covers all 10 inputs, every input hash matches `assets/`, every output path is below `collision_vhacd/`, every output hash matches, names are consecutively numbered from `hull_000.stl`, hull counts do not exceed configured budgets, and each output loads as a finite convex `trimesh.Trimesh`.
+Tests must assert that the manifest covers all 10 visual inputs, that finger decomposition inputs point to the repaired STL files while the other eight inputs point to `assets/`, every input and repaired-source hash matches, every output path is below `collision_vhacd/`, every output hash matches, names are consecutively numbered from `hull_000.stl`, hull counts do not exceed configured budgets, and each output loads as a finite convex `trimesh.Trimesh`.
 
 - [ ] **Step 2: Verify RED**
 
 Run: `python -m pytest tests/test_vhacd_collision_assets.py -q`  
-Expected: FAIL because the manifest and collision assets do not exist.
+Expected: FAIL because the final hull manifest and collision assets do not yet satisfy the repaired-source contract.
 
 - [ ] **Step 3: Install generation-only dependencies and generate**
 

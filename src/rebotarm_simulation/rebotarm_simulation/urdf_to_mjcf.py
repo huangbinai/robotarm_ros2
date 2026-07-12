@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Sequence
 import xml.etree.ElementTree as ET
 
 import mujoco
@@ -16,7 +18,7 @@ JOINTS = [f"joint{index}" for index in range(1, 7)] + [
 GAINS = {
     "joint1": (480, 1),
     "joint2": (480, 1),
-    "joint3": (400, 0.75),
+    "joint3": (480, 0.75),
     "joint4": (240, 0.5),
     "joint5": (200, 0.375),
     "joint6": (160, 0.25),
@@ -44,6 +46,11 @@ def stage_urdf(source: Path, repo_root: Path, temporary_dir: Path) -> Path:
     source_assets = _model_directory(repo_root) / "assets"
     staged_assets = temporary_dir / "assets"
     staged_assets.mkdir(parents=True, exist_ok=True)
+
+    for link in root.findall("link"):
+        for role in ("visual", "collision"):
+            for index, element in enumerate(link.findall(role)):
+                element.set("name", f'{link.attrib["name"]}_{role}_{index}')
 
     for mesh in root.findall(".//mesh"):
         filename = mesh.attrib.get("filename", "")
@@ -130,6 +137,9 @@ def _add_contact_exclusions(root: ET.Element) -> None:
         ("link6", "end_link"),
         ("end_link", "left_finger_link"),
         ("end_link", "right_finger_link"),
+        ("link2", "link4"),
+        ("link4", "link6"),
+        ("left_finger_link", "right_finger_link"),
     ):
         ET.SubElement(contact, "exclude", {"body1": body1, "body2": body2})
 
@@ -209,4 +219,52 @@ def _add_sensors(root: ET.Element) -> None:
 def _canonicalize(root: ET.Element) -> bytes:
     ET.indent(root, space="  ")
     xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
-    return (xml.replace("\r\n", "\n").rstrip() + "\n").encode("utf-8")
+    warning = "<!-- AUTO-GENERATED from rebotarm.urdf; do not edit robot.xml manually. -->\n"
+    return (warning + xml.replace("\r\n", "\n").rstrip() + "\n").encode("utf-8")
+
+
+def check_generated_model(repo_root: Path, output: Path) -> bool:
+    return output.is_file() and output.read_bytes() == generate_mjcf_bytes(repo_root)
+
+
+def write_generated_model(repo_root: Path, output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp")
+    try:
+        temporary.write_bytes(generate_mjcf_bytes(repo_root))
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _default_repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _default_output(repo_root: Path) -> Path:
+    return _model_directory(repo_root) / "robot.xml"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Generate reBotArm MJCF from the authoritative URDF")
+    parser.add_argument("--repo-root", type=Path, default=_default_repo_root())
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args(argv)
+    repo_root = args.repo_root.resolve()
+    output = (args.output or _default_output(repo_root)).resolve()
+
+    if args.check:
+        if check_generated_model(repo_root, output):
+            print(f"MJCF is up to date: {output}")
+            return 0
+        print(f"MJCF is stale; regenerate with rebotarm_urdf_to_mjcf --repo-root \"{repo_root}\"")
+        return 1
+
+    write_generated_model(repo_root, output)
+    print(f"Generated MJCF: {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

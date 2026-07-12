@@ -5,8 +5,11 @@ import xml.etree.ElementTree as ET
 
 from rebotarm_simulation.urdf_to_mjcf import (
     authoritative_urdf_path,
+    check_generated_model,
     generate_mjcf_bytes,
+    main,
     stage_urdf,
+    write_generated_model,
 )
 
 
@@ -34,6 +37,12 @@ def test_stage_urdf_rewrites_package_meshes_without_modifying_source(tmp_path) -
 
 def test_generation_is_byte_deterministic() -> None:
     assert generate_mjcf_bytes(ROOT) == generate_mjcf_bytes(ROOT)
+
+
+def test_generated_model_warns_against_manual_edits() -> None:
+    assert generate_mjcf_bytes(ROOT).startswith(
+        b"<!-- AUTO-GENERATED from rebotarm.urdf; do not edit robot.xml manually. -->\n"
+    )
 
 
 def _generated_root() -> ET.Element:
@@ -90,7 +99,7 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
     assert coupling.attrib["polycoef"] == "0 -1 0 0 0"
 
     exclusions = root.findall("contact/exclude")
-    assert len(exclusions) == 9
+    assert len(exclusions) == 12
     assert root.find('.//site[@name="ee_site"]') is not None
     assert root.find('.//site[@name="wrist_camera_mount"]') is not None
     assert len(root.findall("sensor/jointpos")) == 8
@@ -98,3 +107,33 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
     assert len(root.findall("sensor/actuatorfrc")) == 8
     assert root.find('sensor/framepos[@objname="ee_site"]') is not None
     assert root.find('sensor/framequat[@objname="ee_site"]') is not None
+
+
+def test_write_generated_model_is_checkable_and_leaves_no_temporary_file(tmp_path) -> None:
+    output = tmp_path / "robot.xml"
+
+    write_generated_model(ROOT, output)
+
+    assert output.read_bytes() == generate_mjcf_bytes(ROOT)
+    assert check_generated_model(ROOT, output)
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_check_rejects_stale_generated_model(tmp_path) -> None:
+    output = tmp_path / "robot.xml"
+    output.write_text("<mujoco/>\n", encoding="utf-8")
+
+    assert not check_generated_model(ROOT, output)
+
+
+def test_cli_generates_then_checks_explicit_output(tmp_path, capsys) -> None:
+    output = tmp_path / "robot.xml"
+    common = ["--repo-root", str(ROOT), "--output", str(output)]
+
+    assert main(common) == 0
+    assert main([*common, "--check"]) == 0
+    assert "up to date" in capsys.readouterr().out
+
+    output.write_text("<mujoco/>\n", encoding="utf-8")
+    assert main([*common, "--check"]) == 1
+    assert "regenerate" in capsys.readouterr().out

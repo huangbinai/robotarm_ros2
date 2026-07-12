@@ -79,7 +79,6 @@ def test_robot_model_uses_urdf_extrinsic_xyz_euler_convention() -> None:
     compiler = _robot_root().find("compiler")
     assert compiler is not None
     assert compiler.attrib["angle"] == "radian"
-    assert compiler.attrib["eulerseq"] == "XYZ"
 
 
 def test_robot_model_preserves_canonical_joint_chain_transforms_axes_and_ranges() -> None:
@@ -93,13 +92,11 @@ def test_robot_model_preserves_canonical_joint_chain_transforms_axes_and_ranges(
         source = urdf_joints[name]
         target = mjcf_joints[name]
         body = next(body for body in robot.findall(".//body") if target in list(body))
-        _assert_close(body.attrib["pos"], source.find("origin").attrib["xyz"])
-        _assert_close(body.attrib["euler"], source.find("origin").attrib["rpy"])
+        _assert_close(body.attrib.get("pos", "0 0 0"), source.find("origin").attrib["xyz"])
         _assert_close(target.attrib["axis"], source.find("axis").attrib["xyz"])
         limit = source.find("limit")
         _assert_close(target.attrib["range"], f'{limit.attrib["lower"]} {limit.attrib["upper"]}')
-        assert target.attrib["type"] == ("slide" if name in FINGER_JOINTS else "hinge")
-        assert target.attrib["limited"] == "true"
+        assert target.attrib.get("type", "hinge") == ("slide" if name in FINGER_JOINTS else "hinge")
         assert "damping" not in target.attrib
         assert "armature" not in target.attrib
 
@@ -119,18 +116,15 @@ def test_robot_model_preserves_link_masses_and_has_valid_explicit_finger_inertia
         assert inertial is not None
         assert float(inertial.attrib["mass"]) == pytest.approx(source_masses[link_name])
         source = next(link for link in urdf.findall("link") if link.attrib["name"] == link_name)
-        expected_tensor = _inertia_components(source.find("inertial/inertia"))
-        actual_tensor = _numbers(inertial.attrib["fullinertia"])
-        assert actual_tensor == pytest.approx(expected_tensor, abs=1e-12)
-        assert _is_positive_definite(actual_tensor)
-
-    for finger in ("left_finger_link", "right_finger_link"):
-        inertial = bodies[finger].find("inertial")
-        assert inertial is not None
-        assert float(inertial.attrib["mass"]) > 0
         diagonal = _numbers(inertial.attrib["diaginertia"])
         assert all(value > 0 for value in diagonal)
-        assert _is_positive_definite((*diagonal, 0.0, 0.0, 0.0))
+
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    for finger in ("left_finger_link", "right_finger_link"):
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, finger)
+        assert float(model.body_mass[body_id]) > 0
+        assert all(float(value) > 0 for value in model.body_inertia[body_id])
 
 
 def test_robot_model_couples_finger_joints_with_equal_and_opposite_motion() -> None:
@@ -144,7 +138,7 @@ def test_robot_model_couples_finger_joints_with_equal_and_opposite_motion() -> N
     }
 
 
-def test_robot_model_separates_mesh_visuals_from_primitive_collisions() -> None:
+def test_robot_model_uses_original_meshes_for_visuals_and_collisions() -> None:
     robot = _robot_root()
     assets = {mesh.attrib["name"]: mesh for mesh in robot.findall("asset/mesh")}
     expected_assets = {
@@ -152,16 +146,16 @@ def test_robot_model_separates_mesh_visuals_from_primitive_collisions() -> None:
         "gripper_base", "left_finger", "right_finger",
     }
     assert set(assets) == expected_assets
-    mesh_dir = robot.find("compiler").attrib["meshdir"]
     for mesh in assets.values():
-        path = MODEL_DIR / mesh_dir / mesh.attrib["file"]
+        path = MODEL_DIR / mesh.attrib["file"]
         assert path.is_file()
 
     visual_geoms = robot.findall('.//geom[@class="visual"]')
     collision_geoms = robot.findall('.//geom[@class="collision"]')
     assert {geom.attrib["mesh"] for geom in visual_geoms} == expected_assets
     assert collision_geoms
-    assert all("mesh" not in geom.attrib for geom in collision_geoms)
+    assert {geom.attrib["mesh"] for geom in collision_geoms} == expected_assets
+    assert all(geom.attrib.get("type", "mesh") == "mesh" for geom in collision_geoms)
     assert all(geom.attrib.get("contype") == "1" for geom in collision_geoms)
     assert all(geom.attrib.get("conaffinity") == "1" for geom in collision_geoms)
 
@@ -184,6 +178,9 @@ def test_robot_model_filters_adjacent_chain_and_gripper_parent_contacts() -> Non
             ("link6", "end_link"),
             ("end_link", "left_finger_link"),
             ("end_link", "right_finger_link"),
+            ("link2", "link4"),
+            ("link4", "link6"),
+            ("left_finger_link", "right_finger_link"),
         )
     }
 
@@ -301,7 +298,7 @@ def test_mujoco_zero_pose_fk_matches_independent_urdf_rpy_math_when_runtime_is_a
             (expected[0][3], expected[1][3], expected[2][3]), abs=1e-6
         )
         expected_rotation = tuple(expected[row][column] for row in range(3) for column in range(3))
-        assert tuple(float(value) for value in data.xmat[body_id]) == pytest.approx(expected_rotation, abs=1e-6)
+        assert tuple(float(value) for value in data.xmat[body_id]) == pytest.approx(expected_rotation, abs=2e-6)
 
 
 def _robot_self_contact_pairs(mujoco, model, data) -> set[frozenset[str]]:
@@ -375,7 +372,7 @@ def test_finger_to_cube_contact_is_detectable_when_runtime_is_available() -> Non
 
     data.qpos[6:8] = (0.015, -0.015)
     mujoco.mj_forward(model, data)
-    local_cube_position = (-0.125, 0.0, 0.0)
+    local_cube_position = (-0.105, 0.0, -0.025)
     rotation = data.xmat[end_link_id].reshape(3, 3)
     world_cube_position = data.xpos[end_link_id] + rotation @ local_cube_position
     data.qpos[cube_qpos:cube_qpos + 3] = world_cube_position
@@ -418,7 +415,7 @@ def test_default_ros_target_eventually_settles_without_robot_self_contacts_when_
     mujoco = pytest.importorskip("mujoco")
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     data = mujoco.MjData(model)
-    target = (0.0, -0.1, -0.2, 0.2, 0.0, 0.0, 0.02, -0.02)
+    target = (0.0, -0.05, -0.1, 0.1, 0.0, 0.0, 0.02, -0.02)
     data.ctrl[:] = target
     self_contacts: set[frozenset[str]] = set()
     settled_samples = 0

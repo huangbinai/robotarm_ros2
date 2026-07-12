@@ -239,14 +239,30 @@ def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -
     option = scene.find("option")
     _assert_close(option.attrib["gravity"], "0 0 -9.81")
     assert float(option.attrib["timestep"]) == pytest.approx(0.002)
+    statistic = scene.find("statistic")
+    assert statistic is not None
+    _assert_close(statistic.attrib["center"], "0.15 0 0.18")
+    assert float(statistic.attrib["extent"]) == pytest.approx(0.8)
     world = scene.find("worldbody")
-    assert world.find('geom[@name="floor"]') is not None
-    assert world.find('body[@name="table"]/geom') is not None
+    floor = world.find('geom[@name="floor"]')
+    assert floor is not None
+    _assert_close(floor.attrib["pos"], "0 0 -0.75")
+    table = world.find('body[@name="table"]')
+    assert table is not None
+    _assert_close(table.attrib["pos"], "0.20 0 -0.025")
+    assert table.find('geom[@name="table_top"]') is not None
+    assert len([geom for geom in table.findall("geom") if geom.attrib["name"].startswith("table_leg_")]) == 4
     cube = world.find('body[@name="test_cube"]')
     assert cube is not None and cube.find("freejoint") is not None
+    _assert_close(cube.attrib["pos"], "0.28 0 0.04")
     assert cube.find("geom").attrib["type"] == "box"
     assert world.find('light[@name="key_light"]') is not None
-    assert world.find('camera[@name="fixed_camera"]') is not None
+    camera = world.find('camera[@name="fixed_camera"]')
+    assert camera is not None
+    _assert_close(camera.attrib["pos"], "0.85 -0.90 0.55")
+    home = scene.find('keyframe/key[@name="home"]')
+    assert home is not None
+    assert len(_numbers(home.attrib["qpos"])) == 15
 
 
 def test_scene_compiles_with_mujoco_when_runtime_is_available() -> None:
@@ -342,7 +358,7 @@ def test_default_cube_falls_onto_table_and_settles_when_runtime_is_available() -
     for _ in range(2_000):
         mujoco.mj_step(model, data)
 
-    assert float(data.xpos[cube_body_id][2]) == pytest.approx(0.385, abs=0.002)
+    assert float(data.xpos[cube_body_id][2]) == pytest.approx(0.02, abs=0.002)
     assert max(abs(float(value)) for value in data.qvel[cube_dof:cube_dof + 6]) < 1e-6
     assert frozenset(("table", "test_cube")) in _body_contact_pairs(mujoco, model, data)
     table_cube_distances = []
@@ -388,7 +404,14 @@ def test_robot_to_table_collision_is_enabled_when_runtime_is_available() -> None
     mujoco = pytest.importorskip("mujoco")
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     data = mujoco.MjData(model)
-    arm_qpos = (0.66380496, -0.63603579, -0.15847179, 0.33354464, 0.01140362, -0.44845425)
+    arm_qpos = (
+        -0.73059666,
+        -3.12827448,
+        -0.53365013,
+        -1.33865388,
+        -0.72973818,
+        2.38848593,
+    )
     assert all(
         float(model.jnt_range[index][0]) <= value <= float(model.jnt_range[index][1])
         for index, value in enumerate(arm_qpos)

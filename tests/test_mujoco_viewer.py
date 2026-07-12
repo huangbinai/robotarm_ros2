@@ -70,6 +70,13 @@ class FakeSim:
         self.time = 0.0
         return self.get_state()
 
+    def reset_home(self):
+        self.calls.append(("reset_home",))
+        self.targets[:] = [0.0] * 6
+        self.width = 0.09
+        self.time = 0.0
+        return self.get_state()
+
     def close(self):
         self.calls.append(("close",))
         self.closed = True
@@ -194,7 +201,7 @@ def test_interleaved_open_reset_close_uses_reset_width_before_close():
     state = mujoco_viewer.process_key_events(
         sim, events, mujoco_viewer.ViewerControlState(gripper_width=0.05), 0.05, 0.005
     )
-    assert sim.calls[-2][0] == "reset"
+    assert sim.calls[-2][0] == "reset_home"
     assert sim.calls[-1][0] == "gripper"
     assert sim.calls[-1][1] == pytest.approx(0.085)
     assert state.gripper_width == pytest.approx(0.085)
@@ -270,7 +277,7 @@ def test_reset_preserves_pause_and_resynchronizes_targets():
     state = mujoco_viewer.apply_pending_commands(
         sim, mujoco_viewer.ViewerControlState(paused=True, reset=True), 0.1, 0.01
     )
-    assert ("reset",) in sim.calls
+    assert ("reset_home",) in sim.calls
     assert state.paused is True
     assert state.reset is False
     assert state.gripper_width == 0.09
@@ -281,7 +288,7 @@ def test_reset_then_jog_in_same_event_batch_applies_jog_after_reset():
     sim.targets[0] = 0.8
     state = mujoco_viewer.ViewerControlState(reset=True, joint_delta=2)
     state = mujoco_viewer.apply_pending_commands(sim, state, 0.1, 0.01)
-    assert sim.calls[:2] == [("reset",), ("joints", {"joint1": 0.2})]
+    assert sim.calls[:2] == [("reset_home",), ("joints", {"joint1": 0.2})]
     assert state.joint_targets[0] == pytest.approx(0.2)
 
 

@@ -113,7 +113,7 @@ def apply_pending_commands(
         pending_joint_delta = state.joint_delta
         pending_gripper_delta = state.gripper_delta
         quit_requested = state.quit
-        sim.reset()
+        sim.reset_home()
         state = _state_from_sim(
             sim, paused=state.paused, selected_joint=state.selected_joint
         )
@@ -246,6 +246,7 @@ def main(
     viewer = None
     model = data = None
     try:
+        sim.reset_home()
         if launch_passive is None:
             launch_passive = importlib.import_module("mujoco.viewer").launch_passive
 

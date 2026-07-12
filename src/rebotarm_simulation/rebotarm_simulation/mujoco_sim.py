@@ -151,6 +151,21 @@ class RebotArmMujoco:
         self._ensure_open()
         self._rng = np.random.default_rng(seed)
         self._mj.mj_resetData(self._model, self._data)
+        return self._finish_reset()
+
+    def reset_home(self, seed: int | None = None) -> SimulationState:
+        self._ensure_open()
+        self._rng = np.random.default_rng(seed)
+        home_key = self._mj.mj_name2id(
+            self._model, self._mj.mjtObj.mjOBJ_KEY, "home"
+        )
+        if home_key >= 0:
+            self._mj.mj_resetDataKeyframe(self._model, self._data, home_key)
+        else:
+            self._mj.mj_resetData(self._model, self._data)
+        return self._finish_reset()
+
+    def _finish_reset(self) -> SimulationState:
         for joint_id, actuator_id in zip(self._joint_ids, self._actuator_ids):
             qpos_address = int(self._model.jnt_qposadr[joint_id])
             self._data.ctrl[actuator_id] = self._data.qpos[qpos_address]

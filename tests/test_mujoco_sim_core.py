@@ -148,6 +148,15 @@ def test_reset_is_deterministic_and_returns_finite_state(runtime_sim) -> None:
     )
 
 
+def test_reset_home_uses_the_scene_home_keyframe(runtime_sim) -> None:
+    state = runtime_sim.reset_home()
+
+    assert state.joint_positions == pytest.approx(
+        (0.0, -0.8, -1.0, 0.3, 0.0, 0.0, 0.03, -0.03)
+    )
+    assert state.object_poses["test_cube"][:3] == pytest.approx((0.28, 0.0, 0.04))
+
+
 def test_end_effector_orientation_comes_from_site_frame_in_xyzw_order(tmp_path: Path) -> None:
     mujoco = pytest.importorskip("mujoco")
     from rebotarm_simulation.mujoco_sim import RebotArmMujoco

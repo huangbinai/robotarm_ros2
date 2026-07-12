@@ -310,6 +310,8 @@ def create_node_class():
     from control_msgs.action import FollowJointTrajectory
     from rclpy.action import ActionServer, CancelResponse, GoalResponse
     from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+    from rclpy.clock import Clock as RclpyClock
+    from rclpy.clock import ClockType
     from rclpy.node import Node
     from rebotarm_msgs.msg import JointMotorState
     from rebotarm_msgs.srv import SetGripper
@@ -378,6 +380,7 @@ def create_node_class():
             self._pending_sampler: TrajectorySampler | None = None
             self._callback_group = ReentrantCallbackGroup()
             self._timer_callback_group = MutuallyExclusiveCallbackGroup()
+            self._physics_clock = RclpyClock(clock_type=ClockType.STEADY_TIME)
             self._stamp = MonotonicStamp()
 
             self._joint_pub = self.create_publisher(
@@ -416,6 +419,7 @@ def create_node_class():
                 1.0 / rate,
                 self._timer_callback,
                 callback_group=self._timer_callback_group,
+                clock=self._physics_clock,
             )
 
         def _current_arm_positions(self) -> tuple[float, ...]:

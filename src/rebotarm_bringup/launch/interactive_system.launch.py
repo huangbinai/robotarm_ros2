@@ -41,6 +41,7 @@ def generate_launch_description():
     start_passive_joint_state_publisher = LaunchConfiguration("start_passive_joint_state_publisher")
     use_moveit_fake_joint_states = LaunchConfiguration("use_moveit_fake_joint_states")
     rviz_config = LaunchConfiguration("rviz_config")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     urdf_file = PathJoinSubstitution(
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
@@ -86,6 +87,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("use_moveit_preview", default_value="false"),
             DeclareLaunchArgument("use_hardware", default_value="false"),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
             DeclareLaunchArgument("start_passive_joint_state_publisher", default_value="true"),
@@ -117,6 +119,7 @@ def generate_launch_description():
                             "'.lower() != 'true' else 'true'",
                         ]
                     ),
+                    "use_sim_time": use_sim_time,
                 }.items(),
             ),
             Node(
@@ -152,7 +155,10 @@ def generate_launch_description():
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
-                parameters=[{"robot_description": robot_description}],
+                parameters=[
+                    {"robot_description": robot_description},
+                    {"use_sim_time": use_sim_time},
+                ],
                 remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
                 condition=UnlessCondition(use_moveit_preview),
             ),
@@ -175,6 +181,7 @@ def generate_launch_description():
                 parameters=[
                     {"robot_description": robot_description},
                     {"rate": 30.0},
+                    {"use_sim_time": use_sim_time},
                 ],
                 remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
             ),
@@ -191,6 +198,7 @@ def generate_launch_description():
                     moveit_config.robot_description_kinematics,
                     moveit_config.joint_limits,
                     ompl_planning_yaml,
+                    {"use_sim_time": use_sim_time},
                 ],
                 condition=IfCondition(use_local_rviz),
             ),

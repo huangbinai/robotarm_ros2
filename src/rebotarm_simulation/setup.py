@@ -7,9 +7,13 @@ package_name = "rebotarm_simulation"
 
 
 def install_resources(pattern):
+    files_by_destination = {}
+    for path in glob(pattern, recursive=True):
+        destination = os.path.join("share", package_name, os.path.dirname(path))
+        files_by_destination.setdefault(destination, []).append(path)
     return [
-        (os.path.join("share", package_name, os.path.dirname(path)), [path])
-        for path in glob(pattern, recursive=True)
+        (destination, sorted(files_by_destination[destination]))
+        for destination in sorted(files_by_destination)
     ]
 
 

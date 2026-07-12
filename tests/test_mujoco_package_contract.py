@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -67,6 +68,35 @@ def test_setup_installs_mujoco_resources_and_entrypoints() -> None:
         "rebotarm_mujoco_node",
     ):
         assert any(script.startswith(f"{required} = ") for script in console_scripts)
+
+
+def test_install_resources_groups_each_destination_once_with_sorted_files() -> None:
+    tree = ast.parse((PACKAGE / "setup.py").read_text(encoding="utf-8"))
+    function = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "install_resources"
+    )
+    namespace = {
+        "os": os,
+        "package_name": "rebotarm_simulation",
+        "glob": lambda *_args, **_kwargs: [
+        "models/rebotarm/robot.xml",
+        "models/rebotarm/assets/z.stl",
+        "models/rebotarm/scene.xml",
+        "models/rebotarm/assets/a.stl",
+        ],
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "setup.py", "exec"), namespace)
+
+    assert namespace["install_resources"]("literal/**/*.xml") == [
+        (
+            os.path.join("share", "rebotarm_simulation", "models/rebotarm"),
+            ["models/rebotarm/robot.xml", "models/rebotarm/scene.xml"],
+        ),
+        (
+            os.path.join("share", "rebotarm_simulation", "models/rebotarm/assets"),
+            ["models/rebotarm/assets/a.stl", "models/rebotarm/assets/z.stl"],
+        ),
+    ]
 
 
 def test_package_declares_ros_adapter_dependencies() -> None:

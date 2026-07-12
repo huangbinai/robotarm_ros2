@@ -72,6 +72,8 @@
                     <geom name="gripper_base_visual" class="visual" mesh="gripper_base"/>
                     <geom name="gripper_base_collision" class="collision" type="box" pos="-0.04 0 0" size="0.06 0.04 0.025" contype="1" conaffinity="1"/>
                     <site name="ee_site" pos="-0.105 0 0" size="0.008" rgba="1 0.2 0.1 1"/>
+                    <!-- Stable wrist-relative frame reserved for a future hand-eye camera. -->
+                    <site name="wrist_camera_mount" pos="-0.04 0 0.04" quat="1 0 0 0" size="0.005" rgba="0.2 0.7 1 1"/>
 
                     <body name="left_finger_link" pos="0 0 0" euler="0 0 0">
                       <joint name="left_finger_joint" type="slide" axis="0 1 0" range="0 0.045" limited="true"/>

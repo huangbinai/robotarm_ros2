@@ -206,6 +206,16 @@ def test_robot_model_has_eight_position_actuators_end_effector_site_and_state_se
     assert sensors.find('framequat[@objname="ee_site"]') is not None
 
 
+def test_robot_model_exposes_named_wrist_camera_mount_frame() -> None:
+    robot = _robot_root()
+    end_link = robot.find('.//body[@name="end_link"]')
+    assert end_link is not None
+    mount = end_link.find('site[@name="wrist_camera_mount"]')
+    assert mount is not None
+    assert _numbers(mount.attrib["pos"]) == pytest.approx((-0.04, 0.0, 0.04))
+    assert _numbers(mount.attrib["quat"]) == pytest.approx((1.0, 0.0, 0.0, 0.0))
+
+
 def test_position_actuator_force_limits_match_urdf_effort_limits() -> None:
     robot = _robot_root()
     urdf = _urdf_root()
@@ -310,6 +320,90 @@ def _robot_self_contact_pairs(mujoco, model, data) -> set[frozenset[str]]:
         if body1 in robot_bodies and body2 in robot_bodies:
             pairs.add(frozenset((body1, body2)))
     return pairs
+
+
+def _body_contact_pairs(mujoco, model, data) -> set[frozenset[str]]:
+    pairs: set[frozenset[str]] = set()
+    for contact in data.contact:
+        names = []
+        for geom_id in (int(contact.geom1), int(contact.geom2)):
+            body_id = int(model.geom_bodyid[geom_id])
+            names.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id))
+        pairs.add(frozenset(names))
+    return pairs
+
+
+def test_default_cube_falls_onto_table_and_settles_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    cube_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "test_cube")
+    cube_joint_id = int(model.body_jntadr[cube_body_id])
+    cube_qpos = int(model.jnt_qposadr[cube_joint_id])
+    cube_dof = int(model.jnt_dofadr[cube_joint_id])
+
+    for _ in range(2_000):
+        mujoco.mj_step(model, data)
+
+    assert float(data.xpos[cube_body_id][2]) == pytest.approx(0.385, abs=0.002)
+    assert max(abs(float(value)) for value in data.qvel[cube_dof:cube_dof + 6]) < 1e-6
+    assert frozenset(("table", "test_cube")) in _body_contact_pairs(mujoco, model, data)
+    table_cube_distances = []
+    for contact in data.contact:
+        body_names = frozenset(
+            mujoco.mj_id2name(
+                model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                int(model.geom_bodyid[int(geom_id)]),
+            )
+            for geom_id in (contact.geom1, contact.geom2)
+        )
+        if body_names == frozenset(("table", "test_cube")):
+            table_cube_distances.append(float(contact.dist))
+    assert table_cube_distances
+    assert min(table_cube_distances) > -1e-3
+
+
+def test_finger_to_cube_contact_is_detectable_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    end_link_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "end_link")
+    cube_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "test_cube")
+    cube_joint_id = int(model.body_jntadr[cube_body_id])
+    cube_qpos = int(model.jnt_qposadr[cube_joint_id])
+
+    data.qpos[6:8] = (0.015, -0.015)
+    mujoco.mj_forward(model, data)
+    local_cube_position = (-0.125, 0.0, 0.0)
+    rotation = data.xmat[end_link_id].reshape(3, 3)
+    world_cube_position = data.xpos[end_link_id] + rotation @ local_cube_position
+    data.qpos[cube_qpos:cube_qpos + 3] = world_cube_position
+    data.qpos[cube_qpos + 3:cube_qpos + 7] = data.xquat[end_link_id]
+    mujoco.mj_forward(model, data)
+
+    pairs = _body_contact_pairs(mujoco, model, data)
+    assert frozenset(("left_finger_link", "test_cube")) in pairs
+    assert frozenset(("right_finger_link", "test_cube")) in pairs
+
+
+def test_robot_to_table_collision_is_enabled_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    arm_qpos = (0.66380496, -0.63603579, -0.15847179, 0.33354464, 0.01140362, -0.44845425)
+    assert all(
+        float(model.jnt_range[index][0]) <= value <= float(model.jnt_range[index][1])
+        for index, value in enumerate(arm_qpos)
+    )
+    data.qpos[:8] = (*arm_qpos, 0.045, -0.045)
+    cube_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "test_cube")
+    cube_joint_id = int(model.body_jntadr[cube_body_id])
+    cube_qpos = int(model.jnt_qposadr[cube_joint_id])
+    data.qpos[cube_qpos:cube_qpos + 7] = (2.0, 2.0, 2.0, 1.0, 0.0, 0.0, 0.0)
+    mujoco.mj_forward(model, data)
+
+    assert frozenset(("link3", "table")) in _body_contact_pairs(mujoco, model, data)
 
 
 def test_canonical_zero_pose_has_no_false_robot_self_contacts_when_runtime_is_available() -> None:

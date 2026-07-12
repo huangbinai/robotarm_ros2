@@ -217,6 +217,8 @@ def _add_sensors(root: ET.Element) -> None:
 
 
 def _canonicalize(root: ET.Element) -> bytes:
+    for mesh in root.findall("asset/mesh"):
+        mesh.attrib.pop("content_type", None)
     ET.indent(root, space="  ")
     xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
     warning = "<!-- AUTO-GENERATED from rebotarm.urdf; do not edit robot.xml manually. -->\n"

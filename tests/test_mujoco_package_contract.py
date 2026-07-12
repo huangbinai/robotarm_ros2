@@ -130,3 +130,8 @@ def test_abandoned_vhacd_pipeline_is_not_shipped() -> None:
         PACKAGE / "models/rebotarm/collision_vhacd_manifest.json",
     )
     assert not [path for path in forbidden if path.exists()]
+
+
+def test_authoritative_urdf_has_cross_platform_lf_policy() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "src/rebotarm_moveit_config/config/rebotarm.urdf text eol=lf" in attributes

@@ -135,3 +135,4 @@ def test_abandoned_vhacd_pipeline_is_not_shipped() -> None:
 def test_authoritative_urdf_has_cross_platform_lf_policy() -> None:
     attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "src/rebotarm_moveit_config/config/rebotarm.urdf text eol=lf" in attributes
+    assert "src/rebotarm_simulation/models/rebotarm/robot.xml text eol=lf" in attributes

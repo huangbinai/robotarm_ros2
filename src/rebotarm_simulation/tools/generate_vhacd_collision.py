@@ -185,22 +185,40 @@ def _sample_surface(mesh, count, seed):
 
 
 def _closest_distances(mesh, points, chunk=32):
-    """Exact triangle closest distances in bounded-memory chunks (no rtree)."""
+    """Exact accelerated triangle distances in bounded-memory chunks."""
     import numpy as np
     import trimesh
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+        raise ValueError("closest-point query contains invalid points")
     values = []
-    for start in range(0, len(points), chunk):
-        _, distance, _ = trimesh.proximity.closest_point_naive(mesh, points[start:start + chunk])
-        values.append(distance)
+    try:
+        for start in range(0, len(points), chunk):
+            _, distance, _ = trimesh.proximity.closest_point(mesh, points[start:start + chunk])
+            if not np.isfinite(distance).all():
+                raise ValueError("closest-point query returned non-finite distances")
+            values.append(distance)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"closest-point query failed: {exc}") from exc
     return np.concatenate(values) if values else np.empty(0)
 
 
-def _inside_filled_voxels(mesh, points, pitch):
+def _contains_points_exact(mesh, points, chunk=32):
     import numpy as np
-    voxels = mesh.voxelized(pitch).fill()
-    occupied = {tuple(row) for row in np.asarray(voxels.sparse_indices, dtype=np.int64)}
-    indices = np.asarray(voxels.points_to_indices(points), dtype=np.int64)
-    return np.asarray([tuple(row) in occupied for row in indices], dtype=bool)
+    points = np.asarray(points, dtype=float)
+    if not mesh.is_watertight:
+        raise ValueError("containment mesh must be watertight")
+    if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+        raise ValueError("containment query contains invalid points")
+    values = []
+    try:
+        for start in range(0, len(points), chunk):
+            values.append(np.asarray(mesh.contains(points[start:start + chunk]), dtype=bool))
+    except Exception as exc:
+        raise ValueError(f"containment query failed: {exc}") from exc
+    return np.concatenate(values) if values else np.empty(0, dtype=bool)
 
 
 def fidelity_metrics(original, repaired, profile):
@@ -209,7 +227,7 @@ def fidelity_metrics(original, repaired, profile):
     count = max(6000, int(profile["samples"]))
     seed = int(profile["seed"])
     original_points = _sample_surface(original, count, seed)
-    inside = _inside_filled_voxels(repaired, original_points, float(profile["pitch_m"]))
+    inside = _contains_points_exact(repaired, original_points)
     a = np.zeros(count, dtype=float)
     if (~inside).any():
         a[~inside] = _closest_distances(repaired, original_points[~inside])
@@ -452,18 +470,41 @@ def _validate_manifest_schema(manifest):
                 raise ValueError("invalid manifest repair record types")
 
 
+def _cleanup_artifact(path):
+    """Best-effort cleanup after commit; cleanup errors never roll back outputs."""
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    except OSError as exc:
+        print(f"warning: could not clean transaction artifact {path}: {exc}", file=sys.stderr)
+
+
+def _cleanup_stale_backups(model_dir, final_path, pattern):
+    """Remove only generator-named stale backups when the final artifact exists."""
+    if not final_path.exists():
+        return
+    for path in model_dir.glob(pattern):
+        if path.parent == model_dir and ".backup." in path.name:
+            _cleanup_artifact(path)
+
+
 def build_manifest(model_dir, config, output_root):
     model_dir = Path(model_dir).resolve()
     output_root = _inside(output_root, model_dir, "output root")
     if output_root != model_dir / "collision_vhacd":
         raise ValueError("output root must be model_dir/collision_vhacd")
     output_root.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=".collision_vhacd.tmp.", dir=output_root.parent)).resolve()
     repaired_root = model_dir / "collision_sources_repaired"
+    manifest_path = model_dir / "collision_vhacd_manifest.json"
+    _cleanup_stale_backups(model_dir, output_root, ".collision_vhacd.backup.*")
+    _cleanup_stale_backups(model_dir, repaired_root, ".collision_sources_repaired.backup.*")
+    _cleanup_stale_backups(model_dir, manifest_path, ".collision_vhacd_manifest.backup.*.json")
+    temporary = Path(tempfile.mkdtemp(prefix=".collision_vhacd.tmp.", dir=output_root.parent)).resolve()
     temporary_repaired = Path(tempfile.mkdtemp(prefix=".collision_sources_repaired.tmp.", dir=model_dir)).resolve()
     backup = output_root.parent / f".collision_vhacd.backup.{uuid.uuid4().hex}"
     backup_repaired = model_dir / f".collision_sources_repaired.backup.{uuid.uuid4().hex}"
-    manifest_path = model_dir / "collision_vhacd_manifest.json"
     temporary_manifest = model_dir / f".collision_vhacd_manifest.tmp.{uuid.uuid4().hex}.json"
     backup_manifest = model_dir / f".collision_vhacd_manifest.backup.{uuid.uuid4().hex}.json"
     _inside(temporary, output_root.parent, "temporary output")
@@ -524,13 +565,6 @@ def build_manifest(model_dir, config, output_root):
             repaired_installed = True
         os.replace(temporary_manifest, manifest_path)
         manifest_installed = True
-        if old_moved:
-            shutil.rmtree(backup)
-        if old_manifest_moved:
-            backup_manifest.unlink()
-        if old_repaired_moved:
-            shutil.rmtree(backup_repaired)
-        return manifest
     except Exception:
         if manifest_installed and manifest_path.exists():
             manifest_path.unlink()
@@ -546,18 +580,16 @@ def build_manifest(model_dir, config, output_root):
             os.replace(backup_repaired, repaired_root)
         raise
     finally:
-        if temporary.exists():
-            shutil.rmtree(temporary)
-        if temporary_repaired.exists():
-            shutil.rmtree(temporary_repaired)
-        if backup.exists() and output_root.exists():
-            shutil.rmtree(backup)
-        if temporary_manifest.exists():
-            temporary_manifest.unlink()
-        if backup_manifest.exists() and manifest_path.exists():
-            backup_manifest.unlink()
-        if backup_repaired.exists() and repaired_root.exists():
-            shutil.rmtree(backup_repaired)
+        _cleanup_artifact(temporary)
+        _cleanup_artifact(temporary_repaired)
+        _cleanup_artifact(temporary_manifest)
+    if old_moved:
+        _cleanup_artifact(backup)
+    if old_manifest_moved:
+        _cleanup_artifact(backup_manifest)
+    if old_repaired_moved:
+        _cleanup_artifact(backup_repaired)
+    return manifest
 
 
 def check_outputs(model_dir, config, manifest_path):

@@ -67,6 +67,7 @@ def test_vhacd_requirements_are_exactly_pinned():
         "trimesh==4.12.2",
         "scipy==1.18.0",
         "scikit-image==0.26.0",
+        "rtree==1.4.1",
         "vhacdx==0.0.10",
     ]
 
@@ -104,7 +105,7 @@ def test_repair_mesh_is_watertight_deterministic_and_preserves_frame():
     assert np.all(np.abs(first.bounds - original.bounds) <= profile["pitch_m"] * 2)
 
 
-def test_fidelity_metrics_use_solid_inside_semantics_without_rtree():
+def test_fidelity_metrics_use_exact_solid_inside_semantics():
     original = trimesh.creation.box(extents=(1.0, 0.8, 0.6))
     profile = {**_repair_profile(), "pitch_m": 0.05, "samples": 6000}
     repaired = generator.repair_mesh(original, profile)
@@ -114,6 +115,38 @@ def test_fidelity_metrics_use_solid_inside_semantics_without_rtree():
     assert metrics["original_to_repaired"]["samples"] == 6000
     assert metrics["original_to_repaired"]["max_m"] <= 0.075
     assert metrics["repaired_to_original"]["max_m"] <= 0.075
+
+
+def test_exact_contains_does_not_treat_neighboring_voxel_as_inside():
+    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    points = np.array([[0.49, 0.0, 0.0], [0.51, 0.0, 0.0]])
+    assert generator._contains_points_exact(box, points).tolist() == [True, False]
+
+
+def test_exact_contains_bounds_query_batches(monkeypatch):
+    box = trimesh.creation.box()
+    real_contains = box.contains
+    batch_sizes = []
+
+    def recording_contains(points):
+        batch_sizes.append(len(points))
+        return real_contains(points)
+
+    monkeypatch.setattr(box, "contains", recording_contains)
+    generator._contains_points_exact(box, np.zeros((65, 3)))
+    assert max(batch_sizes) <= 32
+
+
+def test_accelerated_closest_matches_naive_and_does_not_call_it(monkeypatch):
+    mesh = trimesh.creation.icosphere(subdivisions=1, radius=1.0)
+    points = np.array([[0.0, 0.0, 0.0], [1.2, 0.1, 0.0], [-0.4, 0.7, 0.9]])
+    expected = trimesh.proximity.closest_point_naive(mesh, points)[1]
+    actual = generator._closest_distances(mesh, points, chunk=2)
+    assert np.allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    monkeypatch.setattr(trimesh.proximity, "closest_point_naive",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("naive called")))
+    assert np.allclose(generator._closest_distances(mesh, points, chunk=2), expected,
+                       rtol=1e-12, atol=1e-12)
 
 
 def test_committed_finger_repair_assets_are_canonical_and_watertight():
@@ -185,6 +218,36 @@ def test_manifest_swap_failure_restores_repaired_collision_and_manifest(tmp_path
              for p in ([root] if root.is_file() else root.rglob("*")) if p.is_file()}
     assert after == before
     assert not list(tmp_path.glob(".collision_*"))
+
+
+def test_backup_cleanup_failure_keeps_committed_artifacts(tmp_path, monkeypatch, capsys):
+    config = _small_config(tmp_path)
+    config["parts"]["part"]["repair"] = {
+        **_repair_profile(), "pitch_m": 0.05, "fallback_pitch_m": 0.04,
+        "p95_m": 0.1, "max_m": 0.2, "bounds_m": 0.1,
+    }
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    (tmp_path / "collision_vhacd" / "old.marker").write_bytes(b"old")
+    (tmp_path / "collision_sources_repaired" / "old.marker").write_bytes(b"old")
+    real_rmtree = generator.shutil.rmtree
+    cleanups = 0
+
+    def fail_second_backup_cleanup(path, *args, **kwargs):
+        nonlocal cleanups
+        if ".backup." in Path(path).name:
+            cleanups += 1
+            if cleanups == 2:
+                raise OSError("injected backup cleanup failure")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(generator.shutil, "rmtree", fail_second_backup_cleanup)
+    manifest = generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    assert manifest == generator.check_outputs(
+        tmp_path, config, tmp_path / "collision_vhacd_manifest.json")
+    assert not (tmp_path / "collision_vhacd" / "old.marker").exists()
+    assert not (tmp_path / "collision_sources_repaired" / "old.marker").exists()
+    assert "injected backup cleanup failure" in capsys.readouterr().err
 
 
 def test_sha256_file_streams(tmp_path):

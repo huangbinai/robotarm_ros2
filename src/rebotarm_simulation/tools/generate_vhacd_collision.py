@@ -13,6 +13,29 @@ import tempfile
 from pathlib import Path
 
 EXPECTED_GENERATOR = {"package": "vhacdx", "version": "0.0.10"}
+EXPECTED_COMMON = {
+    "resolution": 400000,
+    "minimum_volume_percent_error_allowed": 1.0,
+    "max_recursion_depth": 10,
+    "shrink_wrap": True,
+    "fill_mode": "flood",
+    "max_num_vertices_per_hull": 64,
+    "async_acd": False,
+    "min_edge_length": 2,
+    "find_best_plane": False,
+}
+EXPECTED_PARTS = {
+    "base_link": ("base_link.STL", 8),
+    "link1": ("link1.STL", 8),
+    "link2": ("link2.STL", 8),
+    "link3": ("link3.STL", 8),
+    "link4": ("link4.STL", 8),
+    "link5": ("link5.STL", 8),
+    "link6": ("link6.STL", 8),
+    "gripper_base": ("gripper_base.stl", 12),
+    "left_finger": ("left_finger.stl", 20),
+    "right_finger": ("right_finger.stl", 20),
+}
 
 
 class Config(dict):
@@ -43,28 +66,31 @@ def load_config(path):
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid config: {exc}") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
+    if not isinstance(value, dict) or set(value) != {"schema_version", "generator", "common", "parts"}:
+        raise ValueError("config top-level keys are invalid")
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 1:
         raise ValueError("config schema_version must be 1")
     if value.get("generator") != EXPECTED_GENERATOR:
         raise ValueError("config generator must be vhacdx 0.0.10")
     common = value.get("common")
     parts = value.get("parts")
-    required = {
-        "resolution", "minimum_volume_percent_error_allowed", "max_recursion_depth",
-        "shrink_wrap", "fill_mode", "max_num_vertices_per_hull", "async_acd",
-        "min_edge_length", "find_best_plane",
-    }
-    if not isinstance(common, dict) or set(common) != required:
-        raise ValueError("config common has invalid structure")
-    if not isinstance(parts, dict) or not parts:
-        raise ValueError("config parts must be a non-empty object")
+    if (not isinstance(common, dict) or common != EXPECTED_COMMON
+            or any(type(common.get(key)) is not type(expected)
+                   for key, expected in EXPECTED_COMMON.items())):
+        raise ValueError("config common must match the fixed VHACD parameter contract")
+    if not isinstance(parts, dict) or set(parts) != set(EXPECTED_PARTS):
+        raise ValueError("config parts must contain exactly the ten fixed parts")
     for name, part in parts.items():
-        if (not isinstance(name, str) or not name or not isinstance(part, dict)
-                or set(part) != {"source", "max_convex_hulls"}
-                or not isinstance(part["source"], str)
-                or not isinstance(part["max_convex_hulls"], int)
-                or part["max_convex_hulls"] <= 0):
-            raise ValueError(f"invalid part structure: {name!r}")
+        expected_source, expected_budget = EXPECTED_PARTS[name]
+        if (not isinstance(part, dict) or set(part) != {"source", "max_convex_hulls"}
+                or not isinstance(part["source"], str) or not part["source"]
+                or Path(part["source"]).name != part["source"]
+                or Path(part["source"]).suffix.lower() != ".stl"
+                or type(part["max_convex_hulls"]) is not int
+                or part["max_convex_hulls"] <= 0
+                or part["source"] != expected_source
+                or part["max_convex_hulls"] != expected_budget):
+            raise ValueError(f"invalid config part structure: {name!r}")
     result = Config(value)
     result.config_path = path.resolve()
     return result
@@ -189,8 +215,14 @@ def build_manifest(model_dir, config, output_root):
     if output_root != model_dir / "collision_vhacd":
         raise ValueError("output root must be model_dir/collision_vhacd")
     output_root.mkdir(parents=True, exist_ok=True)
-    manifest = {"schema_version": 1, "generator": EXPECTED_GENERATOR,
-                "config_sha256": _config_hash(config), "parts": {}}
+    manifest = {
+        "schema_version": 1,
+        "generator": EXPECTED_GENERATOR,
+        "generator_script_sha256": sha256_file(__file__),
+        "config_sha256": _config_hash(config),
+        "parameters": config["common"],
+        "parts": {},
+    }
     for name, part in config["parts"].items():
         if Path(name).name != name:
             raise ValueError(f"unsafe part name: {name}")
@@ -208,7 +240,7 @@ def build_manifest(model_dir, config, output_root):
         part_dir.mkdir(parents=True, exist_ok=True)
         settings = {**config["common"], "max_convex_hulls": part["max_convex_hulls"]}
         outputs = []
-        for number, hull in enumerate(decompose_part(source, settings), 1):
+        for number, hull in enumerate(decompose_part(source, settings)):
             path = part_dir / f"hull_{number:03d}.stl"
             path.write_bytes(canonical_stl_bytes(hull))
             relative = path.relative_to(model_dir).as_posix()
@@ -232,11 +264,16 @@ def check_outputs(model_dir, config, manifest_path):
         raise ValueError(f"invalid manifest: {exc}") from exc
     if manifest.get("schema_version") != 1 or manifest.get("generator") != EXPECTED_GENERATOR:
         raise ValueError("manifest schema or generator mismatch")
+    if manifest.get("generator_script_sha256") != sha256_file(__file__):
+        raise ValueError("generator script hash mismatch")
+    if manifest.get("parameters") != config["common"]:
+        raise ValueError("manifest parameters mismatch")
     if manifest.get("config_sha256") != _config_hash(config):
         raise ValueError("config hash mismatch")
     expected_root = manifest_path.parent.resolve()
     if set(manifest.get("parts", {})) != set(config["parts"]):
         raise ValueError("manifest parts mismatch")
+    expected_stls = set()
     for name, part in config["parts"].items():
         record = manifest["parts"][name]
         input_path = record.get("input", {}).get("path")
@@ -251,7 +288,7 @@ def check_outputs(model_dir, config, manifest_path):
         outputs = record.get("outputs")
         if not isinstance(outputs, list) or not outputs:
             raise ValueError(f"missing outputs for {name}")
-        expected_names = [f"hull_{i:03d}.stl" for i in range(1, len(outputs) + 1)]
+        expected_names = [f"hull_{i:03d}.stl" for i in range(len(outputs))]
         for expected_name, output in zip(expected_names, outputs):
             raw = output.get("path")
             if not isinstance(raw, str) or Path(raw).is_absolute() or ".." in Path(raw).parts:
@@ -261,12 +298,16 @@ def check_outputs(model_dir, config, manifest_path):
                 raise ValueError(f"invalid output path or numbering for {name}")
             if not path.is_file() or sha256_file(path) != output.get("sha256"):
                 raise ValueError(f"output hash mismatch: {path}")
+            expected_stls.add(path)
             actual = _mesh_metadata(path)
             if any(output.get(key) != actual[key] for key in actual):
                 raise ValueError(f"output metadata mismatch: {path}")
         actual_names = sorted(path.name for path in part_dir.glob("*.stl"))
         if actual_names != expected_names:
             raise ValueError(f"extra or missing hull STL for {name}")
+    actual_stls = {path.resolve() for path in expected_root.rglob("*.stl")}
+    if actual_stls != expected_stls:
+        raise ValueError("extra or missing hull STL in collision_vhacd output root")
     return manifest
 
 

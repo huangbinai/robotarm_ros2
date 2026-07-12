@@ -24,7 +24,7 @@
     "link5": {"source": "link5.STL", "max_convex_hulls": 8},
     "link6": {"source": "link6.STL", "max_convex_hulls": 8},
     "gripper_base": {"source": "gripper_base.stl", "max_convex_hulls": 12},
-    "left_finger": {"source": "left_finger.stl", "max_convex_hulls": 20},
-    "right_finger": {"source": "right_finger.stl", "max_convex_hulls": 20}
+    "left_finger": {"source": "left_finger.stl", "max_convex_hulls": 20, "repair": {"method": "voxel_marching_cubes", "pitch_m": 0.00025, "fallback_pitch_m": 0.00020, "closing_iterations": 1, "fill_holes": true, "seed": 20260712, "samples": 6000, "p95_m": 0.00035, "max_m": 0.00075, "bounds_m": 0.0005}},
+    "right_finger": {"source": "right_finger.stl", "max_convex_hulls": 20, "repair": {"method": "voxel_marching_cubes", "pitch_m": 0.00025, "fallback_pitch_m": 0.00020, "closing_iterations": 1, "fill_holes": true, "seed": 20260712, "samples": 6000, "p95_m": 0.00035, "max_m": 0.00075, "bounds_m": 0.0005}}
   }
 }

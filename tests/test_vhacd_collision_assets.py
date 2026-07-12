@@ -15,6 +15,7 @@ SIMULATION = ROOT / "src" / "rebotarm_simulation"
 CONFIG_PATH = SIMULATION / "config" / "vhacd_collision.json"
 REQUIREMENTS_PATH = SIMULATION / "requirements-vhacd.txt"
 ASSETS = SIMULATION / "models" / "rebotarm" / "assets"
+REPAIRED = SIMULATION / "models" / "rebotarm" / "collision_sources_repaired"
 
 
 def _config():
@@ -35,8 +36,8 @@ def test_vhacd_config_locks_generator_and_part_contract():
         "link5": {"source": "link5.STL", "max_convex_hulls": 8},
         "link6": {"source": "link6.STL", "max_convex_hulls": 8},
         "gripper_base": {"source": "gripper_base.stl", "max_convex_hulls": 12},
-        "left_finger": {"source": "left_finger.stl", "max_convex_hulls": 20},
-        "right_finger": {"source": "right_finger.stl", "max_convex_hulls": 20},
+        "left_finger": {"source": "left_finger.stl", "max_convex_hulls": 20, "repair": _repair_profile()},
+        "right_finger": {"source": "right_finger.stl", "max_convex_hulls": 20, "repair": _repair_profile()},
     }
 
     for name, part in config["parts"].items():
@@ -64,8 +65,126 @@ def test_vhacd_requirements_are_exactly_pinned():
     assert REQUIREMENTS_PATH.read_text(encoding="utf-8").splitlines() == [
         "numpy==2.4.2",
         "trimesh==4.12.2",
+        "scipy==1.18.0",
+        "scikit-image==0.26.0",
         "vhacdx==0.0.10",
     ]
+
+
+def _repair_profile():
+    return {
+        "method": "voxel_marching_cubes", "pitch_m": 0.00025,
+        "fallback_pitch_m": 0.00020, "closing_iterations": 1,
+        "fill_holes": True, "seed": 20260712, "samples": 6000,
+        "p95_m": 0.00035, "max_m": 0.00075, "bounds_m": 0.0005,
+    }
+
+
+def _open_overlapping_boxes():
+    meshes = []
+    for center in ((0.0, 0.0, 0.0), (0.7, 0.0, 0.0)):
+        mesh = trimesh.creation.box(extents=(1.0, 0.8, 0.6))
+        mesh.apply_translation(center)
+        mesh.update_faces(np.arange(len(mesh.faces)) != 0)
+        meshes.append(mesh)
+    return trimesh.util.concatenate(meshes)
+
+
+def test_repair_mesh_is_watertight_deterministic_and_preserves_frame():
+    original = _open_overlapping_boxes()
+    profile = {**_repair_profile(), "pitch_m": 0.05}
+    first = generator.repair_mesh(original, profile)
+    second = generator.repair_mesh(original.copy(), profile)
+
+    assert isinstance(first, trimesh.Trimesh)
+    assert np.isfinite(first.vertices).all()
+    assert first.is_watertight and first.is_winding_consistent
+    assert first.nondegenerate_faces().all()
+    assert generator.canonical_stl_bytes(first) == generator.canonical_stl_bytes(second)
+    assert np.all(np.abs(first.bounds - original.bounds) <= profile["pitch_m"] * 2)
+
+
+def test_fidelity_metrics_use_solid_inside_semantics_without_rtree():
+    original = trimesh.creation.box(extents=(1.0, 0.8, 0.6))
+    profile = {**_repair_profile(), "pitch_m": 0.05, "samples": 6000}
+    repaired = generator.repair_mesh(original, profile)
+    metrics = generator.fidelity_metrics(original, repaired, profile)
+
+    assert set(metrics) == {"original_to_repaired", "repaired_to_original", "bounds_max_abs_m"}
+    assert metrics["original_to_repaired"]["samples"] == 6000
+    assert metrics["original_to_repaired"]["max_m"] <= 0.075
+    assert metrics["repaired_to_original"]["max_m"] <= 0.075
+
+
+def test_committed_finger_repair_assets_are_canonical_and_watertight():
+    expected = {
+        "left_finger.stl": (24919684, "12055aa02475e9917d62564e0d0da2be54a2d0c6aca9d18477561e8196e78250"),
+        "right_finger.stl": (25116684, "daa89256c1cf2bec135b26098ac40ca43a0d3de87e634f4d16b8a757eae820f0"),
+    }
+    for filename, (size, digest) in expected.items():
+        path = REPAIRED / filename
+        mesh = trimesh.load_mesh(path, process=True)
+        assert path.stat().st_size == size
+        assert generator.sha256_file(path) == digest
+        assert generator.canonical_stl_bytes(mesh) == path.read_bytes()
+        assert mesh.is_watertight and mesh.is_winding_consistent
+        assert mesh.nondegenerate_faces().all()
+
+
+def test_build_integrates_repair_record_and_check_is_read_only(tmp_path, monkeypatch):
+    config = _small_config(tmp_path)
+    profile = {**_repair_profile(), "pitch_m": 0.05, "fallback_pitch_m": 0.04,
+               "p95_m": 0.1, "max_m": 0.2, "bounds_m": 0.1}
+    config["parts"]["part"]["repair"] = profile
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    manifest = generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+
+    record = manifest["parts"]["part"]["repair"]
+    assert set(record) == {"original", "repaired", "selected_profile", "topology", "fidelity"}
+    assert record["selected_profile"]["pitch_m"] == 0.05
+    assert (tmp_path / record["repaired"]["path"]).is_file()
+    assert record["topology"]["after"]["watertight"] is True
+    before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
+    assert generator.check_outputs(tmp_path, config, tmp_path / "collision_vhacd_manifest.json") == manifest
+    after = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before
+    extra = tmp_path / "collision_sources_repaired" / "extra.stl"
+    extra.write_bytes((tmp_path / record["repaired"]["path"]).read_bytes())
+    with pytest.raises(ValueError, match="extra"):
+        generator.check_outputs(tmp_path, config, tmp_path / "collision_vhacd_manifest.json")
+
+
+def test_manifest_swap_failure_restores_repaired_collision_and_manifest(tmp_path, monkeypatch):
+    config = _small_config(tmp_path)
+    config["parts"]["part"]["repair"] = {
+        **_repair_profile(), "pitch_m": 0.05, "fallback_pitch_m": 0.04,
+        "p95_m": 0.1, "max_m": 0.2, "bounds_m": 0.1,
+    }
+    monkeypatch.setattr(generator, "decompose_part", lambda *_: [trimesh.creation.box()])
+    generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    (tmp_path / "collision_sources_repaired" / "old.marker").write_bytes(b"old repaired")
+    (tmp_path / "collision_vhacd" / "old.marker").write_bytes(b"old collision")
+    manifest_path = tmp_path / "collision_vhacd_manifest.json"
+    manifest_path.write_bytes(manifest_path.read_bytes() + b"\n")
+    watched = (tmp_path / "collision_sources_repaired", tmp_path / "collision_vhacd",
+               tmp_path / "collision_vhacd_manifest.json")
+    before = {p.relative_to(tmp_path): p.read_bytes() for root in watched
+              for p in ([root] if root.is_file() else root.rglob("*")) if p.is_file()}
+    real_replace = generator.os.replace
+
+    def fail_final_manifest(source, destination):
+        if (Path(destination) == tmp_path / "collision_vhacd_manifest.json"
+                and ".tmp." in Path(source).name):
+            raise OSError("injected manifest swap failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(generator.os, "replace", fail_final_manifest)
+    with pytest.raises(OSError, match="injected"):
+        generator.build_manifest(tmp_path, config, tmp_path / "collision_vhacd")
+    after = {p.relative_to(tmp_path): p.read_bytes() for root in watched
+             for p in ([root] if root.is_file() else root.rglob("*")) if p.is_file()}
+    assert after == before
+    assert not list(tmp_path.glob(".collision_*"))
 
 
 def test_sha256_file_streams(tmp_path):

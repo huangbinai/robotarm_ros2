@@ -38,6 +38,12 @@ EXPECTED_PARTS = {
     "left_finger": ("left_finger.stl", 20),
     "right_finger": ("right_finger.stl", 20),
 }
+REPAIR_PROFILE = {
+    "method": "voxel_marching_cubes", "pitch_m": 0.00025,
+    "fallback_pitch_m": 0.00020, "closing_iterations": 1,
+    "fill_holes": True, "seed": 20260712, "samples": 6000,
+    "p95_m": 0.00035, "max_m": 0.00075, "bounds_m": 0.0005,
+}
 
 
 class Config(dict):
@@ -86,14 +92,16 @@ def load_config(path):
         raise ValueError("config parts must contain exactly the ten fixed parts")
     for name, part in parts.items():
         expected_source, expected_budget = EXPECTED_PARTS[name]
-        if (not isinstance(part, dict) or set(part) != {"source", "max_convex_hulls"}
+        expected_keys = {"source", "max_convex_hulls", "repair"} if name.endswith("finger") else {"source", "max_convex_hulls"}
+        if (not isinstance(part, dict) or set(part) != expected_keys
                 or not isinstance(part["source"], str) or not part["source"]
                 or Path(part["source"]).name != part["source"]
                 or Path(part["source"]).suffix.lower() != ".stl"
                 or type(part["max_convex_hulls"]) is not int
                 or part["max_convex_hulls"] <= 0
                 or part["source"] != expected_source
-                or part["max_convex_hulls"] != expected_budget):
+                or part["max_convex_hulls"] != expected_budget
+                or (name.endswith("finger") and part.get("repair") != REPAIR_PROFILE)):
             raise ValueError(f"invalid config part structure: {name!r}")
     result = Config(value)
     result.config_path = path.resolve()
@@ -110,6 +118,177 @@ def _finite_mesh(mesh, label):
         raise ValueError(f"{label} has empty or non-triangular faces")
     if not np.isfinite(vertices).all() or not np.isfinite(faces).all():
         raise ValueError(f"{label} contains non-finite data")
+
+
+def _component_sort_key(mesh):
+    """Stable ordering independent of the source face/component order."""
+    return (_rounded(mesh.bounds.reshape(-1)), _rounded(mesh.centroid),
+            hashlib.sha256(canonical_stl_bytes(mesh)).hexdigest())
+
+
+def repair_mesh(mesh, profile):
+    """Repair disconnected/open triangle surfaces on one global voxel lattice."""
+    import numpy as np
+    import trimesh
+    from scipy import ndimage
+    from skimage import measure
+
+    _finite_mesh(mesh, "repair source")
+    pitch = float(profile["pitch_m"])
+    if not np.isfinite(pitch) or pitch <= 0:
+        raise ValueError("repair pitch must be positive")
+    source = mesh.copy()
+    source.process(validate=True)
+    components = sorted(source.split(only_watertight=False), key=_component_sort_key)
+    global_min = np.min([part.bounds[0] for part in components], axis=0)
+    global_max = np.max([part.bounds[1] for part in components], axis=0)
+    lattice_origin = np.floor(global_min / pitch) * pitch
+    padding = 2
+    origin = lattice_origin - padding * pitch
+    shape = np.ceil((global_max - lattice_origin) / pitch).astype(int) + 1 + 2 * padding
+    occupancy = np.zeros(tuple(shape), dtype=bool)
+    for component in components:
+        points = np.asarray(component.voxelized(pitch).points, dtype=float)
+        indices_float = (points - origin) / pitch
+        indices = np.rint(indices_float).astype(np.int64)
+        if not np.allclose(indices_float, indices, atol=1e-6, rtol=0):
+            raise ValueError("component voxels do not align with global lattice")
+        if np.any(indices < 0) or np.any(indices >= shape):
+            raise ValueError("component voxel lies outside global lattice")
+        occupancy[tuple(indices.T)] = True
+    occupancy = ndimage.binary_closing(
+        occupancy, iterations=int(profile["closing_iterations"])
+    )
+    if profile["fill_holes"]:
+        occupancy = ndimage.binary_fill_holes(occupancy)
+    if not occupancy.any():
+        raise ValueError("repair produced empty occupancy")
+    vertices, faces, _, _ = measure.marching_cubes(
+        occupancy.astype(np.uint8), level=0.5, spacing=(pitch, pitch, pitch)
+    )
+    vertices += origin
+    result = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    result.process(validate=True)
+    result.remove_unreferenced_vertices()
+    result.fix_normals(multibody=True)
+    _finite_mesh(result, "repaired mesh")
+    if (not result.is_watertight or not result.is_winding_consistent
+            or not result.nondegenerate_faces().all()):
+        raise ValueError("repair result failed topology validation")
+    return result
+
+
+def _sample_surface(mesh, count, seed):
+    import trimesh
+    points, _ = trimesh.sample.sample_surface(mesh, count, seed=seed)
+    return points
+
+
+def _closest_distances(mesh, points, chunk=32):
+    """Exact triangle closest distances in bounded-memory chunks (no rtree)."""
+    import numpy as np
+    import trimesh
+    values = []
+    for start in range(0, len(points), chunk):
+        _, distance, _ = trimesh.proximity.closest_point_naive(mesh, points[start:start + chunk])
+        values.append(distance)
+    return np.concatenate(values) if values else np.empty(0)
+
+
+def _inside_filled_voxels(mesh, points, pitch):
+    import numpy as np
+    voxels = mesh.voxelized(pitch).fill()
+    occupied = {tuple(row) for row in np.asarray(voxels.sparse_indices, dtype=np.int64)}
+    indices = np.asarray(voxels.points_to_indices(points), dtype=np.int64)
+    return np.asarray([tuple(row) in occupied for row in indices], dtype=bool)
+
+
+def fidelity_metrics(original, repaired, profile):
+    """Deterministic bidirectional collision-source fidelity measurements."""
+    import numpy as np
+    count = max(6000, int(profile["samples"]))
+    seed = int(profile["seed"])
+    original_points = _sample_surface(original, count, seed)
+    inside = _inside_filled_voxels(repaired, original_points, float(profile["pitch_m"]))
+    a = np.zeros(count, dtype=float)
+    if (~inside).any():
+        a[~inside] = _closest_distances(repaired, original_points[~inside])
+    repaired_points = _sample_surface(repaired, count, seed + 1)
+    b = _closest_distances(original, repaired_points)
+
+    def summarize(values):
+        return {"samples": count, "p95_m": float(np.percentile(values, 95)),
+                "max_m": float(np.max(values))}
+    return {
+        "original_to_repaired": summarize(a),
+        "repaired_to_original": summarize(b),
+        "bounds_max_abs_m": float(np.max(np.abs(original.bounds - repaired.bounds))),
+    }
+
+
+def _topology(mesh):
+    return {"vertices": int(len(mesh.vertices)), "faces": int(len(mesh.faces)),
+            "watertight": bool(mesh.is_watertight),
+            "winding_consistent": bool(mesh.is_winding_consistent)}
+
+
+def _normalized_mesh_sha256(mesh):
+    return hashlib.sha256(canonical_stl_bytes(mesh)).hexdigest()
+
+
+def _fidelity_passes(metrics, profile):
+    return (metrics["original_to_repaired"]["p95_m"] <= profile["p95_m"]
+            and metrics["original_to_repaired"]["max_m"] <= profile["max_m"]
+            and metrics["repaired_to_original"]["p95_m"] <= profile["p95_m"]
+            and metrics["repaired_to_original"]["max_m"] <= profile["max_m"]
+            and metrics["bounds_max_abs_m"] <= profile["bounds_m"])
+
+
+def _build_repairs(model_dir, config, temporary_root, final_root):
+    import trimesh
+    repair_parts = [(name, part) for name, part in config["parts"].items() if "repair" in part]
+    if not repair_parts:
+        return {}
+    attempts = [repair_parts[0][1]["repair"]["pitch_m"],
+                repair_parts[0][1]["repair"]["fallback_pitch_m"]]
+    failures = []
+    for pitch in attempts:
+        records = {}
+        try:
+            for name, part in repair_parts:
+                profile = {**part["repair"], "pitch_m": pitch}
+                source = _inside(model_dir / "assets" / part["source"], model_dir, "repair input")
+                original = trimesh.load_mesh(source, process=False)
+                if isinstance(original, trimesh.Scene):
+                    raise ValueError(f"repair source is a Scene: {source}")
+                repaired = repair_mesh(original, profile)
+                path = temporary_root / f"{name}.stl"
+                path.write_bytes(canonical_stl_bytes(repaired))
+                repaired = trimesh.load_mesh(path, process=True)
+                metrics = fidelity_metrics(original, repaired, profile)
+                if not _fidelity_passes(metrics, profile):
+                    raise ValueError(f"{name} fidelity failed at pitch {pitch}: {metrics}")
+                final_path = final_root / path.name
+                records[name] = {
+                    "mesh": repaired, "path": path,
+                    "record": {
+                        "original": {"path": source.relative_to(model_dir).as_posix(),
+                                     "raw_sha256": sha256_file(source),
+                                     "normalized_sha256": _normalized_mesh_sha256(original)},
+                        "repaired": {"path": final_path.relative_to(model_dir).as_posix(),
+                                     "raw_sha256": sha256_file(path),
+                                     "normalized_sha256": _normalized_mesh_sha256(repaired)},
+                        "selected_profile": profile,
+                        "topology": {"before": _topology(original), "after": _topology(repaired)},
+                        "fidelity": metrics,
+                    },
+                }
+            return records
+        except Exception as exc:
+            failures.append(str(exc))
+            for path in temporary_root.glob("*.stl"):
+                path.unlink()
+    raise ValueError("finger repair failed at both pitches: " + " | ".join(failures))
 
 
 def decompose_part(source, settings):
@@ -236,7 +415,8 @@ def _validate_manifest_schema(manifest):
             or not isinstance(manifest["parts"], dict)):
         raise ValueError("invalid manifest top-level types")
     for name, part in manifest["parts"].items():
-        if not isinstance(name, str) or not isinstance(part, dict) or set(part) != {"input", "outputs"}:
+        if (not isinstance(name, str) or not isinstance(part, dict)
+                or set(part) not in ({"input", "outputs"}, {"input", "repair", "outputs"})):
             raise ValueError("invalid manifest part schema")
         input_record = part["input"]
         outputs = part["outputs"]
@@ -256,6 +436,20 @@ def _validate_manifest_schema(manifest):
                     or any(not isinstance(row, list) or len(row) != 3 for row in output["bounds"])
                     or any(type(value) not in {int, float} for row in output["bounds"] for value in row)):
                 raise ValueError("invalid manifest output types")
+        if "repair" in part:
+            repair = part["repair"]
+            if not isinstance(repair, dict) or set(repair) != {
+                    "original", "repaired", "selected_profile", "topology", "fidelity"}:
+                raise ValueError("invalid manifest repair schema")
+            for key in ("original", "repaired"):
+                if (not isinstance(repair[key], dict)
+                        or set(repair[key]) != {"path", "raw_sha256", "normalized_sha256"}
+                        or not all(isinstance(value, str) for value in repair[key].values())):
+                    raise ValueError("invalid manifest repair source schema")
+            if (not isinstance(repair["selected_profile"], dict)
+                    or not isinstance(repair["topology"], dict)
+                    or not isinstance(repair["fidelity"], dict)):
+                raise ValueError("invalid manifest repair record types")
 
 
 def build_manifest(model_dir, config, output_root):
@@ -265,7 +459,10 @@ def build_manifest(model_dir, config, output_root):
         raise ValueError("output root must be model_dir/collision_vhacd")
     output_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".collision_vhacd.tmp.", dir=output_root.parent)).resolve()
+    repaired_root = model_dir / "collision_sources_repaired"
+    temporary_repaired = Path(tempfile.mkdtemp(prefix=".collision_sources_repaired.tmp.", dir=model_dir)).resolve()
     backup = output_root.parent / f".collision_vhacd.backup.{uuid.uuid4().hex}"
+    backup_repaired = model_dir / f".collision_sources_repaired.backup.{uuid.uuid4().hex}"
     manifest_path = model_dir / "collision_vhacd_manifest.json"
     temporary_manifest = model_dir / f".collision_vhacd_manifest.tmp.{uuid.uuid4().hex}.json"
     backup_manifest = model_dir / f".collision_vhacd_manifest.backup.{uuid.uuid4().hex}.json"
@@ -280,8 +477,13 @@ def build_manifest(model_dir, config, output_root):
         "parts": {},
     }
     old_moved = False
+    old_repaired_moved = False
     old_manifest_moved = False
+    output_installed = False
+    repaired_installed = False
+    manifest_installed = False
     try:
+        repairs = _build_repairs(model_dir, config, temporary_repaired, repaired_root)
         for name, part in config["parts"].items():
             if Path(name).name != name:
                 raise ValueError(f"unsafe part name: {name}")
@@ -290,9 +492,10 @@ def build_manifest(model_dir, config, output_root):
             source = _inside(model_dir / "assets" / part["source"], model_dir, "input")
             part_dir = _inside(temporary / name, temporary, "part output")
             part_dir.mkdir(parents=True)
+            decomposition_source = repairs[name]["path"] if name in repairs else source
             settings = {**config["common"], "max_convex_hulls": part["max_convex_hulls"]}
             outputs = []
-            for number, hull in enumerate(decompose_part(source, settings)):
+            for number, hull in enumerate(decompose_part(decomposition_source, settings)):
                 path = part_dir / f"hull_{number:03d}.stl"
                 path.write_bytes(canonical_stl_bytes(hull))
                 final_path = output_root / name / path.name
@@ -302,6 +505,8 @@ def build_manifest(model_dir, config, output_root):
                 "input": {"path": source.relative_to(model_dir).as_posix(), "sha256": sha256_file(source)},
                 "outputs": outputs,
             }
+            if name in repairs:
+                manifest["parts"][name]["repair"] = repairs[name]["record"]
         _atomic_json(temporary_manifest, manifest)
         if output_root.exists():
             os.replace(output_root, backup)
@@ -309,28 +514,50 @@ def build_manifest(model_dir, config, output_root):
         if manifest_path.exists():
             os.replace(manifest_path, backup_manifest)
             old_manifest_moved = True
+        if repairs and repaired_root.exists():
+            os.replace(repaired_root, backup_repaired)
+            old_repaired_moved = True
         os.replace(temporary, output_root)
+        output_installed = True
+        if repairs:
+            os.replace(temporary_repaired, repaired_root)
+            repaired_installed = True
         os.replace(temporary_manifest, manifest_path)
+        manifest_installed = True
         if old_moved:
             shutil.rmtree(backup)
         if old_manifest_moved:
             backup_manifest.unlink()
+        if old_repaired_moved:
+            shutil.rmtree(backup_repaired)
         return manifest
     except Exception:
-        if old_manifest_moved and not manifest_path.exists() and backup_manifest.exists():
+        if manifest_installed and manifest_path.exists():
+            manifest_path.unlink()
+        if repaired_installed and repaired_root.exists():
+            shutil.rmtree(repaired_root)
+        if output_installed and output_root.exists():
+            shutil.rmtree(output_root)
+        if old_manifest_moved and backup_manifest.exists():
             os.replace(backup_manifest, manifest_path)
-        if old_moved and not output_root.exists() and backup.exists():
+        if old_moved and backup.exists():
             os.replace(backup, output_root)
+        if old_repaired_moved and backup_repaired.exists():
+            os.replace(backup_repaired, repaired_root)
         raise
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
+        if temporary_repaired.exists():
+            shutil.rmtree(temporary_repaired)
         if backup.exists() and output_root.exists():
             shutil.rmtree(backup)
         if temporary_manifest.exists():
             temporary_manifest.unlink()
         if backup_manifest.exists() and manifest_path.exists():
             backup_manifest.unlink()
+        if backup_repaired.exists() and repaired_root.exists():
+            shutil.rmtree(backup_repaired)
 
 
 def check_outputs(model_dir, config, manifest_path):
@@ -355,6 +582,7 @@ def check_outputs(model_dir, config, manifest_path):
     if set(manifest.get("parts", {})) != set(config["parts"]):
         raise ValueError("manifest parts mismatch")
     expected_stls = set()
+    expected_repaired = set()
     for name, part in config["parts"].items():
         record = manifest["parts"][name]
         input_path = record.get("input", {}).get("path")
@@ -365,6 +593,40 @@ def check_outputs(model_dir, config, manifest_path):
         expected_source = _inside(model_dir / "assets" / part["source"], model_dir, "input")
         if source != expected_source or not source.is_file() or sha256_file(source) != record["input"]["sha256"]:
             raise ValueError(f"input hash or path mismatch for {name}")
+        if "repair" in part:
+            repair = record.get("repair")
+            if not isinstance(repair, dict):
+                raise ValueError(f"missing repair record for {name}")
+            repaired_path = repair["repaired"]["path"]
+            if (repair["original"]["path"] != input_path
+                    or repair["original"]["raw_sha256"] != sha256_file(source)):
+                raise ValueError(f"repair original hash or path mismatch for {name}")
+            if (not isinstance(repaired_path, str) or Path(repaired_path).is_absolute()
+                    or ".." in Path(repaired_path).parts):
+                raise ValueError(f"unsafe repaired path for {name}")
+            repaired = _inside(model_dir / repaired_path,
+                               model_dir / "collision_sources_repaired", "repaired source")
+            if (repaired.name != f"{name}.stl" or not repaired.is_file()
+                    or sha256_file(repaired) != repair["repaired"]["raw_sha256"]):
+                raise ValueError(f"repaired hash or path mismatch for {name}")
+            expected_repaired.add(repaired)
+            import trimesh
+            original_mesh = trimesh.load_mesh(source, process=False)
+            repaired_mesh = trimesh.load_mesh(repaired, process=True)
+            if (_normalized_mesh_sha256(original_mesh) != repair["original"]["normalized_sha256"]
+                    or _normalized_mesh_sha256(repaired_mesh) != repair["repaired"]["normalized_sha256"]
+                    or repair["topology"] != {"before": _topology(original_mesh),
+                                               "after": _topology(repaired_mesh)}):
+                raise ValueError(f"repair normalized hash or topology mismatch for {name}")
+            profile = repair["selected_profile"]
+            if profile not in ({**part["repair"], "pitch_m": part["repair"]["pitch_m"]},
+                               {**part["repair"], "pitch_m": part["repair"]["fallback_pitch_m"]}):
+                raise ValueError(f"repair profile mismatch for {name}")
+            actual_fidelity = fidelity_metrics(original_mesh, repaired_mesh, profile)
+            if actual_fidelity != repair["fidelity"] or not _fidelity_passes(actual_fidelity, profile):
+                raise ValueError(f"repair fidelity mismatch for {name}")
+        elif "repair" in record:
+            raise ValueError(f"unexpected repair record for {name}")
         part_dir = _inside(expected_root / name, expected_root, "part")
         outputs = record.get("outputs")
         if not isinstance(outputs, list) or not outputs:
@@ -389,6 +651,11 @@ def check_outputs(model_dir, config, manifest_path):
     actual_stls = {path.resolve() for path in expected_root.rglob("*.stl")}
     if actual_stls != expected_stls:
         raise ValueError("extra or missing hull STL in collision_vhacd output root")
+    repaired_root = model_dir / "collision_sources_repaired"
+    actual_repaired = ({path.resolve() for path in repaired_root.rglob("*.stl")}
+                       if repaired_root.exists() else set())
+    if actual_repaired != expected_repaired:
+        raise ValueError("extra or missing STL in collision_sources_repaired")
     return manifest
 
 

@@ -1,0 +1,32 @@
+# MuJoCo-only conversion from Damiao firmware PI output to physical torque.
+# These values are simulation calibration values, not firmware parameters.
+motor_specs:
+  DM4340P:
+    rated_torque_nm: 9.0
+    peak_torque_nm: 27.0
+    reduction_ratio: 40.0
+  DM4310_V1_2:
+    rated_torque_nm: 3.5
+    peak_torque_nm: 12.5
+    reduction_ratio: 10.0
+
+arm:
+  joint1: {motor_model: DM4340P, firmware_to_torque_scale: 800.0}
+  joint2: {motor_model: DM4340P, firmware_to_torque_scale: 800.0}
+  joint3: {motor_model: DM4340P, firmware_to_torque_scale: 800.0}
+  joint4: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0}
+  joint5: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0}
+  joint6: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0}
+  position_integral_limit_rad_s: 5.0
+  velocity_integral_limit_rad: 5.0
+
+gripper:
+  motor_model: DM4310_V1_2
+  motor_radians_per_opening_m: -55.55555555555556  # -5 rad / 0.09 m
+  transmission_efficiency: 0.80
+  motor_torque_limit_nm: 1.5
+  displacement_range_m: [0.0, 0.09]
+  modes:
+    move: {kp: 5.0, kd: 1.0}
+    closing: {kp: 0.0, kd: 0.5}
+    hold: {kp: 5.0, kd: 1.0}

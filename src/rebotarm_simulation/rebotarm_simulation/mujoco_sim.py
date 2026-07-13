@@ -11,6 +11,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from .motor_control import GripperMitController, PosVelController, load_motor_control_parameters
 from .mujoco_types import ContactInfo, SavedSimulationState, SimulationState
 from .sim_gripper import gripper_joint_positions_for_width
 
@@ -64,6 +65,15 @@ class RebotArmMujoco:
         self._data = self._mj.MjData(self._model)
         self._closed = False
         self._rng = np.random.default_rng()
+        motor_parameters = load_motor_control_parameters(Path(__file__).resolve().parents[3])
+        self._motor_parameters = motor_parameters
+        self._arm_controller = PosVelController(motor_parameters.arm)
+        self._gripper_controller = GripperMitController(motor_parameters.gripper)
+        self._control_steps_per_update = max(
+            1, int(round((1.0 / motor_parameters.control_rate_hz) / float(self._model.opt.timestep)))
+        )
+        self._control_phase = 0
+        self._position_targets = np.zeros(len(JOINT_NAMES), dtype=float)
 
         self._joint_ids = tuple(self._name_id(self._mj.mjtObj.mjOBJ_JOINT, name) for name in JOINT_NAMES)
         self._actuator_ids = tuple(
@@ -107,7 +117,7 @@ class RebotArmMujoco:
     @property
     def control_targets(self) -> tuple[float, ...]:
         self._ensure_open()
-        return tuple(float(self._data.ctrl[index]) for index in self._actuator_ids)
+        return tuple(float(value) for value in self._position_targets)
 
     def _name_id(self, object_type, name: str) -> int:
         identifier = int(self._mj.mj_name2id(self._model, object_type, name))
@@ -166,9 +176,13 @@ class RebotArmMujoco:
         return self._finish_reset()
 
     def _finish_reset(self) -> SimulationState:
-        for joint_id, actuator_id in zip(self._joint_ids, self._actuator_ids):
+        for index, joint_id in enumerate(self._joint_ids):
             qpos_address = int(self._model.jnt_qposadr[joint_id])
-            self._data.ctrl[actuator_id] = self._data.qpos[qpos_address]
+            self._position_targets[index] = self._data.qpos[qpos_address]
+        self._data.ctrl[:] = 0.0
+        self._arm_controller.reset()
+        self._control_phase = 0
+        self._apply_motor_control()
         self._mj.mj_forward(self._model, self._data)
         return self.get_state()
 
@@ -190,10 +204,10 @@ class RebotArmMujoco:
             current = list(_finite_vector(targets, len(ARM_JOINT_NAMES), "joint targets"))
 
         reached = []
-        for index, (joint_id, actuator_id) in enumerate(zip(self._joint_ids[:6], self._actuator_ids[:6])):
+        for index, joint_id in enumerate(self._joint_ids[:6]):
             lower, upper = (float(value) for value in self._model.jnt_range[joint_id])
             value = min(max(current[index], lower), upper)
-            self._data.ctrl[actuator_id] = value
+            self._position_targets[index] = value
             reached.append(value)
         return tuple(reached)
 
@@ -203,8 +217,8 @@ class RebotArmMujoco:
         if not math.isfinite(value):
             raise ValueError("Gripper width must be finite")
         left, right, reached = gripper_joint_positions_for_width(value)
-        self._data.ctrl[self._actuator_ids[-2]] = left
-        self._data.ctrl[self._actuator_ids[-1]] = right
+        self._position_targets[-2] = left
+        self._position_targets[-1] = right
         return reached
 
     def step(self, n_steps: int = 1) -> SimulationState:
@@ -214,12 +228,40 @@ class RebotArmMujoco:
         if n_steps <= 0:
             raise ValueError("n_steps must be a positive integer")
         for _ in range(n_steps):
+            if self._control_phase == 0:
+                self._apply_motor_control()
             self._mj.mj_step(self._model, self._data)
+            self._control_phase = (self._control_phase + 1) % self._control_steps_per_update
         # mj_step integrates qpos after its position stage; refresh derived
         # kinematics so the returned pose describes the new qpos, not the
         # beginning of the final step.
         self._mj.mj_forward(self._model, self._data)
         return self.get_state()
+
+    def _apply_motor_control(self) -> None:
+        qpos_addresses = [int(self._model.jnt_qposadr[joint_id]) for joint_id in self._joint_ids[:6]]
+        qvel_addresses = [int(self._model.jnt_dofadr[joint_id]) for joint_id in self._joint_ids[:6]]
+        arm_torque = self._arm_controller.compute(
+            target=self._position_targets[:6],
+            position=np.asarray([self._data.qpos[address] for address in qpos_addresses]),
+            velocity=np.asarray([self._data.qvel[address] for address in qvel_addresses]),
+            dt=1.0 / self._motor_parameters.control_rate_hz,
+        )
+        for actuator_id, torque in zip(self._actuator_ids[:6], arm_torque):
+            self._data.ctrl[actuator_id] = torque
+
+        left_qpos = float(self._data.qpos[int(self._model.jnt_qposadr[self._joint_ids[-2]])])
+        right_qpos = float(self._data.qpos[int(self._model.jnt_qposadr[self._joint_ids[-1]])])
+        left_qvel = float(self._data.qvel[int(self._model.jnt_dofadr[self._joint_ids[-2]])])
+        right_qvel = float(self._data.qvel[int(self._model.jnt_dofadr[self._joint_ids[-1]])])
+        command = self._gripper_controller.compute(
+            target=float(self._position_targets[-2] - self._position_targets[-1]),
+            position=left_qpos - right_qpos,
+            velocity=left_qvel - right_qvel,
+            mode="move",
+        )
+        self._data.ctrl[self._actuator_ids[-2]] = command.finger_force_n
+        self._data.ctrl[self._actuator_ids[-1]] = -command.finger_force_n
 
     def get_state(self) -> SimulationState:
         self._ensure_open()
@@ -285,6 +327,10 @@ class RebotArmMujoco:
             model_dimensions=self._model_dimensions,
             state_spec=self._state_spec,
             state=tuple(float(value) for value in state),
+            control_targets=tuple(float(value) for value in self._position_targets),
+            position_integral=tuple(float(value) for value in self._arm_controller.position_integral),
+            velocity_integral=tuple(float(value) for value in self._arm_controller.velocity_integral),
+            control_phase=self._control_phase,
         )
 
     def restore_state(self, state: SavedSimulationState) -> SimulationState:
@@ -297,12 +343,19 @@ class RebotArmMujoco:
             and state.model_dimensions == self._model_dimensions
             and state.state_spec == self._state_spec
             and len(state.state) == self._model_dimensions[-1]
+            and len(state.control_targets) == len(JOINT_NAMES)
+            and len(state.position_integral) == len(ARM_JOINT_NAMES)
+            and len(state.velocity_integral) == len(ARM_JOINT_NAMES)
         )
         if not compatible:
             raise ValueError("saved state must belong to the same MuJoCo model instance")
         self._mj.mj_setState(
             self._model, self._data, np.asarray(state.state, dtype=float), self._state_spec
         )
+        self._position_targets[:] = np.asarray(state.control_targets, dtype=float)
+        self._arm_controller.position_integral[:] = np.asarray(state.position_integral, dtype=float)
+        self._arm_controller.velocity_integral[:] = np.asarray(state.velocity_integral, dtype=float)
+        self._control_phase = int(state.control_phase) % self._control_steps_per_update
         self._mj.mj_forward(self._model, self._data)
         return self.get_state()
 

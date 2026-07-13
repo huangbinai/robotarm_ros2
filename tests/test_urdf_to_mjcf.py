@@ -87,10 +87,10 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
         "left_finger_joint", "right_finger_joint",
     ]
-    actuators = root.findall("actuator/position")
+    actuators = root.findall("actuator/motor")
     assert [actuator.attrib["joint"] for actuator in actuators] == joints
-    assert all(float(actuator.attrib["kp"]) > 0 for actuator in actuators)
-    assert all(float(actuator.attrib["kv"]) > 0 for actuator in actuators)
+    assert all(actuator.attrib["ctrllimited"] == "true" for actuator in actuators)
+    assert all(actuator.attrib["forcelimited"] == "true" for actuator in actuators)
 
     coupling = root.find("equality/joint")
     assert coupling is not None

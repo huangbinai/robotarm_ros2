@@ -24,6 +24,7 @@ def test_mujoco_readme_documents_reproducible_install_and_runtime_commands():
         "MUJOCO_GL=egl",
         "rebotarm_mujoco_health --renderer-timeout",
         "rebotarm_mujoco_cli --headless --duration",
+        "rebotarm_mujoco_contact_check",
         '"requested_duration"',
         '"achieved_duration"',
         "DISPLAY",

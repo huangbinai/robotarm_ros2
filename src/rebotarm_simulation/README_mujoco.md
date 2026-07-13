@@ -75,6 +75,17 @@ rebotarm_mujoco_batch --episodes 3 --steps 100 --seed 0
 该命令输出 JSON 摘要，包含每回合步数、累计奖励、末端到目标距离和成功标志；
 它只验证 API/物理层可无界面运行，不代表已经完成强化学习训练。
 
+夹爪接触稳定性检查：
+
+```bash
+rebotarm_mujoco_contact_check
+```
+
+该命令在无界面 MuJoCo 中移动到固定接触验收姿态，打开夹爪、放置 `test_cube`、
+闭合夹爪并输出 JSON。`ok=true` 表示仿真中出现持续的手指-方块接触，方块位姿
+保持有限，单步跳变、接触力和最低高度都在阈值内；它用于排查抖动、穿模或接触力
+爆炸，不连接实机。
+
 ## 桌面 Viewer
 
 在 Ubuntu 图形桌面的终端运行，而不是普通无显示 SSH 会话：

@@ -109,6 +109,7 @@ def generate_launch_description():
     gripper_grasp_velocity_threshold = LaunchConfiguration("gripper_grasp_velocity_threshold")
     gripper_grasp_min_closure_distance_m = LaunchConfiguration("gripper_grasp_min_closure_distance_m")
     safe_retreat_enabled = LaunchConfiguration("safe_retreat_enabled")
+    dynamic_retreat_enabled = LaunchConfiguration("dynamic_retreat_enabled")
     safe_retreat_min_lift_z_m = LaunchConfiguration("safe_retreat_min_lift_z_m")
     safe_retreat_distance_m = LaunchConfiguration("safe_retreat_distance_m")
     safe_retreat_axis_xyz = LaunchConfiguration("safe_retreat_axis_xyz")
@@ -124,11 +125,7 @@ def generate_launch_description():
     auto_retry_enabled = LaunchConfiguration("auto_retry_enabled")
     auto_retry_max_attempts = LaunchConfiguration("auto_retry_max_attempts")
     safe_retreat_before_retry = LaunchConfiguration("safe_retreat_before_retry")
-    grasp_verification_enabled = LaunchConfiguration("grasp_verification_enabled")
-    grasp_verification_min_closure_distance_m = LaunchConfiguration("grasp_verification_min_closure_distance_m")
-    grasp_verification_require_contact = LaunchConfiguration("grasp_verification_require_contact")
-    visual_lift_check_enabled = LaunchConfiguration("visual_lift_check_enabled")
-    visual_lift_min_delta_m = LaunchConfiguration("visual_lift_min_delta_m")
+    return_visual_ready_after_grasp = LaunchConfiguration("return_visual_ready_after_grasp")
     place_after_grasp_enabled = LaunchConfiguration("place_after_grasp_enabled")
     place_position_xyz = LaunchConfiguration("place_position_xyz")
     place_orientation_xyzw = LaunchConfiguration("place_orientation_xyzw")
@@ -392,6 +389,7 @@ def generate_launch_description():
                     "gripper_grasp_velocity_threshold": gripper_grasp_velocity_threshold,
                     "gripper_grasp_min_closure_distance_m": gripper_grasp_min_closure_distance_m,
                     "safe_retreat_enabled": safe_retreat_enabled,
+                    "dynamic_retreat_enabled": dynamic_retreat_enabled,
                     "safe_retreat_min_lift_z_m": safe_retreat_min_lift_z_m,
                     "safe_retreat_distance_m": safe_retreat_distance_m,
                     "safe_retreat_axis_xyz": safe_retreat_axis_xyz,
@@ -410,12 +408,8 @@ def generate_launch_description():
                     "auto_retry_enabled": auto_retry_enabled,
                     "auto_retry_max_attempts": auto_retry_max_attempts,
                     "safe_retreat_before_retry": safe_retreat_before_retry,
-                    "grasp_verification_enabled": grasp_verification_enabled,
-                    "grasp_verification_min_closure_distance_m": grasp_verification_min_closure_distance_m,
-                    "grasp_verification_require_contact": grasp_verification_require_contact,
-                    "visual_lift_check_enabled": visual_lift_check_enabled,
-                    "visual_lift_min_delta_m": visual_lift_min_delta_m,
                     "place_after_grasp_enabled": place_after_grasp_enabled,
+                    "return_visual_ready_after_grasp": return_visual_ready_after_grasp,
                     "place_position_xyz": place_position_xyz,
                     "place_orientation_xyzw": place_orientation_xyzw,
                     "place_open_position_m": place_open_position_m,
@@ -517,6 +511,7 @@ def generate_launch_description():
             DeclareLaunchArgument("gripper_grasp_velocity_threshold", default_value="0.04"),
             DeclareLaunchArgument("gripper_grasp_min_closure_distance_m", default_value="0.006"),
             DeclareLaunchArgument("safe_retreat_enabled", default_value="true"),
+            DeclareLaunchArgument("dynamic_retreat_enabled", default_value="true"),
             DeclareLaunchArgument("safe_retreat_min_lift_z_m", default_value="0.12"),
             DeclareLaunchArgument("safe_retreat_distance_m", default_value="0.06"),
             DeclareLaunchArgument("safe_retreat_axis_xyz", default_value="[-1.0, 0.0, 0.5]"),
@@ -532,12 +527,8 @@ def generate_launch_description():
             DeclareLaunchArgument("auto_retry_enabled", default_value="false"),
             DeclareLaunchArgument("auto_retry_max_attempts", default_value="3"),
             DeclareLaunchArgument("safe_retreat_before_retry", default_value="true"),
-            DeclareLaunchArgument("grasp_verification_enabled", default_value="true"),
-            DeclareLaunchArgument("grasp_verification_min_closure_distance_m", default_value="0.006"),
-            DeclareLaunchArgument("grasp_verification_require_contact", default_value="true"),
-            DeclareLaunchArgument("visual_lift_check_enabled", default_value="false"),
-            DeclareLaunchArgument("visual_lift_min_delta_m", default_value="0.03"),
             DeclareLaunchArgument("place_after_grasp_enabled", default_value="false"),
+            DeclareLaunchArgument("return_visual_ready_after_grasp", default_value="true"),
             DeclareLaunchArgument("place_position_xyz", default_value="[0.20, -0.20, 0.25]"),
             DeclareLaunchArgument("place_orientation_xyzw", default_value="[0.0, 0.0, 0.0, 1.0]"),
             DeclareLaunchArgument("place_open_position_m", default_value="0.08"),

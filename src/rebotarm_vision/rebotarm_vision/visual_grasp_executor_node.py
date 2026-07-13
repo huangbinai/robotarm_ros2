@@ -15,11 +15,6 @@ from rebotarm_msgs.msg import GraspCandidateArray, GraspPlan
 from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
 
 from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices
-from .grasp_verification_policy import (
-    GraspVerificationConfig,
-    GraspVerificationInput,
-    verify_grasp_after_lift,
-)
 from .grasp_preview_sender_node import (
     _transform_from_msg,
     apply_tcp_offset_to_pose,
@@ -35,6 +30,7 @@ from .visual_grasp_sequence import (
     PoseTarget,
     VisualGraspSequenceConfig,
     VisualGraspStage,
+    append_visual_ready_return_stages,
     build_visual_grasp_sequence,
 )
 from .visual_servo_policy import VisualServoApproachConfig, build_visual_servo_step
@@ -83,7 +79,7 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("base_approach_axis_xyz", [1.0, 0.0, 0.0])
         self.declare_parameter("base_pregrasp_distance_m", 0.08)
         self.declare_parameter("min_grasp_z_m", 0.0)
-        self.declare_parameter("lift_z_m", 0.08)
+        self.declare_parameter("lift_z_m", 0.04)
         self.declare_parameter("open_before_approach", False)
         self.declare_parameter("open_position_m", 0.09)
         self.declare_parameter("close_position_m", 0.025)
@@ -109,6 +105,7 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("gripper_grasp_velocity_threshold", 0.04)
         self.declare_parameter("gripper_grasp_min_closure_distance_m", 0.006)
         self.declare_parameter("safe_retreat_enabled", True)
+        self.declare_parameter("dynamic_retreat_enabled", True)
         self.declare_parameter("safe_retreat_min_lift_z_m", 0.12)
         self.declare_parameter("safe_retreat_distance_m", 0.06)
         self.declare_parameter("safe_retreat_axis_xyz", [-1.0, 0.0, 0.5])
@@ -137,12 +134,8 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("auto_retry_enabled", False)
         self.declare_parameter("auto_retry_max_attempts", 3)
         self.declare_parameter("safe_retreat_before_retry", True)
-        self.declare_parameter("grasp_verification_enabled", True)
-        self.declare_parameter("grasp_verification_min_closure_distance_m", 0.006)
-        self.declare_parameter("grasp_verification_require_contact", True)
-        self.declare_parameter("visual_lift_check_enabled", False)
-        self.declare_parameter("visual_lift_min_delta_m", 0.03)
         self.declare_parameter("place_after_grasp_enabled", False)
+        self.declare_parameter("return_visual_ready_after_grasp", True)
         self.declare_parameter("place_position_xyz", [0.20, -0.20, 0.25])
         self.declare_parameter("place_orientation_xyzw", [0.0, 0.0, 0.0, 1.0])
         self.declare_parameter("place_open_position_m", 0.08)
@@ -175,7 +168,6 @@ class VisualGraspExecutorNode(Node):
         self._last_gripper_reached_position: float | None = None
         self._last_grasp_contact_detected = False
         self._last_grasp_closure_distance_m = 0.0
-        self._last_lift_start_z_m: float | None = None
         self._retry_retreat_stage: VisualGraspStage | None = None
         self._run_counter = 0
         self._current_run_id = 0
@@ -204,6 +196,16 @@ class VisualGraspExecutorNode(Node):
         self._safe_home_client = self.create_client(
             Trigger,
             f"/{self._arm_namespace}/safe_home",
+            callback_group=self._callback_group,
+        )
+        self._visual_ready_plan_client = self.create_client(
+            Trigger,
+            f"/{self._arm_namespace}/visual_ready/plan",
+            callback_group=self._callback_group,
+        )
+        self._visual_ready_move_client = self.create_client(
+            Trigger,
+            f"/{self._arm_namespace}/visual_ready/move",
             callback_group=self._callback_group,
         )
         self._gripper_client = self.create_client(
@@ -283,9 +285,8 @@ class VisualGraspExecutorNode(Node):
                 self._log_plan_snapshot(plan)
                 self._last_grasp_contact_detected = False
                 self._last_grasp_closure_distance_m = 0.0
-                self._last_lift_start_z_m = None
                 self._retry_retreat_stage = None
-                stages = self._append_place_stages(self._build_sequence_from_plan(plan))
+                stages = self._append_post_grasp_stages(self._build_sequence_from_plan(plan))
                 ok, message, failed_stage = self._execute_stages(stages)
                 if ok:
                     response.success = True
@@ -375,6 +376,7 @@ class VisualGraspExecutorNode(Node):
             gripper_command=gripper_command,
             retreat_policy=RetreatPolicyConfig(
                 enabled=bool(self.get_parameter("safe_retreat_enabled").value),
+                dynamic_retreat_enabled=bool(self.get_parameter("dynamic_retreat_enabled").value),
                 min_lift_z_m=float(self.get_parameter("safe_retreat_min_lift_z_m").value),
                 retreat_distance_m=float(self.get_parameter("safe_retreat_distance_m").value),
                 retreat_axis_xyz=self._tuple3("safe_retreat_axis_xyz"),
@@ -423,8 +425,6 @@ class VisualGraspExecutorNode(Node):
         while stage_index < len(stages):
             stage = stages[stage_index]
             stage_start_revision = self._plan_revision
-            if stage.name == "lift" and stage.pose is not None:
-                self._last_lift_start_z_m = float(stage.pose.position[2]) - float(self.get_parameter("lift_z_m").value)
             ok, message = self._run_stage(stage)
             if not ok:
                 return False, message, stage.name
@@ -445,10 +445,6 @@ class VisualGraspExecutorNode(Node):
                     if not ok:
                         return False, message, "visual_servo_approach"
                     stages = self._remove_approach_after_pregrasp(stages, stage_index)
-            if stage.name == "lift":
-                verified, reason = self._verify_after_lift()
-                if not verified:
-                    return False, reason, stage.name
             stage_index += 1
         return True, "ok", ""
 
@@ -576,36 +572,6 @@ class VisualGraspExecutorNode(Node):
             )
         return False, f"not converged after {max_iterations} steps: error={last_error:.4f}"
 
-    def _verify_after_lift(self) -> tuple[bool, str]:
-        if not self._execution_enabled():
-            return True, "plan_only: grasp verification skipped"
-        visual_delta = 0.0
-        visual_available = False
-        if bool(self.get_parameter("visual_lift_check_enabled").value) and self._latest_plan is not None:
-            try:
-                _, latest_grasp = self._build_motion_targets(self._latest_plan)
-                if self._last_lift_start_z_m is not None:
-                    visual_delta = float(latest_grasp.position[2]) - float(self._last_lift_start_z_m)
-                    visual_available = True
-            except Exception as exc:
-                self.get_logger().warn(f"visual lift verification unavailable: {exc}")
-        result = verify_grasp_after_lift(
-            GraspVerificationInput(
-                gripper_contact_detected=bool(self._last_grasp_contact_detected),
-                closure_distance_m=float(self._last_grasp_closure_distance_m),
-                visual_lift_delta_m=visual_delta,
-                visual_lift_evidence_available=visual_available,
-            ),
-            GraspVerificationConfig(
-                enabled=bool(self.get_parameter("grasp_verification_enabled").value),
-                min_closure_distance_m=float(self.get_parameter("grasp_verification_min_closure_distance_m").value),
-                require_gripper_contact=bool(self.get_parameter("grasp_verification_require_contact").value),
-                visual_lift_check_enabled=bool(self.get_parameter("visual_lift_check_enabled").value),
-                min_visual_lift_delta_m=float(self.get_parameter("visual_lift_min_delta_m").value),
-            ),
-        )
-        return bool(result.success), str(result.reason)
-
     def _append_place_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
         return stages + build_place_stages(
             PlaceTaskConfig(
@@ -616,6 +582,14 @@ class VisualGraspExecutorNode(Node):
                 open_max_effort=float(self.get_parameter("place_open_max_effort").value),
                 retreat_z_m=float(self.get_parameter("place_retreat_z_m").value),
             )
+        )
+
+    def _append_post_grasp_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
+        with_place = self._append_place_stages(stages)
+        return append_visual_ready_return_stages(
+            with_place,
+            enabled=bool(self.get_parameter("return_visual_ready_after_grasp").value),
+            place_after_grasp_enabled=bool(self.get_parameter("place_after_grasp_enabled").value),
         )
 
     def _request_retry_retreat(self) -> None:
@@ -714,6 +688,16 @@ class VisualGraspExecutorNode(Node):
                 ok, message = True, "simulation: gripper command skipped"
         elif stage.kind == "safe_home":
             ok, message = self._call_safe_home()
+        elif stage.kind == "trigger":
+            if stage.name == "plan_visual_ready":
+                ok, message = self._call_visual_ready_trigger(self._visual_ready_plan_client, "plan")
+            elif stage.name == "return_visual_ready":
+                if not self._execution_enabled():
+                    ok, message = True, "plan_only: visual_ready return skipped"
+                else:
+                    ok, message = self._call_visual_ready_trigger(self._visual_ready_move_client, "move")
+            else:
+                return False, f"unsupported trigger stage: {stage.name}"
         else:
             return False, f"unsupported stage kind: {stage.kind}"
         if not ok:
@@ -727,6 +711,17 @@ class VisualGraspExecutorNode(Node):
             return False, "stopped"
         self._log_diagnostic(stage.name, "ok", message)
         return True, message
+
+    def _call_visual_ready_trigger(self, client, operation: str) -> tuple[bool, str]:
+        if not client.wait_for_service(timeout_sec=self._service_timeout_sec):
+            return False, f"visual_ready {operation} service unavailable"
+        future = client.call_async(Trigger.Request())
+        if not self._wait_for_future(future, self._service_timeout_sec + self._motion_result_timeout_sec):
+            return False, f"visual_ready {operation} service call timed out"
+        result = future.result()
+        if result is None:
+            return False, f"visual_ready {operation} returned no result"
+        return bool(result.success), str(result.message)
 
     def _call_execute_pose(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.pose is None:

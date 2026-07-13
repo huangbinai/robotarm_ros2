@@ -46,8 +46,6 @@ def generate_launch_description():
                     "auto_gripper_width": "true",
                     "auto_gripper_effort": "true",
                     "gripper_grasp_enabled": "false",
-                    "grasp_verification_enabled": "false",
-                    "grasp_verification_require_contact": "false",
                     "safe_retreat_enabled": "true",
                     "safe_retreat_min_lift_z_m": "0.12",
                     "lift_z_m": "0.04",

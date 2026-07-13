@@ -7,6 +7,9 @@ rebotarm_visual_ready_startup:
     duration_sec: 4.0
     wait_timeout_sec: 12.0
     max_start_delta_rad: 1.0
+    return_start_tolerance_rad: 0.05
+    velocity_scaling: 0.08
+    acceleration_scaling: 0.05
 
 rebotarm_visual_ready:
   ros__parameters:
@@ -15,3 +18,6 @@ rebotarm_visual_ready:
     duration_sec: 4.0
     wait_timeout_sec: 12.0
     max_start_delta_rad: 1.0
+    return_start_tolerance_rad: 0.05
+    velocity_scaling: 0.08
+    acceleration_scaling: 0.05

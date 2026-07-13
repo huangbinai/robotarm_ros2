@@ -10,6 +10,7 @@ from rclpy.qos import qos_profile_sensor_data
 
 from .hardware_manager import HardwareManager
 from .motor_passthrough import MotorPassthrough
+from .mode_transition_policy import ModeTransitionConfig
 from .ros_actions import ArmActions
 from .ros_publishers import JointStatePublisher
 from .ros_services import ArmServices
@@ -36,6 +37,22 @@ class reBotArmController(Node):
         self.declare_parameter("teach_record_path", "teleop_records/teach_record.jsonl")
         self.declare_parameter("teach_record_rate_hz", 150.0)
         self.declare_parameter("teach_record_require_gravity_comp", True)
+        self.declare_parameter("mode_transition.enabled", True)
+        self.declare_parameter("mode_transition.allow_velocity_mode", False)
+        self.declare_parameter("mode_transition.enter.ramp_duration_sec", 0.35)
+        self.declare_parameter("mode_transition.enter.max_start_velocity_rad_s", 0.05)
+        self.declare_parameter("mode_transition.exit.damping_duration_sec", 0.15)
+        self.declare_parameter("mode_transition.exit.blend_duration_sec", 0.35)
+        self.declare_parameter("mode_transition.exit.max_lock_velocity_rad_s", 0.05)
+        self.declare_parameter("mode_transition.exit.velocity_wait_timeout_sec", 1.0)
+        self.declare_parameter("mode_transition.mit.gravity_kp", 7.0)
+        self.declare_parameter("mode_transition.mit.gravity_kd", 0.8)
+        self.declare_parameter("mode_transition.mit.hold_kp", 12.0)
+        self.declare_parameter("mode_transition.mit.hold_kd", 1.2)
+        self.declare_parameter("mode_transition.pos_vel.settle_duration_sec", 0.15)
+        self.declare_parameter("mode_transition.safety.max_position_jump_rad", 0.02)
+        self.declare_parameter("mode_transition.safety.feedback_timeout_sec", 0.10)
+        self.declare_parameter("mode_transition.safety.transition_timeout_sec", 2.0)
 
         arm_config = self.get_parameter("arm_config").value or None
         gripper_config = self.get_parameter("gripper_config").value or None
@@ -48,6 +65,46 @@ class reBotArmController(Node):
             self.get_parameter("teach_record_require_gravity_comp").value
         )
         cmd_arbitration = str(self.get_parameter("cmd_arbitration").value or "reject")
+        mode_transition_config = ModeTransitionConfig(
+            enabled=bool(self.get_parameter("mode_transition.enabled").value),
+            allow_velocity_mode=bool(
+                self.get_parameter("mode_transition.allow_velocity_mode").value
+            ),
+            enter_ramp_duration_sec=float(
+                self.get_parameter("mode_transition.enter.ramp_duration_sec").value
+            ),
+            enter_max_velocity_rad_s=float(
+                self.get_parameter("mode_transition.enter.max_start_velocity_rad_s").value
+            ),
+            exit_damping_duration_sec=float(
+                self.get_parameter("mode_transition.exit.damping_duration_sec").value
+            ),
+            exit_blend_duration_sec=float(
+                self.get_parameter("mode_transition.exit.blend_duration_sec").value
+            ),
+            exit_max_lock_velocity_rad_s=float(
+                self.get_parameter("mode_transition.exit.max_lock_velocity_rad_s").value
+            ),
+            exit_velocity_wait_timeout_sec=float(
+                self.get_parameter("mode_transition.exit.velocity_wait_timeout_sec").value
+            ),
+            gravity_kp=float(self.get_parameter("mode_transition.mit.gravity_kp").value),
+            gravity_kd=float(self.get_parameter("mode_transition.mit.gravity_kd").value),
+            hold_kp=float(self.get_parameter("mode_transition.mit.hold_kp").value),
+            hold_kd=float(self.get_parameter("mode_transition.mit.hold_kd").value),
+            pos_vel_settle_duration_sec=float(
+                self.get_parameter("mode_transition.pos_vel.settle_duration_sec").value
+            ),
+            max_position_jump_rad=float(
+                self.get_parameter("mode_transition.safety.max_position_jump_rad").value
+            ),
+            feedback_timeout_sec=float(
+                self.get_parameter("mode_transition.safety.feedback_timeout_sec").value
+            ),
+            transition_timeout_sec=float(
+                self.get_parameter("mode_transition.safety.transition_timeout_sec").value
+            ),
+        )
         if cmd_arbitration not in ("reject", "preempt"):
             self.get_logger().warn(
                 f"unsupported cmd_arbitration={cmd_arbitration!r}; using 'reject'"
@@ -64,6 +121,7 @@ class reBotArmController(Node):
             arm_cfg=arm_config,
             gripper_cfg=gripper_config,
             channel=channel,
+            mode_transition_config=mode_transition_config,
         )
         try:
             self.hardware.connect()

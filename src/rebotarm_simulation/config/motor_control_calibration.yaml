@@ -1,0 +1,21 @@
+# MuJoCo-only conversion from Damiao firmware PI output to joint torque.
+# These are explicit simulation calibration values, not motor firmware parameters.
+arm:
+  joint1: {firmware_to_torque_scale: 800.0}
+  joint2: {firmware_to_torque_scale: 800.0}
+  joint3: {firmware_to_torque_scale: 800.0}
+  joint4: {firmware_to_torque_scale: 4000.0}
+  joint5: {firmware_to_torque_scale: 4000.0}
+  joint6: {firmware_to_torque_scale: 4000.0}
+  position_integral_limit_rad_s: 5.0
+  velocity_integral_limit_rad: 5.0
+
+gripper:
+  motor_radians_per_opening_m: -55.55555555555556  # -5 rad / 0.09 m
+  transmission_efficiency: 0.80
+  motor_torque_limit_nm: 1.5
+  displacement_range_m: [0.0, 0.09]
+  modes:
+    move: {kp: 5.0, kd: 1.0}
+    closing: {kp: 0.0, kd: 0.5}
+    hold: {kp: 5.0, kd: 1.0}

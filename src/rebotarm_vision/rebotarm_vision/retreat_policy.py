@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class RetreatPolicyConfig:
     enabled: bool = False
+    dynamic_retreat_enabled: bool = True
     min_lift_z_m: float = 0.22
     retreat_distance_m: float = 0.06
     retreat_axis_xyz: tuple[float, float, float] = (-1.0, 0.0, 0.5)
@@ -37,16 +38,38 @@ def build_lift_pose(grasp: PoseTarget, *, lift_z_m: float, min_lift_z_m: float =
     )
 
 
-def build_retreat_pose(lift: PoseTarget, config: RetreatPolicyConfig) -> PoseTarget:
+def build_retreat_pose(
+    lift: PoseTarget,
+    config: RetreatPolicyConfig,
+    *,
+    pregrasp: PoseTarget | None = None,
+    grasp: PoseTarget | None = None,
+) -> PoseTarget:
     from .visual_grasp_sequence import PoseTarget
 
-    axis = _normalize_vector(config.retreat_axis_xyz)
+    axis = None
+    if config.dynamic_retreat_enabled and pregrasp is not None and grasp is not None:
+        approach = (
+            float(grasp.position[0]) - float(pregrasp.position[0]),
+            float(grasp.position[1]) - float(pregrasp.position[1]),
+            float(grasp.position[2]) - float(pregrasp.position[2]),
+        )
+        try:
+            normalized_approach = _normalize_vector(approach)
+            axis = tuple(-component for component in normalized_approach)
+        except ValueError:
+            pass
+    if axis is None:
+        axis = _normalize_vector(config.retreat_axis_xyz)
     distance = max(float(config.retreat_distance_m), 0.0)
     return PoseTarget(
         position=(
             float(lift.position[0]) + axis[0] * distance,
             float(lift.position[1]) + axis[1] * distance,
-            float(lift.position[2]) + axis[2] * distance,
+            max(
+                float(lift.position[2]) + axis[2] * distance,
+                float(config.min_lift_z_m),
+            ),
         ),
         orientation=lift.orientation,
     )

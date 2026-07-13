@@ -24,6 +24,9 @@ def generate_launch_description():
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
     rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
+    mode_transition_params = PathJoinSubstitution(
+        [bringup_share, "config", "mode_transition.yaml"]
+    )
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
 
     return LaunchDescription(
@@ -48,7 +51,7 @@ def generate_launch_description():
                 executable="reBotArmController",
                 name="reBotArmController",
                 output="screen",
-                parameters=[
+                parameters=[mode_transition_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

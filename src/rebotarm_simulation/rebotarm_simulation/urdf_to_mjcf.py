@@ -8,6 +8,7 @@ from typing import Sequence
 import xml.etree.ElementTree as ET
 
 import mujoco
+import yaml
 
 
 PACKAGE_MESH_PREFIX = "package://rebotarm_bringup/description/meshes/"
@@ -71,6 +72,7 @@ def generate_mjcf_bytes(repo_root: Path) -> bytes:
         _add_contact_exclusions(root)
         _add_finger_coupling(root)
         _add_sites(root)
+        _add_joint_dynamics(root, _load_joint_dynamics(repo_root))
         _add_actuators(root, urdf_root)
         _add_sensors(root)
     return _canonicalize(root)
@@ -158,6 +160,34 @@ def _add_sites(root: ET.Element) -> None:
         "site",
         {"name": "wrist_camera_mount", "pos": "-0.04 0 0.04", "quat": "1 0 0 0", "size": "0.005"},
     )
+
+
+def _load_joint_dynamics(repo_root: Path) -> dict[str, dict[str, float]]:
+    path = repo_root / "src/rebotarm_simulation/config/motor_control_calibration.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    dynamics = payload.get("model_dynamics")
+    if not isinstance(dynamics, dict):
+        raise ValueError(f"expected model_dynamics mapping in {path}")
+    result: dict[str, dict[str, float]] = {}
+    for joint_name in JOINTS:
+        values = dynamics.get(joint_name)
+        if not isinstance(values, dict):
+            raise ValueError(f"missing model_dynamics for {joint_name}")
+        result[joint_name] = {
+            "damping": float(values["damping"]),
+            "armature": float(values["armature"]),
+            "frictionloss": float(values["frictionloss"]),
+        }
+    return result
+
+
+def _add_joint_dynamics(root: ET.Element, dynamics: dict[str, dict[str, float]]) -> None:
+    for joint in root.findall("worldbody//joint"):
+        name = joint.attrib["name"]
+        if name not in dynamics:
+            continue
+        for key, value in dynamics[name].items():
+            joint.set(key, f"{value:g}")
 
 
 def _add_actuators(root: ET.Element, urdf_root: ET.Element) -> None:

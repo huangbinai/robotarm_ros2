@@ -182,6 +182,8 @@ class RebotArmMujoco:
         self._data.ctrl[:] = 0.0
         self._arm_controller.reset()
         self._control_phase = 0
+        self._mj.mj_forward(self._model, self._data)
+        self._seed_arm_torque_from_gravity()
         self._apply_motor_control()
         self._mj.mj_forward(self._model, self._data)
         return self.get_state()
@@ -263,6 +265,10 @@ class RebotArmMujoco:
         )
         self._data.ctrl[self._actuator_ids[-2]] = command.finger_force_n
         self._data.ctrl[self._actuator_ids[-1]] = -command.finger_force_n
+
+    def _seed_arm_torque_from_gravity(self) -> None:
+        qvel_addresses = [int(self._model.jnt_dofadr[joint_id]) for joint_id in self._joint_ids[:6]]
+        self._arm_controller.applied_torque[:] = self._gravity_compensation_torque(qvel_addresses)
 
     def _gravity_compensation_torque(self, qvel_addresses: Sequence[int]) -> np.ndarray:
         scale = float(self._motor_parameters.arm.gravity_compensation_scale)

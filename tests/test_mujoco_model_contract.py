@@ -100,8 +100,9 @@ def test_robot_model_preserves_canonical_joint_chain_transforms_axes_and_ranges(
         limit = source.find("limit")
         _assert_close(target.attrib["range"], f'{limit.attrib["lower"]} {limit.attrib["upper"]}')
         assert target.attrib.get("type", "hinge") == ("slide" if name in FINGER_JOINTS else "hinge")
-        assert "damping" not in target.attrib
-        assert "armature" not in target.attrib
+        assert float(target.attrib["damping"]) > 0.0
+        assert float(target.attrib["armature"]) > 0.0
+        assert float(target.attrib["frictionloss"]) >= 0.0
 
 
 def test_robot_model_preserves_link_masses_and_has_valid_explicit_finger_inertials() -> None:

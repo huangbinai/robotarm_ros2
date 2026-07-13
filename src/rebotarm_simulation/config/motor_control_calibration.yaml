@@ -11,15 +11,25 @@ motor_specs:
     reduction_ratio: 10.0
 
 arm:
-  joint1: {motor_model: DM4340P, firmware_to_torque_scale: 800.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
-  joint2: {motor_model: DM4340P, firmware_to_torque_scale: 800.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
-  joint3: {motor_model: DM4340P, firmware_to_torque_scale: 800.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
-  joint4: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
-  joint5: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
-  joint6: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 4000.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
+  joint1: {motor_model: DM4340P, firmware_to_torque_scale: 200.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
+  joint2: {motor_model: DM4340P, firmware_to_torque_scale: 200.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
+  joint3: {motor_model: DM4340P, firmware_to_torque_scale: 200.0, torque_rate_limit_nm_s: 180.0, torque_lowpass_alpha: 0.35}
+  joint4: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 500.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
+  joint5: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 500.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
+  joint6: {motor_model: DM4310_V1_2, firmware_to_torque_scale: 500.0, torque_rate_limit_nm_s: 90.0, torque_lowpass_alpha: 0.35}
   position_integral_limit_rad_s: 5.0
   velocity_integral_limit_rad: 5.0
-  gravity_compensation_scale: 0.85
+  gravity_compensation_scale: 1.0
+
+model_dynamics:
+  joint1: {damping: 10.0, armature: 0.02, frictionloss: 0.02}
+  joint2: {damping: 10.0, armature: 0.02, frictionloss: 0.02}
+  joint3: {damping: 10.0, armature: 0.02, frictionloss: 0.02}
+  joint4: {damping: 3.0, armature: 0.005, frictionloss: 0.01}
+  joint5: {damping: 3.0, armature: 0.005, frictionloss: 0.01}
+  joint6: {damping: 1.0, armature: 0.002, frictionloss: 0.005}
+  left_finger_joint: {damping: 20.0, armature: 0.001, frictionloss: 0.1}
+  right_finger_joint: {damping: 20.0, armature: 0.001, frictionloss: 0.1}
 
 gripper:
   motor_model: DM4310_V1_2

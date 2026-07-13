@@ -91,6 +91,11 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
     assert [actuator.attrib["joint"] for actuator in actuators] == joints
     assert all(actuator.attrib["ctrllimited"] == "true" for actuator in actuators)
     assert all(actuator.attrib["forcelimited"] == "true" for actuator in actuators)
+    dynamics = {joint.attrib["name"]: joint for joint in root.findall("worldbody//joint")}
+    assert dynamics["joint1"].attrib["damping"] == "10"
+    assert dynamics["joint4"].attrib["damping"] == "3"
+    assert dynamics["joint6"].attrib["damping"] == "1"
+    assert dynamics["left_finger_joint"].attrib["damping"] == "20"
 
     coupling = root.find("equality/joint")
     assert coupling is not None

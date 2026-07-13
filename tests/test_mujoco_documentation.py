@@ -78,6 +78,7 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
         "RebotArmReachEnv",
         "reset(seed=7)",
         "step([0.0] * 7)",
+        "step_done([0.0] * 7)",
         "rebotarm_mujoco_batch --episodes",
         "云服务器",
         "本地 Ubuntu VM",

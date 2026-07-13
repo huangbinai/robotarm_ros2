@@ -23,8 +23,10 @@ class RebotArmReachEnv:
     """Small Gym-style Reach task wrapper around the MuJoCo simulator.
 
     It intentionally avoids depending on gymnasium so the ROS 2 simulation
-    package remains lightweight. The method signatures mirror Gymnasium:
-    reset() -> (obs, info), step(action) -> (obs, reward, terminated, truncated, info).
+    package remains lightweight. The default method signatures mirror
+    Gymnasium: reset() -> (obs, info), step(action) -> (obs, reward,
+    terminated, truncated, info). step_done(action) returns the older Gym
+    shape: (obs, reward, done, info).
     """
 
     def __init__(
@@ -82,7 +84,15 @@ class RebotArmReachEnv:
         reward = -distance
         terminated = distance <= self.config.target_tolerance_m
         truncated = self._step_count >= self.config.max_steps
-        return obs, reward, terminated, truncated, self._info(obs)
+        info = self._info(obs)
+        info["done"] = terminated or truncated
+        info["terminated"] = terminated
+        info["truncated"] = truncated
+        return obs, reward, terminated, truncated, info
+
+    def step_done(self, action: Sequence[float]):
+        obs, reward, terminated, truncated, info = self.step(action)
+        return obs, reward, bool(terminated or truncated), info
 
     def close(self) -> None:
         self._sim.close()

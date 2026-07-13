@@ -238,11 +238,14 @@ from rebotarm_simulation.mujoco_env import RebotArmReachEnv
 with RebotArmReachEnv() as env:
     obs, info = env.reset(seed=7)
     obs, reward, terminated, truncated, info = env.step([0.0] * 7)
+    obs, reward, done, info = env.step_done([0.0] * 7)
 ```
 
 `obs` 包含 `joint_positions`、`joint_velocities`、`gripper_width`、
 `ee_position`、`target_position`、`cube_pose` 和 `max_contact_force`。
 `step(action)` 接受 6 维关节增量或 7 维关节+夹爪增量，内部裁剪到 `[-1, 1]`。
+默认 `step()` 使用 Gymnasium 的 `terminated/truncated` 形状，同时在 `info` 里提供
+`done`；旧 Gym 风格代码可直接调用 `step_done()` 获取 `(obs, reward, done, info)`。
 
 后续架构是云服务器运行无界面 MuJoCo 并行训练，本地 Ubuntu VM 做模型验证、
 ROS 2 联调和策略推理。现在只提供可复用物理/API 底座和 Reach rollout 验证，

@@ -32,6 +32,9 @@ def test_parameters_come_from_existing_motor_yaml_and_urdf() -> None:
     assert parameters.arm.velocity_limit == pytest.approx((5, 5, 5, 3, 3, 3))
     assert parameters.arm.effort_limit == pytest.approx((27, 27, 27, 12.5, 12.5, 12.5))
     assert parameters.arm.rated_torque == pytest.approx((9, 9, 9, 3.5, 3.5, 3.5))
+    assert parameters.arm.torque_rate_limit_nm_s == pytest.approx((180, 180, 180, 90, 90, 90))
+    assert parameters.arm.torque_lowpass_alpha == pytest.approx((0.35,) * 6)
+    assert parameters.arm.gravity_compensation_scale == pytest.approx(0.85)
     assert parameters.gripper.firmware_default_kp == pytest.approx(8.0)
     assert parameters.gripper.firmware_default_kd == pytest.approx(1.0)
     assert parameters.gripper.move_kp == pytest.approx(5.0)
@@ -52,8 +55,31 @@ def test_pos_vel_controller_uses_cascade_and_effort_scaling() -> None:
     )
 
     assert controller.target_velocity[0] == pytest.approx(1.50005)
-    assert torque[0] == pytest.approx(15.048501)
+    assert torque[0] == pytest.approx(0.63)
     assert torque[1:] == pytest.approx(np.zeros(5))
+
+
+def test_pos_vel_controller_limits_torque_step_and_accepts_feedforward() -> None:
+    parameters = load_motor_control_parameters(ROOT).arm
+    controller = PosVelController(parameters)
+
+    first = controller.compute(
+        target=np.ones(6),
+        position=np.zeros(6),
+        velocity=np.zeros(6),
+        dt=0.01,
+        feedforward=np.array((2.0, 2.0, 2.0, 1.0, 1.0, 1.0)),
+    )
+    second = controller.compute(
+        target=np.ones(6),
+        position=np.zeros(6),
+        velocity=np.zeros(6),
+        dt=0.01,
+        feedforward=np.array((2.0, 2.0, 2.0, 1.0, 1.0, 1.0)),
+    )
+
+    assert first == pytest.approx((0.63, 0.63, 0.63, 0.315, 0.315, 0.315))
+    assert np.all(np.abs(second - first) <= np.array((0.63, 0.63, 0.63, 0.315, 0.315, 0.315)) + 1e-12)
 
 
 def test_pos_vel_controller_saturates_and_reset_clears_integrators() -> None:

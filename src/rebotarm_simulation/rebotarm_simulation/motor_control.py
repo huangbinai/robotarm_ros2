@@ -35,6 +35,9 @@ class ArmControlParameters:
     effort_limit: tuple[float, ...]
     rated_torque: tuple[float, ...]
     firmware_to_torque_scale: tuple[float, ...]
+    torque_rate_limit_nm_s: tuple[float, ...]
+    torque_lowpass_alpha: tuple[float, ...]
+    gravity_compensation_scale: float
     position_integral_limit: float
     velocity_integral_limit: float
 
@@ -108,6 +111,8 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
     effort_limit: list[float] = []
     rated_torque: list[float] = []
     firmware_to_torque_scale: list[float] = []
+    torque_rate_limit_nm_s: list[float] = []
+    torque_lowpass_alpha: list[float] = []
     for joint in arm_yaml["joints"]:
         name = joint["name"]
         calibration_entry = arm_calibration[name]
@@ -124,6 +129,11 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
         effort_limit.append(float(urdf_efforts[name]))
         rated_torque.append(float(motor_spec.rated_torque_nm))
         firmware_to_torque_scale.append(float(calibration_entry["firmware_to_torque_scale"]))
+        torque_rate_limit_nm_s.append(float(calibration_entry["torque_rate_limit_nm_s"]))
+        alpha = float(calibration_entry["torque_lowpass_alpha"])
+        if not 0.0 < alpha <= 1.0:
+            raise ValueError(f"torque_lowpass_alpha for {name} must be in (0, 1]")
+        torque_lowpass_alpha.append(alpha)
 
     source_gripper = gripper_yaml["gripper"][0]["MIT"]
     gripper_calibration = calibration["gripper"]
@@ -143,6 +153,9 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
             effort_limit=tuple(effort_limit),
             rated_torque=tuple(rated_torque),
             firmware_to_torque_scale=tuple(firmware_to_torque_scale),
+            torque_rate_limit_nm_s=tuple(torque_rate_limit_nm_s),
+            torque_lowpass_alpha=tuple(torque_lowpass_alpha),
+            gravity_compensation_scale=float(arm_calibration["gravity_compensation_scale"]),
             position_integral_limit=float(arm_calibration["position_integral_limit_rad_s"]),
             velocity_integral_limit=float(arm_calibration["velocity_integral_limit_rad"]),
         ),
@@ -175,18 +188,25 @@ class PosVelController:
         self.position_integral = np.zeros(6, dtype=float)
         self.velocity_integral = np.zeros(6, dtype=float)
         self.target_velocity = np.zeros(6, dtype=float)
+        self.applied_torque = np.zeros(6, dtype=float)
 
     def reset(self) -> None:
         self.position_integral.fill(0.0)
         self.velocity_integral.fill(0.0)
         self.target_velocity.fill(0.0)
+        self.applied_torque.fill(0.0)
 
-    def compute(self, target, position, velocity, dt: float) -> np.ndarray:
+    def compute(self, target, position, velocity, dt: float, feedforward=None) -> np.ndarray:
         if dt <= 0.0:
             raise ValueError("dt must be positive")
         target = _vector6(target, "target")
         position = _vector6(position, "position")
         velocity = _vector6(velocity, "velocity")
+        feedforward_torque = (
+            np.zeros(6, dtype=float)
+            if feedforward is None
+            else _vector6(feedforward, "feedforward")
+        )
 
         pos_kp = np.asarray(self.parameters.pos_kp)
         pos_ki = np.asarray(self.parameters.pos_ki)
@@ -212,22 +232,32 @@ class PosVelController:
             -self.parameters.velocity_integral_limit,
             self.parameters.velocity_integral_limit,
         )
-        raw_torque = (
+        raw_feedback_torque = (
             (
                 np.asarray(self.parameters.vel_kp) * velocity_error
                 + np.asarray(self.parameters.vel_ki) * velocity_candidate
             )
             * np.asarray(self.parameters.firmware_to_torque_scale)
         )
+        raw_torque = raw_feedback_torque + feedforward_torque
         effort = np.asarray(self.parameters.effort_limit)
-        torque = np.clip(raw_torque, -effort, effort)
-        velocity_accept = (raw_torque == torque) | (
-            np.sign(velocity_error) != np.sign(raw_torque)
+        clipped_torque = np.clip(raw_torque, -effort, effort)
+        velocity_accept = (raw_torque == clipped_torque) | (
+            np.sign(velocity_error) != np.sign(raw_feedback_torque)
         )
         self.velocity_integral = np.where(
             velocity_accept, velocity_candidate, self.velocity_integral
         )
-        return torque
+        max_delta = np.asarray(self.parameters.torque_rate_limit_nm_s) * float(dt)
+        rate_limited = self.applied_torque + np.clip(
+            clipped_torque - self.applied_torque,
+            -max_delta,
+            max_delta,
+        )
+        alpha = np.asarray(self.parameters.torque_lowpass_alpha)
+        smoothed = self.applied_torque + alpha * (rate_limited - self.applied_torque)
+        self.applied_torque = np.clip(smoothed, -effort, effort)
+        return self.applied_torque.copy()
 
 
 class GripperMitController:

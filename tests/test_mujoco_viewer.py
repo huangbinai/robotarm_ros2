@@ -303,12 +303,45 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
     state = mujoco_viewer.ViewerControlState(
         selected_joint=2,
         joint_targets=(0.0, 0.0, 0.25, 0.0, 0.0, 0.0),
+        joint_positions=(0.0, 0.0, 0.20, 0.0, 0.0, 0.0),
         gripper_width=0.04,
         paused=True,
+        active_mode="gravity_comp",
     )
     text = mujoco_viewer.overlay_text(state)
-    for expected in ("joint3", "0.250", "0.040", "paused", "[ / ]", "J/K"):
+    for expected in (
+        "gravity_comp", "joint3", "0.200", "0.250", "0.040", "paused",
+        "torque/force", "[ / ]", "hold J/K",
+    ):
         assert expected in text
+
+
+def test_continuous_jog_advances_target_until_hold_window_expires():
+    sim = FakeSim()
+    state = mujoco_viewer.ViewerControlState(
+        joint_jog_direction=1,
+        jog_time_remaining=0.02,
+    )
+    state = mujoco_viewer.apply_continuous_jog(
+        sim,
+        state,
+        dt=0.01,
+        joint_rate=0.4,
+        gripper_rate=0.03,
+    )
+    assert sim.targets[0] == pytest.approx(0.004)
+    assert state.joint_jog_direction == 1
+
+    state = mujoco_viewer.apply_continuous_jog(
+        sim,
+        state,
+        dt=0.01,
+        joint_rate=0.4,
+        gripper_rate=0.03,
+    )
+    assert sim.targets[0] == pytest.approx(0.008)
+    assert state.joint_jog_direction == 0
+    assert state.jog_time_remaining == pytest.approx(0.0)
 
 
 def test_parser_accepts_model_and_positive_steps():
@@ -353,11 +386,11 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
         status_stream=status,
     )
     assert code == 0
-    assert ("joints", {"joint1": pytest.approx(0.05)}) in sim.calls
+    assert ("joints", {"joint1": pytest.approx(0.01)}) in sim.calls
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "target", "gripper", "paused", "J/K"):
+    for expected in ("joint1", "target", "gripper", "paused", "hold J/K", "torque/force"):
         assert expected in output
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True
@@ -447,7 +480,7 @@ def test_callback_from_other_thread_only_enqueues_until_main_loop_drains():
         sleep=lambda _: None,
         status_stream=io.StringIO(),
     ) == 0
-    assert sim.targets[0] == pytest.approx(0.1)
+    assert sim.targets[0] > 0.02
     assert sim.call_threads and set(sim.call_threads) == {main_thread}
 
 

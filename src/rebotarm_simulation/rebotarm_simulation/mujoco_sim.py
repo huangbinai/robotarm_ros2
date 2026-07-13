@@ -302,8 +302,44 @@ class RebotArmMujoco:
             velocity=left_qvel - right_qvel,
             mode="move",
         )
-        self._data.ctrl[self._actuator_ids[-2]] = command.finger_force_n
-        self._data.ctrl[self._actuator_ids[-1]] = -command.finger_force_n
+        finger_force = self._stable_gripper_force(
+            target_width=command.target_displacement_m,
+            current_width=left_qpos - right_qpos,
+            current_velocity=left_qvel - right_qvel,
+        )
+        left_force = self._clamp_actuator_control(self._actuator_ids[-2], finger_force)
+        right_force = self._clamp_actuator_control(self._actuator_ids[-1], -finger_force)
+        self._data.ctrl[self._actuator_ids[-2]] = left_force
+        self._data.ctrl[self._actuator_ids[-1]] = right_force
+
+    def _stable_gripper_force(
+        self,
+        *,
+        target_width: float,
+        current_width: float,
+        current_velocity: float,
+    ) -> float:
+        gripper = self._motor_parameters.gripper
+        error = float(target_width) - float(current_width)
+        velocity = float(current_velocity)
+        if (
+            abs(error) < gripper.sim_force_deadband_m
+            and abs(velocity) < gripper.sim_velocity_deadband_m_s
+        ):
+            return 0.0
+        # MuJoCo force actuators act directly on the sliding finger joints in N.
+        # The real MIT command still defines the motor-side torque limit, while
+        # this linear-space PD keeps the simulated prismatic joints stable.
+        return (
+            gripper.sim_force_kp_n_per_m * error
+            - gripper.sim_force_kd_n_s_per_m * velocity
+        )
+
+    def _clamp_actuator_control(self, actuator_id: int, value: float) -> float:
+        if int(self._model.actuator_ctrllimited[actuator_id]):
+            lower, upper = (float(v) for v in self._model.actuator_ctrlrange[actuator_id])
+            return min(max(float(value), lower), upper)
+        return float(value)
 
     def _seed_arm_torque_from_gravity(self) -> None:
         qvel_addresses = [int(self._model.jnt_dofadr[joint_id]) for joint_id in self._joint_ids[:6]]

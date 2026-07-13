@@ -168,14 +168,19 @@ python -m rebotarm_simulation.mujoco_viewer --duration 60
 
 ```text
 1. 机械臂位于桌面场景
-2. R 能回到 home 姿态
-3. 1-6 选择关节，J/K 能微调
-4. C/O 能闭合/打开夹爪
-5. 空格暂停，. 单步，Q 退出
-6. 机械臂不飞、不爆、不明显穿桌
+2. R 能回零位，T 能回到 home 姿态
+3. G/H/P 能切换重力补偿、保持、POS_VEL 模式
+4. 1-6 选择关节，按住 J/K 能连续移动当前关节
+5. C/O 能连续闭合/打开夹爪，夹爪 visual 可见且能接近/接触方块
+6. 终端状态栏显示 mode、当前关节实际角 q、target 和 gripper target
+7. 右侧 control 面板不作为日常位置控制入口；它显示的是 torque/force
+8. 空格暂停，. 单步，Q 退出
+9. 机械臂不飞、不爆、不明显穿桌
 ```
 
 注意：现在底层是 motor 力矩控制，刚度和响应由仿真控制器与标定参数决定。如果感觉软、慢、抖，这是后续调参验收项，不代表模型加载失败。
+模型没有叠加旧的手写机械臂；场景只 include `robot.xml`。如果看起来有透明外壳或边缘重叠，通常是 MuJoCo Viewer 打开了 collision
+group，collision STL 仍参与碰撞但现在显示为半透明调试层，正常观察以 visual STL 为准。
 
 ## Python API 验收
 

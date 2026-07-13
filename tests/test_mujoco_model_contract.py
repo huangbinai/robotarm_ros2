@@ -162,6 +162,7 @@ def test_robot_model_uses_original_meshes_for_visuals_and_collisions() -> None:
     assert all(geom.attrib.get("type", "mesh") == "mesh" for geom in collision_geoms)
     assert all(geom.attrib.get("contype") == "1" for geom in collision_geoms)
     assert all(geom.attrib.get("conaffinity") == "1" for geom in collision_geoms)
+    assert all("rgba" not in geom.attrib for geom in collision_geoms)
 
 
 def test_robot_model_filters_adjacent_chain_and_gripper_parent_contacts() -> None:
@@ -229,10 +230,11 @@ def test_torque_actuator_force_limits_match_urdf_effort_limits() -> None:
     assert set(actuators) == set(JOINTS)
     for joint_name, effort in efforts.items():
         actuator = actuators[joint_name]
+        expected_effort = 20.0 if joint_name in FINGER_JOINTS else effort
         assert actuator.attrib["forcelimited"] == "true"
-        assert _numbers(actuator.attrib["forcerange"]) == pytest.approx((-effort, effort))
+        assert _numbers(actuator.attrib["forcerange"]) == pytest.approx((-expected_effort, expected_effort))
         assert actuator.attrib["ctrllimited"] == "true"
-        assert _numbers(actuator.attrib["ctrlrange"]) == pytest.approx((-effort, effort))
+        assert _numbers(actuator.attrib["ctrlrange"]) == pytest.approx((-expected_effort, expected_effort))
 
 
 def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -> None:

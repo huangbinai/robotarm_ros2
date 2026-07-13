@@ -79,6 +79,7 @@ def test_generated_model_separates_original_mesh_visuals_and_collisions() -> Non
     assert all(geom.attrib.get("conaffinity") == "0" for geom in visuals)
     assert all(geom.attrib.get("contype") == "1" for geom in collisions)
     assert all(geom.attrib.get("conaffinity") == "1" for geom in collisions)
+    assert all("rgba" not in geom.attrib for geom in collisions)
 
 
 def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
@@ -96,6 +97,8 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
     ]
     assert all(actuator.attrib["ctrllimited"] == "true" for actuator in actuators)
     assert all(actuator.attrib["forcelimited"] == "true" for actuator in actuators)
+    assert actuators[-2].attrib["ctrlrange"] == "-20.0 20.0"
+    assert actuators[-1].attrib["forcerange"] == "-20.0 20.0"
     dynamics = {joint.attrib["name"]: joint for joint in root.findall("worldbody//joint")}
     assert dynamics["joint1"].attrib["damping"] == "10"
     assert dynamics["joint4"].attrib["damping"] == "3"

@@ -265,6 +265,36 @@ def test_gripper_width_uses_equal_and_opposite_joint_targets(runtime_sim) -> Non
         runtime_sim.set_gripper_width(float("nan"))
 
 
+def test_gripper_motor_control_is_clamped_before_viewer_exposes_ctrl(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.set_gripper_width(0.09)
+    model, data = runtime_sim._unsafe_viewer_handles()
+
+    runtime_sim.step()
+
+    for actuator_id in range(model.nu - 2, model.nu):
+        lower, upper = model.actuator_ctrlrange[actuator_id]
+        assert lower <= data.ctrl[actuator_id] <= upper
+    assert 1.0 < data.ctrl[-2] <= 20.0
+    assert data.ctrl[-1] == pytest.approx(-data.ctrl[-2])
+
+
+def test_gripper_opening_force_does_not_flip_sign_while_below_target(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.set_gripper_width(0.09)
+    _, data = runtime_sim._unsafe_viewer_handles()
+
+    left_forces = []
+    widths = []
+    for _ in range(200):
+        state = runtime_sim.step()
+        left_forces.append(float(data.ctrl[-2]))
+        widths.append(float(state.gripper_width))
+
+    assert max(widths) < 0.09
+    assert min(left_forces) >= 0.0
+
+
 @pytest.mark.parametrize("steps", [0, -1, 1.5, True])
 def test_step_requires_a_positive_integer(runtime_sim, steps) -> None:
     with pytest.raises((ValueError, TypeError)):

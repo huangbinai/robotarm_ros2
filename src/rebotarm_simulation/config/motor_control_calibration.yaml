@@ -36,6 +36,14 @@ gripper:
   motor_radians_per_opening_m: -55.55555555555556  # -5 rad / 0.09 m
   transmission_efficiency: 0.80
   motor_torque_limit_nm: 1.5
+  # 1.5 Nm * 55.56 rad/m * 0.8 is an ideal motor-side upper bound, not a
+  # measured fingertip force. Keep MuJoCo's prismatic finger force conservative
+  # until the real gripper can be calibrated with a scale/load cell.
+  finger_force_limit_n: 20.0
+  sim_force_kp_n_per_m: 250.0
+  sim_force_kd_n_s_per_m: 6.0
+  sim_force_deadband_m: 0.0005
+  sim_velocity_deadband_m_s: 0.002
   displacement_range_m: [0.0, 0.09]
   modes:
     move: {kp: 5.0, kd: 1.0}

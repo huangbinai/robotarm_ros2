@@ -79,7 +79,7 @@ def generate_mjcf_bytes(repo_root: Path) -> bytes:
         _add_finger_coupling(root)
         _add_sites(root)
         _add_joint_dynamics(root, _load_joint_dynamics(repo_root))
-        _add_actuators(root, urdf_root)
+        _add_actuators(root, urdf_root, repo_root)
         _add_sensors(root)
     return _canonicalize(root)
 
@@ -98,7 +98,11 @@ def _configure_compiler(root: ET.Element) -> None:
     visual = ET.SubElement(default, "default", {"class": "visual"})
     ET.SubElement(visual, "geom", {"contype": "0", "conaffinity": "0", "group": "2"})
     collision = ET.SubElement(default, "default", {"class": "collision"})
-    ET.SubElement(collision, "geom", {"contype": "1", "conaffinity": "1", "group": "3"})
+    ET.SubElement(
+        collision,
+        "geom",
+        {"contype": "1", "conaffinity": "1", "group": "3", "rgba": "0.2 0.5 0.8 0.12"},
+    )
     compiler_index = list(root).index(compiler)
     root.insert(compiler_index + 1, default)
 
@@ -119,6 +123,8 @@ def _classify_geoms(root: ET.Element) -> None:
             geom.set("conaffinity", "0" if is_visual else "1")
             geom.set("group", "2" if is_visual else "3")
             geom.attrib.pop("density", None)
+            if not is_visual:
+                geom.attrib.pop("rgba", None)
             if not is_visual and mesh in {"left_finger", "right_finger"}:
                 geom.set("friction", "1.2 0.02 0.001")
 
@@ -196,18 +202,23 @@ def _add_joint_dynamics(root: ET.Element, dynamics: dict[str, dict[str, float]])
             joint.set(key, f"{value:g}")
 
 
-def _add_actuators(root: ET.Element, urdf_root: ET.Element) -> None:
+def _add_actuators(root: ET.Element, urdf_root: ET.Element, repo_root: Path) -> None:
     limits = {
         joint.attrib["name"]: joint.find("limit")
         for joint in urdf_root.findall("joint")
         if joint.attrib.get("name") in JOINTS
     }
     actuator = ET.SubElement(root, "actuator")
+    finger_force_limit = _load_gripper_force_limit(repo_root)
     for joint_name in JOINTS:
         limit = limits[joint_name]
         if limit is None:
             raise ValueError(f"URDF joint has no limit: {joint_name}")
-        effort = limit.attrib["effort"]
+        effort = (
+            finger_force_limit
+            if joint_name in {"left_finger_joint", "right_finger_joint"}
+            else float(limit.attrib["effort"])
+        )
         ET.SubElement(
             actuator,
             "motor",
@@ -221,6 +232,18 @@ def _add_actuators(root: ET.Element, urdf_root: ET.Element) -> None:
                 "forcerange": f"-{effort} {effort}",
             },
         )
+
+
+def _load_gripper_force_limit(repo_root: Path) -> float:
+    path = repo_root / "src/rebotarm_simulation/config/motor_control_calibration.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        value = float(payload["gripper"]["finger_force_limit_n"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"expected gripper.finger_force_limit_n in {path}") from exc
+    if value <= 0.0:
+        raise ValueError(f"gripper.finger_force_limit_n must be positive in {path}")
+    return value
 
 
 def _add_sensors(root: ET.Element) -> None:

@@ -56,6 +56,11 @@ class GripperControlParameters:
     motor_radians_per_opening_m: float
     transmission_efficiency: float
     motor_torque_limit_nm: float
+    finger_force_limit_n: float
+    sim_force_kp_n_per_m: float
+    sim_force_kd_n_s_per_m: float
+    sim_force_deadband_m: float
+    sim_velocity_deadband_m_s: float
     displacement_min_m: float
     displacement_max_m: float
 
@@ -174,6 +179,11 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
             ),
             transmission_efficiency=float(gripper_calibration["transmission_efficiency"]),
             motor_torque_limit_nm=float(gripper_calibration["motor_torque_limit_nm"]),
+            finger_force_limit_n=float(gripper_calibration["finger_force_limit_n"]),
+            sim_force_kp_n_per_m=float(gripper_calibration["sim_force_kp_n_per_m"]),
+            sim_force_kd_n_s_per_m=float(gripper_calibration["sim_force_kd_n_s_per_m"]),
+            sim_force_deadband_m=float(gripper_calibration["sim_force_deadband_m"]),
+            sim_velocity_deadband_m_s=float(gripper_calibration["sim_velocity_deadband_m_s"]),
             displacement_min_m=float(displacement_range[0]),
             displacement_max_m=float(displacement_range[1]),
         ),

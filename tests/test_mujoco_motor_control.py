@@ -42,6 +42,9 @@ def test_parameters_come_from_existing_motor_yaml_and_urdf() -> None:
     assert parameters.gripper.closing_kp == pytest.approx(0.0)
     assert parameters.gripper.hold_kp == pytest.approx(5.0)
     assert parameters.gripper.motor_model == "DM4310_V1_2"
+    assert parameters.gripper.finger_force_limit_n == pytest.approx(20.0)
+    assert parameters.gripper.sim_force_kp_n_per_m == pytest.approx(250.0)
+    assert parameters.gripper.sim_force_kd_n_s_per_m == pytest.approx(6.0)
 
 
 def test_pos_vel_controller_uses_cascade_and_effort_scaling() -> None:

@@ -52,6 +52,7 @@ def test_mujoco_readme_documents_ros_interfaces_examples_and_moveit_safety():
         "ros2 service call /rebotarm/gripper/set",
         "ros2 service call /rebotarm/trajectory_stop",
         "rebotarm_mujoco_ros_acceptance --timeout 15",
+        "rebotarm_mujoco_moveit_acceptance --timeout 30",
         "use_hardware:=false",
         "MoveIt",
         "ros2 launch rebotarm_bringup interactive_system.launch.py use_moveit_preview:=true use_hardware:=false use_moveit_fake_joint_states:=false start_passive_joint_state_publisher:=false use_sim_time:=true",

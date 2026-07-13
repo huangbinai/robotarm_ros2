@@ -176,6 +176,18 @@ passive 发布器是为了让 `/rebotarm/joint_states` 只有 MuJoCo 这一份�
 避免多个 joint state publisher 竞争。MoveIt 控制器仍映射到
 `/rebotarm/follow_joint_trajectory`，由终端 1 的 MuJoCo Action 服务端执行。
 
+两端启动后，可在第三个终端运行 MoveIt-MuJoCo 联动验收：
+
+```bash
+rebotarm_mujoco_moveit_acceptance --timeout 30
+```
+
+该命令等待 `/plan_kinematic_path`、`/rebotarm/follow_joint_trajectory`、
+`/rebotarm/joint_states` 和 `/clock`，向 MoveIt 请求一条六关节规划，再把 MoveIt
+返回的 `JointTrajectory` 发给 MuJoCo action server 执行。`ok=true` 表示规划、
+执行和最终关节误差均通过；它不启动 RViz、不连接实机，但验证的就是 RViz 规划执行
+会走的同一条 MoveIt planning service 和 MuJoCo trajectory action 链路。
+
 ## Python API（面向后续训练/推理复用）
 
 核心类不依赖 ROS 2：

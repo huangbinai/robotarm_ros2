@@ -142,6 +142,17 @@ ros2 service call /rebotarm/gripper/set rebotarm_msgs/srv/SetGripper \
 ros2 service call /rebotarm/trajectory_stop std_srvs/srv/Trigger "{}"
 ```
 
+也可以在 Ubuntu VM 中直接跑一次无实机 ROS 2 接口验收。它在同一进程里启动
+MuJoCo ROS 2 节点和探针节点，检查 `/rebotarm/joint_states`、`/clock`、
+`/rebotarm/gripper/set` 和 `/rebotarm/follow_joint_trajectory`：
+
+```bash
+rebotarm_mujoco_ros_acceptance --timeout 15
+```
+
+输出 JSON 中 `ok=true` 才表示 topic、service 和 action 均通过；该命令不启动
+`rebotarmcontroller`，也不使用 `use_hardware:=true`。
+
 MoveIt 的控制器映射保持为 `/rebotarm/follow_joint_trajectory`。联调时所有
 bringup 必须显式使用 `use_hardware:=false`，且只保留一个该 Action 的服务端。
 

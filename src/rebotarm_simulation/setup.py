@@ -41,6 +41,7 @@ setup(
             "rebotarm_mujoco_health = rebotarm_simulation.mujoco_health:main",
             "rebotarm_mujoco_batch = rebotarm_simulation.mujoco_batch:main",
             "rebotarm_mujoco_contact_check = rebotarm_simulation.mujoco_contact_check:main",
+            "rebotarm_mujoco_ros_acceptance = rebotarm_simulation.mujoco_ros_acceptance:main",
             "rebotarm_mujoco_cli = rebotarm_simulation.mujoco_cli:main",
             "rebotarm_mujoco_viewer = rebotarm_simulation.mujoco_viewer:main",
             "rebotarm_mujoco_node = rebotarm_simulation.mujoco_ros_node:main",

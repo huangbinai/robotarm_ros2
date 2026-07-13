@@ -172,7 +172,7 @@ python -m rebotarm_simulation.mujoco_viewer --duration 60
 3. G/H/P 能切换重力补偿、保持、POS_VEL 模式
 4. 1-6 选择关节，按住 J/K 能连续移动当前关节
 5. C/O 能连续闭合/打开夹爪，夹爪 visual 可见且能接近/接触方块
-6. 终端状态栏显示 mode、当前关节实际角 q、target 和 gripper target
+6. 终端状态栏显示 mode、当前关节实际角 q、速度 dq、target、夹爪实际/目标宽度、接触数量和最大接触力
 7. 右侧 control 面板不作为日常位置控制入口；它显示的是 torque/force
 8. 空格暂停，. 单步，Q 退出
 9. 机械臂不飞、不爆、不明显穿桌

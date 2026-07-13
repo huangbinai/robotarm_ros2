@@ -40,9 +40,13 @@ class FakeSim:
     def get_state(self):
         return SimpleNamespace(
             joint_positions=tuple(self.targets) + (self.width / 2.0, -self.width / 2.0),
+            joint_velocities=(0.01,) * 6 + (0.0, 0.0),
             gripper_width=self.width,
             simulation_time=self.time,
         )
+
+    def get_contacts(self):
+        return (SimpleNamespace(force=2.5), SimpleNamespace(force=0.4))
 
     def set_joint_position_targets(self, targets):
         self.call_threads.append(threading.get_ident())
@@ -304,14 +308,18 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
         selected_joint=2,
         joint_targets=(0.0, 0.0, 0.25, 0.0, 0.0, 0.0),
         joint_positions=(0.0, 0.0, 0.20, 0.0, 0.0, 0.0),
+        joint_velocities=(0.0, 0.0, 0.03, 0.0, 0.0, 0.0),
         gripper_width=0.04,
+        gripper_actual_width=0.035,
+        max_contact_force=2.5,
+        contact_count=2,
         paused=True,
         active_mode="gravity_comp",
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
-        "gravity_comp", "joint3", "0.200", "0.250", "0.040", "paused",
-        "torque/force", "[ / ]", "hold J/K",
+        "gravity_comp", "joint3", "0.200", "0.030", "0.250", "0.035", "0.040",
+        "contacts: 2", "2.50 N", "paused", "torque/force", "[ / ]", "hold J/K",
     ):
         assert expected in text
 
@@ -390,7 +398,7 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "target", "gripper", "paused", "hold J/K", "torque/force"):
+    for expected in ("joint1", "dq", "target", "gripper", "contacts", "paused", "hold J/K", "torque/force"):
         assert expected in output
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True

@@ -24,7 +24,11 @@ class ViewerControlState:
     selected_joint: int = 0
     joint_targets: tuple[float, ...] = (0.0,) * 6
     joint_positions: tuple[float, ...] = (0.0,) * 6
+    joint_velocities: tuple[float, ...] = (0.0,) * 6
     gripper_width: float = 0.09
+    gripper_actual_width: float = 0.09
+    max_contact_force: float = 0.0
+    contact_count: int = 0
     paused: bool = False
     joint_delta: int = 0
     gripper_delta: int = 0
@@ -117,13 +121,41 @@ def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> Vi
     state = sim.get_state()
     targets = tuple(float(value) for value in sim.control_targets[:6])
     positions = tuple(float(value) for value in state.joint_positions[:6])
+    velocities = tuple(float(value) for value in state.joint_velocities[:6])
+    contacts = _contact_summary(sim)
     return ViewerControlState(
         selected_joint=selected_joint,
         joint_targets=targets,
         joint_positions=positions,
+        joint_velocities=velocities,
         gripper_width=float(state.gripper_width),
+        gripper_actual_width=float(state.gripper_width),
+        max_contact_force=contacts[0],
+        contact_count=contacts[1],
         paused=paused,
         active_mode=str(getattr(sim, "control_mode", "pos_vel")),
+    )
+
+
+def _contact_summary(sim) -> tuple[float, int]:
+    if not hasattr(sim, "get_contacts"):
+        return 0.0, 0
+    contacts = tuple(sim.get_contacts())
+    if not contacts:
+        return 0.0, 0
+    return max(float(contact.force) for contact in contacts), len(contacts)
+
+
+def _refresh_observed_state(sim, state: ViewerControlState) -> ViewerControlState:
+    sim_state = sim.get_state()
+    max_contact_force, contact_count = _contact_summary(sim)
+    return replace(
+        state,
+        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
+        joint_velocities=tuple(float(value) for value in sim_state.joint_velocities[:6]),
+        gripper_actual_width=float(sim_state.gripper_width),
+        max_contact_force=max_contact_force,
+        contact_count=contact_count,
     )
 
 
@@ -174,11 +206,9 @@ def apply_pending_commands(
         width = float(sim.set_gripper_width(width + state.gripper_delta * gripper_step))
         jog_time_remaining = jog_hold_time
 
-    sim_state = sim.get_state()
-    return replace(
+    state = replace(
         state,
         joint_targets=targets,
-        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
         gripper_width=width,
         joint_delta=0,
         gripper_delta=0,
@@ -188,6 +218,7 @@ def apply_pending_commands(
         mode=None,
         active_mode=str(active_mode),
     )
+    return _refresh_observed_state(sim, state)
 
 
 def apply_continuous_jog(
@@ -211,18 +242,17 @@ def apply_continuous_jog(
     if state.gripper_jog_direction:
         width = float(sim.set_gripper_width(width + state.gripper_jog_direction * gripper_rate * dt))
 
-    sim_state = sim.get_state()
     remaining = max(0.0, state.jog_time_remaining - dt)
-    return replace(
+    state = replace(
         state,
         joint_targets=targets,
-        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
         gripper_width=width,
         jog_time_remaining=remaining,
         joint_jog_direction=state.joint_jog_direction if remaining > 0.0 else 0,
         gripper_jog_direction=state.gripper_jog_direction if remaining > 0.0 else 0,
         active_mode=str(getattr(sim, "control_mode", state.active_mode)),
     )
+    return _refresh_observed_state(sim, state)
 
 
 def overlay_text(state: ViewerControlState) -> str:
@@ -231,8 +261,11 @@ def overlay_text(state: ViewerControlState) -> str:
     return (
         f"mode: {state.active_mode}  selected: {name}  "
         f"q: {state.joint_positions[state.selected_joint]:.3f} rad  "
+        f"dq: {state.joint_velocities[state.selected_joint]:.3f} rad/s  "
         f"target: {state.joint_targets[state.selected_joint]:.3f} rad\n"
-        f"gripper target: {state.gripper_width:.3f} m  state: {run_state}\n"
+        f"gripper: {state.gripper_actual_width:.3f} m  target: {state.gripper_width:.3f} m  "
+        f"contacts: {state.contact_count}  max contact: {state.max_contact_force:.2f} N  "
+        f"state: {run_state}\n"
         "MuJoCo control panel shows torque/force, not joint position.\n"
         f"{HELP}"
     )
@@ -382,12 +415,7 @@ def main(
                         gripper_rate=args.gripper_rate,
                     )
                     sim.step()
-                    sim_state = sim.get_state()
-                    state = replace(
-                        state,
-                        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
-                        single_step=False,
-                    )
+                    state = _refresh_observed_state(sim, replace(state, single_step=False))
                 current_status = overlay_text(state)
                 if current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)

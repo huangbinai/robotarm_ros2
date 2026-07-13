@@ -98,7 +98,15 @@ class SavedSimulationState:
     model_dimensions: tuple[int, ...]
     state_spec: int
     state: tuple[float, ...]
+    control_targets: tuple[float, ...] = ()
+    position_integral: tuple[float, ...] = ()
+    velocity_integral: tuple[float, ...] = ()
+    control_phase: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_dimensions", tuple(int(value) for value in self.model_dimensions))
         object.__setattr__(self, "state", _float_tuple(self.state, label="saved state"))
+        object.__setattr__(self, "control_targets", _float_tuple(self.control_targets, label="control_targets"))
+        object.__setattr__(self, "position_integral", _float_tuple(self.position_integral, label="position_integral"))
+        object.__setattr__(self, "velocity_integral", _float_tuple(self.velocity_integral, label="velocity_integral"))
+        object.__setattr__(self, "control_phase", int(self.control_phase))

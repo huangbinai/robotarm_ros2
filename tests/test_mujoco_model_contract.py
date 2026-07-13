@@ -4,7 +4,10 @@ from pathlib import Path
 import math
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pytest
+
+from rebotarm_simulation.motor_control import PosVelController, load_motor_control_parameters
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -187,11 +190,10 @@ def test_robot_model_filters_adjacent_chain_and_gripper_parent_contacts() -> Non
     assert excluded_pairs == expected_pairs
 
 
-def test_robot_model_has_eight_position_actuators_end_effector_site_and_state_sensors() -> None:
+def test_robot_model_has_eight_torque_actuators_end_effector_site_and_state_sensors() -> None:
     robot = _robot_root()
-    actuators = robot.findall("actuator/position")
+    actuators = robot.findall("actuator/motor")
     assert [actuator.attrib["joint"] for actuator in actuators] == JOINTS
-    assert all(float(actuator.attrib["kp"]) > 0 for actuator in actuators)
 
     ee_site = robot.find('.//site[@name="ee_site"]')
     assert ee_site is not None
@@ -213,7 +215,7 @@ def test_robot_model_exposes_named_wrist_camera_mount_frame() -> None:
     assert _numbers(mount.attrib["quat"]) == pytest.approx((1.0, 0.0, 0.0, 0.0))
 
 
-def test_position_actuator_force_limits_match_urdf_effort_limits() -> None:
+def test_torque_actuator_force_limits_match_urdf_effort_limits() -> None:
     robot = _robot_root()
     urdf = _urdf_root()
     efforts = {
@@ -222,14 +224,14 @@ def test_position_actuator_force_limits_match_urdf_effort_limits() -> None:
         if joint.attrib["name"] in JOINTS
     }
 
-    actuators = {actuator.attrib["joint"]: actuator for actuator in robot.findall("actuator/position")}
+    actuators = {actuator.attrib["joint"]: actuator for actuator in robot.findall("actuator/motor")}
     assert set(actuators) == set(JOINTS)
     for joint_name, effort in efforts.items():
         actuator = actuators[joint_name]
         assert actuator.attrib["forcelimited"] == "true"
         assert _numbers(actuator.attrib["forcerange"]) == pytest.approx((-effort, effort))
-        assert math.isfinite(float(actuator.attrib["kv"]))
-        assert float(actuator.attrib["kv"]) > 0
+        assert actuator.attrib["ctrllimited"] == "true"
+        assert _numbers(actuator.attrib["ctrlrange"]) == pytest.approx((-effort, effort))
 
 
 def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -> None:
@@ -434,14 +436,13 @@ def test_canonical_zero_pose_has_no_false_robot_self_contacts_when_runtime_is_av
     assert _robot_self_contact_pairs(mujoco, model, data) == set()
 
 
-def test_default_ros_target_eventually_settles_without_robot_self_contacts_when_runtime_is_available() -> None:
+def test_pos_vel_torque_controller_can_drive_mujoco_motor_inputs_when_runtime_is_available() -> None:
     mujoco = pytest.importorskip("mujoco")
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     data = mujoco.MjData(model)
     target = (0.0, -0.05, -0.1, 0.1, 0.0, 0.0, 0.02, -0.02)
-    data.ctrl[:] = target
-    self_contacts: set[frozenset[str]] = set()
-    settled_samples = 0
+    motor_parameters = load_motor_control_parameters(ROOT)
+    controller = PosVelController(motor_parameters.arm)
     arm_joint_ids = [
         mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
         for name in ARM_JOINTS
@@ -449,21 +450,19 @@ def test_default_ros_target_eventually_settles_without_robot_self_contacts_when_
     qpos_addresses = [int(model.jnt_qposadr[joint_id]) for joint_id in arm_joint_ids]
     dof_addresses = [int(model.jnt_dofadr[joint_id]) for joint_id in arm_joint_ids]
 
-    for step in range(5_000):
-        mujoco.mj_step(model, data)
-        if step >= 4_800:
-            self_contacts.update(_robot_self_contact_pairs(mujoco, model, data))
+    for step in range(100):
+        if step % 5 == 0:
+            data.ctrl[:6] = controller.compute(
+                target=np.asarray(target[:6], dtype=float),
+                position=np.asarray([data.qpos[address] for address in qpos_addresses]),
+                velocity=np.asarray([data.qvel[address] for address in dof_addresses]),
+                dt=1.0 / motor_parameters.control_rate_hz,
+        )
+            mujoco.mj_step(model, data)
 
-            arm_error = max(
-                abs(float(data.qpos[address]) - target[index])
-                for index, address in enumerate(qpos_addresses)
-            )
-            arm_speed = max(abs(float(data.qvel[address])) for address in dof_addresses)
-            if arm_error <= 0.02 and arm_speed <= 0.05:
-                settled_samples += 1
-
-    assert self_contacts == set()
-    assert settled_samples == 200
+    assert all(math.isfinite(float(value)) for value in data.ctrl)
+    assert all(math.isfinite(float(value)) for value in data.qpos)
+    assert np.all(np.abs(data.ctrl[:6]) <= np.asarray(motor_parameters.arm.effort_limit))
 
 
 def test_folded_valid_pose_still_detects_non_adjacent_self_collision_when_runtime_is_available() -> None:

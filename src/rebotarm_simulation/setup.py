@@ -29,7 +29,7 @@ setup(
     + install_resources("models/**/*.[sS][tT][lL]")
     + install_resources("config/*.yaml")
     + install_resources("launch/*.launch.py"),
-    install_requires=["setuptools", "mujoco>=3.3,<4", "numpy>=1.26"],
+    install_requires=["setuptools", "mujoco>=3.3,<4", "numpy>=1.26", "PyYAML>=6"],
     zip_safe=True,
     maintainer="reBotArm Maintainers",
     maintainer_email="support@example.com",

@@ -15,16 +15,6 @@ JOINTS = [f"joint{index}" for index in range(1, 7)] + [
     "left_finger_joint",
     "right_finger_joint",
 ]
-GAINS = {
-    "joint1": (480, 1),
-    "joint2": (480, 1),
-    "joint3": (480, 0.75),
-    "joint4": (240, 0.5),
-    "joint5": (200, 0.375),
-    "joint6": (160, 0.25),
-    "left_finger_joint": (250, 0.125),
-    "right_finger_joint": (250, 0.125),
-}
 
 
 def authoritative_urdf_path(repo_root: Path) -> Path:
@@ -181,17 +171,15 @@ def _add_actuators(root: ET.Element, urdf_root: ET.Element) -> None:
         limit = limits[joint_name]
         if limit is None:
             raise ValueError(f"URDF joint has no limit: {joint_name}")
-        kp, kv = GAINS[joint_name]
         effort = limit.attrib["effort"]
         ET.SubElement(
             actuator,
-            "position",
+            "motor",
             {
                 "name": f"{joint_name.removesuffix('_joint')}_position",
                 "joint": joint_name,
-                "kp": str(kp),
-                "kv": str(kv),
-                "ctrlrange": f'{limit.attrib["lower"]} {limit.attrib["upper"]}',
+                "gear": "1",
+                "ctrlrange": f"-{effort} {effort}",
                 "ctrllimited": "true",
                 "forcelimited": "true",
                 "forcerange": f"-{effort} {effort}",

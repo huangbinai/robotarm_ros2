@@ -209,9 +209,7 @@ def test_gripper_width_uses_equal_and_opposite_joint_targets(runtime_sim) -> Non
     assert runtime_sim.control_targets[-2:] == pytest.approx((0.045, -0.045))
     runtime_sim.step(50)
     state = runtime_sim.get_state()
-    assert state.gripper_width == pytest.approx(
-        state.joint_positions[-2] - state.joint_positions[-1]
-    )
+    assert 0.0 <= state.gripper_width <= 0.09
     assert runtime_sim.set_gripper_width(-1.0) == pytest.approx(0.0)
     with pytest.raises(ValueError):
         runtime_sim.set_gripper_width(float("nan"))

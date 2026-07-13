@@ -2,7 +2,9 @@
 
 本目录提供可独立使用的 MuJoCo 物理仿真核心、桌面 Viewer 和 ROS 2
 适配层。已验证的目标环境是 Ubuntu 24.04、ROS 2 Jazzy、Python 3.12。
-本阶段尚未实现强化学习训练、Gymnasium 环境或奖励函数；云端训练是后续工作。
+本阶段尚未开始强化学习训练；已提供轻量 Gym 风格 Reach API 和 headless 批量
+rollout 入口，供后续云端训练/本地推理验证复用。当前环境不依赖 Gymnasium，
+奖励函数只覆盖 Reach 验证任务，不代表 Pick/精细抓取训练已经完成。
 
 ## 安装与构建
 
@@ -63,6 +65,15 @@ rebotarm_mujoco_cli --headless --duration 5
 输出同时含 `"requested_duration"` 和 `"achieved_duration"`；后者会按物理
 时间步向上取整。交互 CLI 还支持 `state`、`joint`、`joints`、`jog`、
 `gripper`、`step`、`contacts`、`reset`、`pause`、`resume` 和 `quit`。
+
+无界面 Reach 随机策略批量 rollout：
+
+```bash
+rebotarm_mujoco_batch --episodes 3 --steps 100 --seed 0
+```
+
+该命令输出 JSON 摘要，包含每回合步数、累计奖励、末端到目标距离和成功标志；
+它只验证 API/物理层可无界面运行，不代表已经完成强化学习训练。
 
 ## 桌面 Viewer
 
@@ -152,6 +163,7 @@ from rebotarm_simulation.mujoco_sim import RebotArmMujoco
 
 with RebotArmMujoco() as sim:
     sim.reset(seed=7)
+    scene = sim.randomize_scene(seed=7)
     sim.set_joint_position_targets([0.1, -0.2, -0.2, 0.2, 0.0, 0.0])
     sim.set_gripper_width(0.05)
     sim.set_object_pose("test_cube", [0.45, 0.0, 0.44], [0.0, 0.0, 0.0, 1.0])
@@ -165,9 +177,27 @@ with RebotArmMujoco() as sim:
 和仿真时间。公开的末端与物体四元数顺序都是 XYZW；MuJoCo 内部 WXYZ 已在
 API 边界转换。`save_state()`/`restore_state()` 只允许同一模型实例，
 `set_object_pose()` 只接受带 free joint 的物体，四元数也使用 XYZW。
+`randomize_scene()` 会按给定 seed 随机 `test_cube` 位置和 Reach 目标点，
+返回 `RandomizedScene(cube_pose, reach_target_position, seed)`，用于后续
+Reach/Pick 场景随机化。
+
+轻量 Gym 风格 Reach 环境不依赖 `gymnasium`：
+
+```python
+from rebotarm_simulation.mujoco_env import RebotArmReachEnv
+
+with RebotArmReachEnv() as env:
+    obs, info = env.reset(seed=7)
+    obs, reward, terminated, truncated, info = env.step([0.0] * 7)
+```
+
+`obs` 包含 `joint_positions`、`joint_velocities`、`gripper_width`、
+`ee_position`、`target_position`、`cube_pose` 和 `max_contact_force`。
+`step(action)` 接受 6 维关节增量或 7 维关节+夹爪增量，内部裁剪到 `[-1, 1]`。
 
 后续架构是云服务器运行无界面 MuJoCo 并行训练，本地 Ubuntu VM 做模型验证、
-ROS 2 联调和策略推理。现在只提供可复用物理/API 底座，不宣称训练可用。
+ROS 2 联调和策略推理。现在只提供可复用物理/API 底座和 Reach rollout 验证，
+不宣称已经有可用策略或训练收敛结果。
 
 模型在 `end_link` 下提供命名坐标系 `wrist_camera_mount`，作为后续手眼/末端 RGB-D
 相机的稳定安装基准。当前阶段只定义安装位，不绑定具体相机型号、内参或渲染传感器。

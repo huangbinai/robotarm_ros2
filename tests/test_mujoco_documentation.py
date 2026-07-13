@@ -70,6 +70,11 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
         "save_state()",
         "restore_state()",
         "set_object_pose",
+        "randomize_scene()",
+        "RebotArmReachEnv",
+        "reset(seed=7)",
+        "step([0.0] * 7)",
+        "rebotarm_mujoco_batch --episodes",
         "云服务器",
         "本地 Ubuntu VM",
         "Gymnasium",
@@ -98,7 +103,7 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
     for value in required:
         assert value in text
     assert "pkill" not in text
-    assert "尚未实现强化学习训练" in text
+    assert "尚未开始强化学习训练" in text
     assert "已实现强化学习训练" not in text
 
 

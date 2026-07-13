@@ -23,6 +23,7 @@ def test_mujoco_readme_documents_reproducible_install_and_runtime_commands():
         ".venv-mujoco-ros/bin/python -m colcon build --symlink-install --packages-select rebotarm_simulation",
         "MUJOCO_GL=egl",
         "rebotarm_mujoco_health --renderer-timeout",
+        "rebotarm_mujoco_acceptance --skip-renderer",
         "rebotarm_mujoco_cli --headless --duration",
         "rebotarm_mujoco_contact_check",
         '"requested_duration"',

@@ -133,6 +133,20 @@ joint_positions、joint_velocities、actuator_forces 都是有限数
 无 Python 异常
 ```
 
+推荐的基础总验收入口：
+
+```bash
+python -m rebotarm_simulation.mujoco_acceptance --skip-renderer
+```
+
+预期输出 JSON，`ok=true`，并包含 `health`、`headless_reach_batch` 和
+`cube_contact` 三个 step。若当前终端已 source ROS 2 和 `install/setup.bash`，
+可追加 ROS 2 接口验收：
+
+```bash
+python -m rebotarm_simulation.mujoco_acceptance --skip-renderer --include-ros --timeout 30
+```
+
 EGL 渲染健康检查：
 
 ```bash
@@ -283,6 +297,12 @@ action 能收到反馈和结果
 全程不需要 use_hardware:=true
 ```
 
+自动化等价命令：
+
+```bash
+python -m rebotarm_simulation.mujoco_ros_acceptance --timeout 15
+```
+
 ## MoveIt 联调验收
 
 终端 1：
@@ -310,6 +330,15 @@ ros2 launch rebotarm_bringup interactive_system.launch.py \
 3. RViz 中规划后执行，MuJoCo 机械臂状态变化
 4. 没有启动任何实机驱动
 ```
+
+自动化等价命令需要先保持终端 1 和终端 2 正在运行，然后在第三个终端执行：
+
+```bash
+python -m rebotarm_simulation.mujoco_moveit_acceptance --timeout 30
+```
+
+预期输出 JSON，`moveit_plan_success=true`、`trajectory_action_success=true`、
+`ok=true`。
 
 ## 不通过时如何判断问题
 

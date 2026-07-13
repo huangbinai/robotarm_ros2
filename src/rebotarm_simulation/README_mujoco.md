@@ -86,6 +86,21 @@ rebotarm_mujoco_contact_check
 保持有限，单步跳变、接触力和最低高度都在阈值内；它用于排查抖动、穿模或接触力
 爆炸，不连接实机。
 
+基础总验收入口会串行运行 health、headless Reach batch 和接触检查：
+
+```bash
+rebotarm_mujoco_acceptance --skip-renderer
+```
+
+在已经 source ROS 2 与 `install/setup.bash` 的 Ubuntu VM 中，可追加 ROS 2 接口验收：
+
+```bash
+rebotarm_mujoco_acceptance --skip-renderer --include-ros --timeout 30
+```
+
+MoveIt 联动验收需要先按下文启动 MuJoCo 后端和 MoveIt，再单独运行
+`rebotarm_mujoco_moveit_acceptance --timeout 30`，或对总验收追加 `--include-moveit`。
+
 ## 桌面 Viewer
 
 在 Ubuntu 图形桌面的终端运行，而不是普通无显示 SSH 会话：

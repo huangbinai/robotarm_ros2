@@ -39,6 +39,7 @@ setup(
         "console_scripts": [
             "rebotarm_sim_trajectory_controller = rebotarm_simulation.sim_trajectory_controller_node:main",
             "rebotarm_mujoco_health = rebotarm_simulation.mujoco_health:main",
+            "rebotarm_mujoco_acceptance = rebotarm_simulation.mujoco_acceptance:main",
             "rebotarm_mujoco_batch = rebotarm_simulation.mujoco_batch:main",
             "rebotarm_mujoco_contact_check = rebotarm_simulation.mujoco_contact_check:main",
             "rebotarm_mujoco_ros_acceptance = rebotarm_simulation.mujoco_ros_acceptance:main",

@@ -29,7 +29,7 @@ setup(
     + install_resources("models/**/*.[sS][tT][lL]")
     + install_resources("config/*.yaml")
     + install_resources("launch/*.launch.py"),
-    install_requires=["setuptools", "mujoco>=3.3,<4", "numpy>=1.26"],
+    install_requires=["setuptools", "mujoco>=3.3,<4", "numpy>=1.26", "PyYAML>=6"],
     zip_safe=True,
     maintainer="reBotArm Maintainers",
     maintainer_email="support@example.com",
@@ -42,6 +42,7 @@ setup(
             "rebotarm_mujoco_cli = rebotarm_simulation.mujoco_cli:main",
             "rebotarm_mujoco_viewer = rebotarm_simulation.mujoco_viewer:main",
             "rebotarm_mujoco_node = rebotarm_simulation.mujoco_ros_node:main",
+            "rebotarm_urdf_to_mjcf = rebotarm_simulation.urdf_to_mjcf:main",
         ],
     },
 )

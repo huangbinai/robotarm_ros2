@@ -72,9 +72,18 @@ rebotarm_mujoco_cli --headless --duration 5
 rebotarm_mujoco_viewer --duration 30
 ```
 
-按 `1`–`6` 选择关节，`J/K` 微调，`C/O` 闭合/打开夹爪，空格暂停，
-`.` 单步，`R` 复位，`Q` 退出。若从 SSH 启动，需正确配置 X11 转发，且
+按 `1`–`6` 选择关节，按住 `J/K` 连续正/反向移动当前关节，按住 `C/O`
+连续闭合/打开夹爪，`G` 进入重力补偿，`H` 保持当前位置，`P` 进入 POS_VEL
+位置目标控制，空格暂停，`.` 单步，`R` 回零位，`T` 回 home 姿态，`Q` 退出。
+终端状态栏会显示当前模式、选中关节、实际关节角和目标关节角。MuJoCo 右侧
+`control` 面板显示的是底层 actuator 的 torque/force，不是关节位置；日常控制请用
+键盘 jog 或 ROS/API 发送目标。若从 SSH 启动，需正确配置 X11 转发，且
 `DISPLAY` 与 `XAUTHORITY` 必须指向当前桌面会话；否则请改用 headless CLI。
+
+模型使用同一套原始 STL 作为 visual 与 collision。为避免两个完全重合的网格在
+Viewer 中互相闪烁或遮挡，collision 网格保留参与碰撞，但显示为半透明调试层；
+正常观察以 visual 网格为准。场景只 include `models/rebotarm/robot.xml`，没有再叠加
+旧的手写机械臂模型。
 
 ## ROS 2 适配层
 
@@ -191,3 +200,39 @@ Windows 仓库是受版本控制的主副本，Ubuntu VM 是构建与运行环�
 本流程不得设置 `use_hardware:=true`，不得启动 `rebotarmcontroller`，不得打开
 CAN、串口或真实夹爪，不得发送实机使能、回零或轨迹命令。发现任何硬件节点、
 CAN 设备或串口已被占用时，停止联调并确认环境；MuJoCo 测试不需要连接实机。
+
+## 从 URDF 生成本地 MJCF
+
+机器人结构的唯一权威来源是
+`src/rebotarm_moveit_config/config/rebotarm.urdf`，MuJoCo 日常运行读取本地文件
+`src/rebotarm_simulation/models/rebotarm/robot.xml`。后者是自动生成并随仓库提交的
+MJCF，不需要联网加载。当前支持范围固定为 `mujoco>=3.3,<4`。
+
+URDF 或其引用的原始 STL 更新后，在仓库根目录重新生成：
+
+```bash
+rebotarm_urdf_to_mjcf --repo-root .
+```
+
+只检查仓库中的 MJCF 是否仍与 URDF 一致，不写文件：
+
+```bash
+rebotarm_urdf_to_mjcf --repo-root . --check
+```
+
+转换使用 MuJoCo 官方 URDF 解析器。原始 STL 同时保留为视觉网格和碰撞网格，不执行
+VHACD。执行器、双指联动、传感器、末端 site 和接触过滤由确定性后处理补入。不要手工
+修改 `robot.xml`；应修改 URDF 或生成器后重新生成。
+
+Windows 与 Ubuntu VM 同步后，可分别检查受控文件哈希：
+
+```powershell
+Get-FileHash src/rebotarm_simulation/models/rebotarm/robot.xml -Algorithm SHA256
+```
+
+```bash
+sha256sum src/rebotarm_simulation/models/rebotarm/robot.xml
+```
+
+生成、检查和运行均不连接实机，不探测 CAN、串口或机械臂控制器；ROS 2 联调继续明确
+使用 `use_hardware:=false`。

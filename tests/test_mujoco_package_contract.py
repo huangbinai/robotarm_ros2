@@ -66,6 +66,7 @@ def test_setup_installs_mujoco_resources_and_entrypoints() -> None:
         "rebotarm_mujoco_cli",
         "rebotarm_mujoco_viewer",
         "rebotarm_mujoco_node",
+        "rebotarm_urdf_to_mjcf",
     ):
         assert any(script.startswith(f"{required} = ") for script in console_scripts)
 
@@ -117,3 +118,21 @@ def test_package_declares_ros_adapter_dependencies() -> None:
         "trajectory_msgs",
     ):
         assert dependency in exec_dependencies
+
+
+def test_abandoned_vhacd_pipeline_is_not_shipped() -> None:
+    forbidden = (
+        PACKAGE / "config/vhacd_collision.json",
+        PACKAGE / "requirements-vhacd.txt",
+        PACKAGE / "tools/generate_vhacd_collision.py",
+        PACKAGE / "models/rebotarm/collision_sources_repaired",
+        PACKAGE / "models/rebotarm/collision_vhacd",
+        PACKAGE / "models/rebotarm/collision_vhacd_manifest.json",
+    )
+    assert not [path for path in forbidden if path.exists()]
+
+
+def test_authoritative_urdf_has_cross_platform_lf_policy() -> None:
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "src/rebotarm_moveit_config/config/rebotarm.urdf text eol=lf" in attributes
+    assert "src/rebotarm_simulation/models/rebotarm/robot.xml text eol=lf" in attributes

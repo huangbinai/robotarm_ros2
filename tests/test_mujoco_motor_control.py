@@ -1,102 +1,150 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from rebotarm_simulation.motor_control import (
+    GripperMitController,
+    PosVelController,
+    load_motor_control_parameters,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_loads_firmware_parameters_calibration_and_urdf_effort_limits():
-    from rebotarm_simulation.motor_control import load_motor_control_parameters
-
+def test_parameters_come_from_existing_motor_yaml_and_urdf() -> None:
     parameters = load_motor_control_parameters(ROOT)
 
-    assert parameters.rate_hz == 100.0
-    assert parameters.arm[0].pos_kp == 150.0
-    assert parameters.arm[0].vel_kp_raw == 0.0125
-    assert parameters.arm[3].vel_kp_raw == 0.0008
-    assert parameters.arm[0].effort_limit_nm == 27.0
-    assert parameters.arm[3].effort_limit_nm == 7.0
-    assert parameters.arm[0].firmware_to_torque_scale != 1.0
-    assert parameters.gripper.move_kp == 5.0
-    assert parameters.gripper.closing_kp == 0.0
-    assert parameters.gripper.closing_kd == 0.5
-    assert parameters.gripper.hold_kp == 5.0
-    assert parameters.gripper.motor_radians_per_opening_m == pytest.approx(-5.0 / 0.09)
+    assert parameters.control_rate_hz == pytest.approx(100.0)
+    assert parameters.motor_specs["DM4310_V1_2"].peak_torque_nm == pytest.approx(12.5)
+    assert parameters.motor_specs["DM4310_V1_2"].rated_torque_nm == pytest.approx(3.5)
+    assert parameters.arm.motor_models == (
+        "DM4340P", "DM4340P", "DM4340P",
+        "DM4310_V1_2", "DM4310_V1_2", "DM4310_V1_2",
+    )
+    assert parameters.arm.pos_kp == pytest.approx((150, 150, 150, 50, 50, 50))
+    assert parameters.arm.pos_ki == pytest.approx((0.5, 0.5, 0.5, 1, 1, 1))
+    assert parameters.arm.vel_kp == pytest.approx((0.0125, 0.0125, 0.0125, 0.0008, 0.0008, 0.0008))
+    assert parameters.arm.vel_ki == pytest.approx((0.004, 0.004, 0.004, 0.002, 0.002, 0.002))
+    assert parameters.arm.velocity_limit == pytest.approx((5, 5, 5, 3, 3, 3))
+    assert parameters.arm.effort_limit == pytest.approx((27, 27, 27, 12.5, 12.5, 12.5))
+    assert parameters.arm.rated_torque == pytest.approx((9, 9, 9, 3.5, 3.5, 3.5))
+    assert parameters.arm.firmware_to_torque_scale == pytest.approx((200, 200, 200, 500, 500, 500))
+    assert parameters.arm.torque_rate_limit_nm_s == pytest.approx((180, 180, 180, 90, 90, 90))
+    assert parameters.arm.torque_lowpass_alpha == pytest.approx((0.35,) * 6)
+    assert parameters.arm.gravity_compensation_scale == pytest.approx(1.0)
+    assert parameters.gripper.firmware_default_kp == pytest.approx(8.0)
+    assert parameters.gripper.firmware_default_kd == pytest.approx(1.0)
+    assert parameters.gripper.move_kp == pytest.approx(5.0)
+    assert parameters.gripper.closing_kp == pytest.approx(0.0)
+    assert parameters.gripper.hold_kp == pytest.approx(5.0)
+    assert parameters.gripper.motor_model == "DM4310_V1_2"
+    assert parameters.gripper.finger_force_limit_n == pytest.approx(20.0)
+    assert parameters.gripper.sim_force_kp_n_per_m == pytest.approx(250.0)
+    assert parameters.gripper.sim_force_kd_n_s_per_m == pytest.approx(6.0)
 
 
-def test_pos_vel_is_cascaded_pi_saturated_by_velocity_and_urdf_effort():
-    from rebotarm_simulation.motor_control import PosVelController, load_motor_control_parameters
-
-    parameters = load_motor_control_parameters(ROOT)
+def test_pos_vel_controller_uses_cascade_and_effort_scaling() -> None:
+    parameters = load_motor_control_parameters(ROOT).arm
     controller = PosVelController(parameters)
+
     torque = controller.compute(
-        target=np.ones(6), position=np.zeros(6), velocity=np.zeros(6), dt=0.01
+        target=np.array((0.01, 0, 0, 0, 0, 0), dtype=float),
+        position=np.zeros(6),
+        velocity=np.zeros(6),
+        dt=0.01,
     )
 
-    assert torque.shape == (6,)
-    assert np.all(np.abs(controller.target_velocity) <= np.array([5, 5, 5, 3, 3, 3]))
-    assert np.all(np.abs(torque) <= np.array([27, 27, 27, 7, 7, 7]))
+    assert controller.target_velocity[0] == pytest.approx(1.50005)
+    assert torque[0] == pytest.approx(0.63)
+    assert torque[1:] == pytest.approx(np.zeros(5))
 
 
-def test_pos_vel_antiwindup_does_not_accumulate_while_output_is_saturated():
-    from rebotarm_simulation.motor_control import PosVelController, load_motor_control_parameters
+def test_pos_vel_controller_limits_torque_step_and_accepts_feedforward() -> None:
+    parameters = load_motor_control_parameters(ROOT).arm
+    controller = PosVelController(parameters)
 
-    controller = PosVelController(load_motor_control_parameters(ROOT))
-    for _ in range(1000):
-        controller.compute(np.ones(6) * 10, np.zeros(6), np.zeros(6), 0.01)
+    first = controller.compute(
+        target=np.ones(6),
+        position=np.zeros(6),
+        velocity=np.zeros(6),
+        dt=0.01,
+        feedforward=np.array((2.0, 2.0, 2.0, 1.0, 1.0, 1.0)),
+    )
+    second = controller.compute(
+        target=np.ones(6),
+        position=np.zeros(6),
+        velocity=np.zeros(6),
+        dt=0.01,
+        feedforward=np.array((2.0, 2.0, 2.0, 1.0, 1.0, 1.0)),
+    )
 
+    assert first == pytest.approx((0.63, 0.63, 0.63, 0.315, 0.315, 0.315))
+    assert np.all(np.abs(second - first) <= np.array((0.63, 0.63, 0.63, 0.315, 0.315, 0.315)) + 1e-12)
+
+
+def test_pos_vel_controller_saturates_and_reset_clears_integrators() -> None:
+    parameters = load_motor_control_parameters(ROOT).arm
+    controller = PosVelController(parameters)
+    for _ in range(10_000):
+        torque = controller.compute(
+            target=np.full(6, 100.0),
+            position=np.zeros(6),
+            velocity=np.full(6, -100.0),
+            dt=0.01,
+        )
+    assert np.all(np.abs(torque) <= np.asarray(parameters.effort_limit))
     assert np.all(np.isfinite(controller.position_integral))
-    assert np.all(np.abs(controller.position_integral) <= controller.position_integral_limit)
-    assert np.all(np.abs(controller.velocity_integral) <= controller.velocity_integral_limit)
+    assert np.all(np.isfinite(controller.velocity_integral))
+
+    controller.reset()
+    assert controller.position_integral == pytest.approx(np.zeros(6))
+    assert controller.velocity_integral == pytest.approx(np.zeros(6))
 
 
-@pytest.mark.parametrize(
-    ("mode", "kp", "kd"),
-    [("move", 5.0, 1.0), ("closing", 0.0, 0.5), ("hold", 5.0, 1.0)],
-)
-def test_gripper_uses_hardware_mode_specific_mit_gains(mode, kp, kd):
-    from rebotarm_simulation.motor_control import GripperMitController, load_motor_control_parameters
+def test_gripper_mit_uses_state_gains_and_transmission_conversion() -> None:
+    parameters = load_motor_control_parameters(ROOT).gripper
+    controller = GripperMitController(parameters)
 
-    controller = GripperMitController(load_motor_control_parameters(ROOT))
-    result = controller.compute(
+    command = controller.compute(
         target=0.03,
-        position=0.04,
-        velocity=0.01,
-        mode=mode,
-        feedforward_torque=0.4 if mode != "move" else 0.0,
-    )
-
-    assert result.kp == kp
-    assert result.kd == kd
-    assert abs(result.motor_torque_nm) <= 1.5
-    assert result.opening_force_n == pytest.approx(
-        result.motor_torque_nm
-        * controller.parameters.motor_radians_per_opening_m
-        * controller.parameters.transmission_efficiency
-    )
-
-
-def test_gripper_clips_displacement_and_feedforward_torque_safely():
-    from rebotarm_simulation.motor_control import GripperMitController, load_motor_control_parameters
-
-    controller = GripperMitController(load_motor_control_parameters(ROOT))
-    result = controller.compute(
-        target=1.0,
-        position=0.0,
+        position=0.02,
         velocity=0.0,
-        mode="closing",
-        feedforward_torque=100.0,
+        mode="move",
     )
 
-    assert result.target_displacement_m == 0.09
-    assert result.motor_torque_nm == 1.5
+    assert command.kp == pytest.approx(5.0)
+    assert command.kd == pytest.approx(1.0)
+    assert command.motor_target_rad == pytest.approx(-1.6666666667)
+    assert command.motor_torque_nm == pytest.approx(-1.5)
+    assert command.finger_force_n == pytest.approx(66.6666666667)
 
 
-def test_rejects_unknown_gripper_mode():
-    from rebotarm_simulation.motor_control import GripperMitController, load_motor_control_parameters
+def test_gripper_mit_supports_closing_and_hold_modes() -> None:
+    parameters = load_motor_control_parameters(ROOT).gripper
+    controller = GripperMitController(parameters)
 
-    controller = GripperMitController(load_motor_control_parameters(ROOT))
-    with pytest.raises(ValueError, match="unsupported gripper mode"):
-        controller.compute(0.0, 0.0, 0.0, mode="position")
+    closing = controller.compute(
+        target=0.0,
+        position=0.02,
+        velocity=-0.01,
+        mode="closing",
+        feedforward_torque=0.3,
+    )
+    hold = controller.compute(
+        target=0.0,
+        position=0.02,
+        velocity=0.0,
+        mode="hold",
+        feedforward_torque=0.3,
+    )
+
+    assert closing.kp == pytest.approx(0.0)
+    assert closing.kd == pytest.approx(0.5)
+    assert closing.motor_torque_nm == pytest.approx(0.0222222222)
+    assert hold.kp == pytest.approx(5.0)
+    assert hold.kd == pytest.approx(1.0)
+    assert hold.motor_torque_nm == pytest.approx(1.5)

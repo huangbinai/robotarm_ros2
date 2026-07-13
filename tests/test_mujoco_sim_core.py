@@ -148,6 +148,65 @@ def test_reset_is_deterministic_and_returns_finite_state(runtime_sim) -> None:
     )
 
 
+def test_reset_home_uses_the_scene_home_keyframe(runtime_sim) -> None:
+    state = runtime_sim.reset_home()
+
+    assert state.joint_positions == pytest.approx(
+        (0.0, -0.8, -1.0, 0.3, 0.0, 0.0, 0.03, -0.03)
+    )
+    assert state.object_poses["test_cube"][:3] == pytest.approx((0.28, 0.0, 0.04))
+
+
+def test_control_modes_switch_between_gravity_hold_and_pos_vel(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    assert runtime_sim.set_control_mode("gravity_comp") == "gravity_comp"
+    assert runtime_sim.control_mode == "gravity_comp"
+    before = runtime_sim.get_state().joint_positions[:6]
+    runtime_sim.step(50)
+    after = runtime_sim.get_state().joint_positions[:6]
+    assert after == pytest.approx(before, abs=1e-3)
+
+    assert runtime_sim.set_control_mode("hold") == "hold"
+    assert runtime_sim.control_mode == "hold"
+    runtime_sim.set_joint_position_targets((0.05, -0.85, -1.05, 0.25, 0.0, 0.0))
+    assert runtime_sim.control_mode == "pos_vel"
+    with pytest.raises(ValueError):
+        runtime_sim.set_control_mode("unknown")
+
+
+def test_home_pose_stays_stable_under_motor_control(runtime_sim) -> None:
+    state = runtime_sim.reset_home()
+    target = np.asarray(runtime_sim.control_targets[:6])
+    max_error = 0.0
+    max_speed = 0.0
+
+    for _ in range(1000):
+        state = runtime_sim.step()
+        position = np.asarray(state.joint_positions[:6])
+        velocity = np.asarray(state.joint_velocities[:6])
+        max_error = max(max_error, float(np.max(np.abs(position - target))))
+        max_speed = max(max_speed, float(np.max(np.abs(velocity))))
+
+    assert max_error < 0.005
+    assert max_speed < 0.02
+    assert max(abs(force) for force in state.actuator_forces[:6]) < 9.0
+
+
+def test_small_joint_step_settles_under_motor_control(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    target = np.asarray((0.05, -0.85, -1.05, 0.25, 0.0, 0.0))
+    runtime_sim.set_joint_position_targets(target)
+    max_speed = 0.0
+
+    for _ in range(3000):
+        state = runtime_sim.step()
+        max_speed = max(max_speed, float(np.max(np.abs(state.joint_velocities[:6]))))
+
+    final_error = np.max(np.abs(np.asarray(state.joint_positions[:6]) - target))
+    assert final_error < 0.01
+    assert max_speed < 1.0
+
+
 def test_end_effector_orientation_comes_from_site_frame_in_xyzw_order(tmp_path: Path) -> None:
     mujoco = pytest.importorskip("mujoco")
     from rebotarm_simulation.mujoco_sim import RebotArmMujoco
@@ -200,12 +259,40 @@ def test_gripper_width_uses_equal_and_opposite_joint_targets(runtime_sim) -> Non
     assert runtime_sim.control_targets[-2:] == pytest.approx((0.045, -0.045))
     runtime_sim.step(50)
     state = runtime_sim.get_state()
-    assert state.gripper_width == pytest.approx(
-        state.joint_positions[-2] - state.joint_positions[-1]
-    )
+    assert 0.0 <= state.gripper_width <= 0.09
     assert runtime_sim.set_gripper_width(-1.0) == pytest.approx(0.0)
     with pytest.raises(ValueError):
         runtime_sim.set_gripper_width(float("nan"))
+
+
+def test_gripper_motor_control_is_clamped_before_viewer_exposes_ctrl(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.set_gripper_width(0.09)
+    model, data = runtime_sim._unsafe_viewer_handles()
+
+    runtime_sim.step()
+
+    for actuator_id in range(model.nu - 2, model.nu):
+        lower, upper = model.actuator_ctrlrange[actuator_id]
+        assert lower <= data.ctrl[actuator_id] <= upper
+    assert 1.0 < data.ctrl[-2] <= 20.0
+    assert data.ctrl[-1] == pytest.approx(-data.ctrl[-2])
+
+
+def test_gripper_opening_force_does_not_flip_sign_while_below_target(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.set_gripper_width(0.09)
+    _, data = runtime_sim._unsafe_viewer_handles()
+
+    left_forces = []
+    widths = []
+    for _ in range(200):
+        state = runtime_sim.step()
+        left_forces.append(float(data.ctrl[-2]))
+        widths.append(float(state.gripper_width))
+
+    assert max(widths) < 0.09
+    assert min(left_forces) >= 0.0
 
 
 @pytest.mark.parametrize("steps", [0, -1, 1.5, True])

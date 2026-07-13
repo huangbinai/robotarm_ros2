@@ -100,14 +100,14 @@
     <joint name="finger_coupling" joint1="right_finger_joint" joint2="left_finger_joint" polycoef="0 -1 0 0 0" />
   </equality>
   <actuator>
-    <motor name="joint1_position" joint="joint1" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
-    <motor name="joint2_position" joint="joint2" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
-    <motor name="joint3_position" joint="joint3" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
-    <motor name="joint4_position" joint="joint4" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
-    <motor name="joint5_position" joint="joint5" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
-    <motor name="joint6_position" joint="joint6" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
-    <motor name="left_finger_position" joint="left_finger_joint" gear="1" ctrlrange="-1.0 1.0" ctrllimited="true" forcelimited="true" forcerange="-1.0 1.0" />
-    <motor name="right_finger_position" joint="right_finger_joint" gear="1" ctrlrange="-1.0 1.0" ctrllimited="true" forcelimited="true" forcerange="-1.0 1.0" />
+    <motor name="joint1_torque" joint="joint1" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
+    <motor name="joint2_torque" joint="joint2" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
+    <motor name="joint3_torque" joint="joint3" gear="1" ctrlrange="-27 27" ctrllimited="true" forcelimited="true" forcerange="-27 27" />
+    <motor name="joint4_torque" joint="joint4" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
+    <motor name="joint5_torque" joint="joint5" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
+    <motor name="joint6_torque" joint="joint6" gear="1" ctrlrange="-12.5 12.5" ctrllimited="true" forcelimited="true" forcerange="-12.5 12.5" />
+    <motor name="left_finger_force" joint="left_finger_joint" gear="1" ctrlrange="-1.0 1.0" ctrllimited="true" forcelimited="true" forcerange="-1.0 1.0" />
+    <motor name="right_finger_force" joint="right_finger_joint" gear="1" ctrlrange="-1.0 1.0" ctrllimited="true" forcelimited="true" forcerange="-1.0 1.0" />
   </actuator>
   <sensor>
     <jointpos name="joint1_pos" joint="joint1" />
@@ -126,14 +126,14 @@
     <jointvel name="left_finger_vel" joint="left_finger_joint" />
     <jointpos name="right_finger_pos" joint="right_finger_joint" />
     <jointvel name="right_finger_vel" joint="right_finger_joint" />
-    <actuatorfrc name="joint1_force" actuator="joint1_position" />
-    <actuatorfrc name="joint2_force" actuator="joint2_position" />
-    <actuatorfrc name="joint3_force" actuator="joint3_position" />
-    <actuatorfrc name="joint4_force" actuator="joint4_position" />
-    <actuatorfrc name="joint5_force" actuator="joint5_position" />
-    <actuatorfrc name="joint6_force" actuator="joint6_position" />
-    <actuatorfrc name="left_finger_force" actuator="left_finger_position" />
-    <actuatorfrc name="right_finger_force" actuator="right_finger_position" />
+    <actuatorfrc name="joint1_force" actuator="joint1_torque" />
+    <actuatorfrc name="joint2_force" actuator="joint2_torque" />
+    <actuatorfrc name="joint3_force" actuator="joint3_torque" />
+    <actuatorfrc name="joint4_force" actuator="joint4_torque" />
+    <actuatorfrc name="joint5_force" actuator="joint5_torque" />
+    <actuatorfrc name="joint6_force" actuator="joint6_torque" />
+    <actuatorfrc name="left_finger_force" actuator="left_finger_force" />
+    <actuatorfrc name="right_finger_force" actuator="right_finger_force" />
     <framepos name="ee_position" objtype="site" objname="ee_site" />
     <framequat name="ee_orientation" objtype="site" objname="ee_site" />
   </sensor>

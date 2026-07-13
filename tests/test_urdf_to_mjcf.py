@@ -89,6 +89,11 @@ def test_generated_model_adds_mujoco_control_and_observation_contract() -> None:
     ]
     actuators = root.findall("actuator/motor")
     assert [actuator.attrib["joint"] for actuator in actuators] == joints
+    assert [actuator.attrib["name"] for actuator in actuators] == [
+        "joint1_torque", "joint2_torque", "joint3_torque",
+        "joint4_torque", "joint5_torque", "joint6_torque",
+        "left_finger_force", "right_finger_force",
+    ]
     assert all(actuator.attrib["ctrllimited"] == "true" for actuator in actuators)
     assert all(actuator.attrib["forcelimited"] == "true" for actuator in actuators)
     dynamics = {joint.attrib["name"]: joint for joint in root.findall("worldbody//joint")}

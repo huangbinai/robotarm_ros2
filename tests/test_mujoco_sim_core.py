@@ -157,6 +157,23 @@ def test_reset_home_uses_the_scene_home_keyframe(runtime_sim) -> None:
     assert state.object_poses["test_cube"][:3] == pytest.approx((0.28, 0.0, 0.04))
 
 
+def test_control_modes_switch_between_gravity_hold_and_pos_vel(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    assert runtime_sim.set_control_mode("gravity_comp") == "gravity_comp"
+    assert runtime_sim.control_mode == "gravity_comp"
+    before = runtime_sim.get_state().joint_positions[:6]
+    runtime_sim.step(50)
+    after = runtime_sim.get_state().joint_positions[:6]
+    assert after == pytest.approx(before, abs=1e-3)
+
+    assert runtime_sim.set_control_mode("hold") == "hold"
+    assert runtime_sim.control_mode == "hold"
+    runtime_sim.set_joint_position_targets((0.05, -0.85, -1.05, 0.25, 0.0, 0.0))
+    assert runtime_sim.control_mode == "pos_vel"
+    with pytest.raises(ValueError):
+        runtime_sim.set_control_mode("unknown")
+
+
 def test_home_pose_stays_stable_under_motor_control(runtime_sim) -> None:
     state = runtime_sim.reset_home()
     target = np.asarray(runtime_sim.control_targets[:6])

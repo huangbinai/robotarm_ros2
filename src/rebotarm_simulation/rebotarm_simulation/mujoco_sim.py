@@ -14,11 +14,13 @@ import numpy as np
 from .motor_control import GripperMitController, PosVelController, load_motor_control_parameters
 from .mujoco_types import ContactInfo, SavedSimulationState, SimulationState
 from .sim_gripper import gripper_joint_positions_for_width
+from .urdf_to_mjcf import actuator_name_for_joint
 
 
 ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
 FINGER_JOINT_NAMES = ("left_finger_joint", "right_finger_joint")
 JOINT_NAMES = ARM_JOINT_NAMES + FINGER_JOINT_NAMES
+CONTROL_MODES = ("gravity_comp", "hold", "pos_vel")
 
 
 def _default_scene_path() -> Path:
@@ -74,10 +76,11 @@ class RebotArmMujoco:
         )
         self._control_phase = 0
         self._position_targets = np.zeros(len(JOINT_NAMES), dtype=float)
+        self._control_mode = "pos_vel"
 
         self._joint_ids = tuple(self._name_id(self._mj.mjtObj.mjOBJ_JOINT, name) for name in JOINT_NAMES)
         self._actuator_ids = tuple(
-            self._name_id(self._mj.mjtObj.mjOBJ_ACTUATOR, f"{name.removesuffix('_joint')}_position")
+            self._name_id(self._mj.mjtObj.mjOBJ_ACTUATOR, actuator_name_for_joint(name))
             for name in JOINT_NAMES
         )
         self._ee_site_id = self._name_id(self._mj.mjtObj.mjOBJ_SITE, "ee_site")
@@ -118,6 +121,24 @@ class RebotArmMujoco:
     def control_targets(self) -> tuple[float, ...]:
         self._ensure_open()
         return tuple(float(value) for value in self._position_targets)
+
+    @property
+    def control_mode(self) -> str:
+        self._ensure_open()
+        return self._control_mode
+
+    def set_control_mode(self, mode: str) -> str:
+        self._ensure_open()
+        mode = str(mode)
+        if mode not in CONTROL_MODES:
+            raise ValueError(f"control mode must be one of {CONTROL_MODES}")
+        if mode == "hold":
+            self._sync_arm_targets_to_current_position()
+        if mode in ("gravity_comp", "hold"):
+            self._arm_controller.reset()
+        self._control_mode = mode
+        self._apply_motor_control()
+        return self._control_mode
 
     def _name_id(self, object_type, name: str) -> int:
         identifier = int(self._mj.mj_name2id(self._model, object_type, name))
@@ -211,6 +232,7 @@ class RebotArmMujoco:
             value = min(max(current[index], lower), upper)
             self._position_targets[index] = value
             reached.append(value)
+        self._control_mode = "pos_vel"
         return tuple(reached)
 
     def set_gripper_width(self, width: float) -> float:
@@ -243,13 +265,30 @@ class RebotArmMujoco:
     def _apply_motor_control(self) -> None:
         qpos_addresses = [int(self._model.jnt_qposadr[joint_id]) for joint_id in self._joint_ids[:6]]
         qvel_addresses = [int(self._model.jnt_dofadr[joint_id]) for joint_id in self._joint_ids[:6]]
-        arm_torque = self._arm_controller.compute(
-            target=self._position_targets[:6],
-            position=np.asarray([self._data.qpos[address] for address in qpos_addresses]),
-            velocity=np.asarray([self._data.qvel[address] for address in qvel_addresses]),
-            dt=1.0 / self._motor_parameters.control_rate_hz,
-            feedforward=self._gravity_compensation_torque(qvel_addresses),
-        )
+        position = np.asarray([self._data.qpos[address] for address in qpos_addresses], dtype=float)
+        velocity = np.asarray([self._data.qvel[address] for address in qvel_addresses], dtype=float)
+        gravity = self._gravity_compensation_torque(qvel_addresses)
+        if self._control_mode == "gravity_comp":
+            arm_torque = gravity
+            self._arm_controller.applied_torque[:] = arm_torque
+        elif self._control_mode == "hold":
+            kp = np.asarray((12.0, 12.0, 12.0, 8.0, 8.0, 4.0), dtype=float)
+            kd = np.asarray((1.2, 1.2, 1.2, 0.8, 0.8, 0.4), dtype=float)
+            effort = np.asarray(self._motor_parameters.arm.effort_limit, dtype=float)
+            arm_torque = np.clip(
+                gravity + kp * (self._position_targets[:6] - position) - kd * velocity,
+                -effort,
+                effort,
+            )
+            self._arm_controller.applied_torque[:] = arm_torque
+        else:
+            arm_torque = self._arm_controller.compute(
+                target=self._position_targets[:6],
+                position=position,
+                velocity=velocity,
+                dt=1.0 / self._motor_parameters.control_rate_hz,
+                feedforward=gravity,
+            )
         for actuator_id, torque in zip(self._actuator_ids[:6], arm_torque):
             self._data.ctrl[actuator_id] = torque
 
@@ -269,6 +308,10 @@ class RebotArmMujoco:
     def _seed_arm_torque_from_gravity(self) -> None:
         qvel_addresses = [int(self._model.jnt_dofadr[joint_id]) for joint_id in self._joint_ids[:6]]
         self._arm_controller.applied_torque[:] = self._gravity_compensation_torque(qvel_addresses)
+
+    def _sync_arm_targets_to_current_position(self) -> None:
+        for index, joint_id in enumerate(self._joint_ids[:6]):
+            self._position_targets[index] = float(self._data.qpos[int(self._model.jnt_qposadr[joint_id])])
 
     def _gravity_compensation_torque(self, qvel_addresses: Sequence[int]) -> np.ndarray:
         scale = float(self._motor_parameters.arm.gravity_compensation_scale)
@@ -345,6 +388,7 @@ class RebotArmMujoco:
             velocity_integral=tuple(float(value) for value in self._arm_controller.velocity_integral),
             applied_torque=tuple(float(value) for value in self._arm_controller.applied_torque),
             control_phase=self._control_phase,
+            control_mode=self._control_mode,
         )
 
     def restore_state(self, state: SavedSimulationState) -> SimulationState:
@@ -361,6 +405,7 @@ class RebotArmMujoco:
             and len(state.position_integral) == len(ARM_JOINT_NAMES)
             and len(state.velocity_integral) == len(ARM_JOINT_NAMES)
             and len(state.applied_torque) == len(ARM_JOINT_NAMES)
+            and state.control_mode in CONTROL_MODES
         )
         if not compatible:
             raise ValueError("saved state must belong to the same MuJoCo model instance")
@@ -372,6 +417,7 @@ class RebotArmMujoco:
         self._arm_controller.velocity_integral[:] = np.asarray(state.velocity_integral, dtype=float)
         self._arm_controller.applied_torque[:] = np.asarray(state.applied_torque, dtype=float)
         self._control_phase = int(state.control_phase) % self._control_steps_per_update
+        self._control_mode = state.control_mode
         self._mj.mj_forward(self._model, self._data)
         return self.get_state()
 

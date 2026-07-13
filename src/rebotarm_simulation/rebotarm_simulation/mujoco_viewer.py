@@ -12,7 +12,7 @@ from typing import Callable, Sequence
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 
-HELP = "[ / ] select | 1-6 select | J / K jog | C / O gripper | Space pause | . step | R reset | Q quit"
+HELP = "[ / ] select | 1-6 select | J/K jog | C/O gripper | G gravity | H hold | P pos | R zero | T home | Q quit"
 _RETAINED_UNSAFE_VIEWERS = []
 
 
@@ -26,6 +26,8 @@ class ViewerControlState:
     gripper_delta: int = 0
     single_step: bool = False
     reset: bool = False
+    home: bool = False
+    mode: str | None = None
     quit: bool = False
 
 
@@ -51,6 +53,14 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
         return replace(state, single_step=True)
     if key == "r":
         return replace(state, reset=True)
+    if key == "t":
+        return replace(state, home=True)
+    if key == "g":
+        return replace(state, mode="gravity_comp")
+    if key == "h":
+        return replace(state, mode="hold")
+    if key == "p":
+        return replace(state, mode="pos_vel")
     if key in ("q", "\x1b"):
         return replace(state, quit=True)
     return state
@@ -109,11 +119,16 @@ def apply_pending_commands(
     joint_step: float,
     gripper_step: float,
 ) -> ViewerControlState:
-    if state.reset:
+    if state.reset or state.home:
         pending_joint_delta = state.joint_delta
         pending_gripper_delta = state.gripper_delta
         quit_requested = state.quit
-        sim.reset_home()
+        if state.home:
+            sim.reset_home()
+        else:
+            sim.reset()
+        if hasattr(sim, "set_control_mode"):
+            sim.set_control_mode("gravity_comp")
         state = _state_from_sim(
             sim, paused=state.paused, selected_joint=state.selected_joint
         )
@@ -123,6 +138,9 @@ def apply_pending_commands(
             gripper_delta=pending_gripper_delta,
             quit=quit_requested,
         )
+
+    if state.mode is not None and hasattr(sim, "set_control_mode"):
+        sim.set_control_mode(state.mode)
 
     targets = state.joint_targets
     if state.joint_delta:
@@ -141,6 +159,8 @@ def apply_pending_commands(
         joint_delta=0,
         gripper_delta=0,
         reset=False,
+        home=False,
+        mode=None,
     )
 
 
@@ -149,7 +169,7 @@ def overlay_text(state: ViewerControlState) -> str:
     run_state = "paused" if state.paused else "running"
     return (
         f"selected: {name}  target: {state.joint_targets[state.selected_joint]:.3f} rad\n"
-        f"gripper: {state.gripper_width:.3f} m  state: {run_state}\n{HELP}"
+        f"gripper target: {state.gripper_width:.3f} m  state: {run_state}\n{HELP}"
     )
 
 
@@ -246,7 +266,9 @@ def main(
     viewer = None
     model = data = None
     try:
-        sim.reset_home()
+        sim.reset()
+        if hasattr(sim, "set_control_mode"):
+            sim.set_control_mode("gravity_comp")
         if launch_passive is None:
             launch_passive = importlib.import_module("mujoco.viewer").launch_passive
 

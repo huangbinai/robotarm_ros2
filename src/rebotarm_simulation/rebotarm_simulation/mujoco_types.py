@@ -103,6 +103,7 @@ class SavedSimulationState:
     velocity_integral: tuple[float, ...] = ()
     applied_torque: tuple[float, ...] = ()
     control_phase: int = 0
+    control_mode: str = "pos_vel"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_dimensions", tuple(int(value) for value in self.model_dimensions))
@@ -112,3 +113,4 @@ class SavedSimulationState:
         object.__setattr__(self, "velocity_integral", _float_tuple(self.velocity_integral, label="velocity_integral"))
         object.__setattr__(self, "applied_torque", _float_tuple(self.applied_torque, label="applied_torque"))
         object.__setattr__(self, "control_phase", int(self.control_phase))
+        object.__setattr__(self, "control_mode", str(self.control_mode))

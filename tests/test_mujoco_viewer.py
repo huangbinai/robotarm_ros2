@@ -25,6 +25,7 @@ class FakeSim:
         self.targets = [0.0] * 6
         self.width = 0.05
         self.time = 0.0
+        self.control_mode = "pos_vel"
         self.calls = []
         self.call_threads = []
         self.closed = False
@@ -56,6 +57,11 @@ class FakeSim:
         self.calls.append(("gripper", width))
         self.width = min(0.09, max(0.0, float(width)))
         return self.width
+
+    def set_control_mode(self, mode):
+        self.calls.append(("mode", mode))
+        self.control_mode = mode
+        return mode
 
     def step(self):
         self.call_threads.append(threading.get_ident())
@@ -201,7 +207,7 @@ def test_interleaved_open_reset_close_uses_reset_width_before_close():
     state = mujoco_viewer.process_key_events(
         sim, events, mujoco_viewer.ViewerControlState(gripper_width=0.05), 0.05, 0.005
     )
-    assert sim.calls[-2][0] == "reset_home"
+    assert ("reset",) in sim.calls
     assert sim.calls[-1][0] == "gripper"
     assert sim.calls[-1][1] == pytest.approx(0.085)
     assert state.gripper_width == pytest.approx(0.085)
@@ -277,7 +283,7 @@ def test_reset_preserves_pause_and_resynchronizes_targets():
     state = mujoco_viewer.apply_pending_commands(
         sim, mujoco_viewer.ViewerControlState(paused=True, reset=True), 0.1, 0.01
     )
-    assert ("reset_home",) in sim.calls
+    assert ("reset",) in sim.calls
     assert state.paused is True
     assert state.reset is False
     assert state.gripper_width == 0.09
@@ -288,7 +294,8 @@ def test_reset_then_jog_in_same_event_batch_applies_jog_after_reset():
     sim.targets[0] = 0.8
     state = mujoco_viewer.ViewerControlState(reset=True, joint_delta=2)
     state = mujoco_viewer.apply_pending_commands(sim, state, 0.1, 0.01)
-    assert sim.calls[:2] == [("reset_home",), ("joints", {"joint1": 0.2})]
+    assert sim.calls[0] == ("reset",)
+    assert ("joints", {"joint1": 0.2}) in sim.calls
     assert state.joint_targets[0] == pytest.approx(0.2)
 
 
@@ -300,7 +307,7 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
         paused=True,
     )
     text = mujoco_viewer.overlay_text(state)
-    for expected in ("joint3", "0.250", "0.040", "paused", "[ / ]", "J / K"):
+    for expected in ("joint3", "0.250", "0.040", "paused", "[ / ]", "J/K"):
         assert expected in text
 
 
@@ -350,7 +357,7 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "target", "gripper", "paused", "J / K"):
+    for expected in ("joint1", "target", "gripper", "paused", "J/K"):
         assert expected in output
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True
@@ -473,7 +480,7 @@ def test_runtime_prints_terminal_help_even_when_viewer_is_already_closed():
         status_stream=status,
     ) == 0
     assert "joint1" in status.getvalue()
-    assert "J / K" in status.getvalue()
+    assert "J/K" in status.getvalue()
 
 
 def test_runtime_closes_sim_even_when_viewer_close_raises():

@@ -26,6 +26,12 @@ def _model_directory(repo_root: Path) -> Path:
     return repo_root / "src/rebotarm_simulation/models/rebotarm"
 
 
+def actuator_name_for_joint(joint_name: str) -> str:
+    if joint_name in {f"joint{index}" for index in range(1, 7)}:
+        return f"{joint_name}_torque"
+    return f"{joint_name.removesuffix('_joint')}_force"
+
+
 def stage_urdf(source: Path, repo_root: Path, temporary_dir: Path) -> Path:
     root = ET.parse(source).getroot()
     extension = ET.SubElement(root, "mujoco")
@@ -206,7 +212,7 @@ def _add_actuators(root: ET.Element, urdf_root: ET.Element) -> None:
             actuator,
             "motor",
             {
-                "name": f"{joint_name.removesuffix('_joint')}_position",
+                "name": actuator_name_for_joint(joint_name),
                 "joint": joint_name,
                 "gear": "1",
                 "ctrlrange": f"-{effort} {effort}",
@@ -228,7 +234,7 @@ def _add_sensors(root: ET.Element) -> None:
         ET.SubElement(
             sensor,
             "actuatorfrc",
-            {"name": f"{prefix}_force", "actuator": f"{prefix}_position"},
+            {"name": f"{prefix}_force", "actuator": actuator_name_for_joint(joint_name)},
         )
     ET.SubElement(sensor, "framepos", {"name": "ee_position", "objtype": "site", "objname": "ee_site"})
     ET.SubElement(sensor, "framequat", {"name": "ee_orientation", "objtype": "site", "objname": "ee_site"})

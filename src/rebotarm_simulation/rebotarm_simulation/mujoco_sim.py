@@ -167,6 +167,28 @@ class RebotArmMujoco:
         self._ensure_open()
         return self._randomization_sample
 
+    @property
+    def arm_joint_limits(self) -> tuple[tuple[float, float], ...]:
+        """Return the six arm joint ranges declared by the loaded MJCF."""
+        self._ensure_open()
+        return tuple(
+            tuple(float(value) for value in self._model.jnt_range[joint_id])
+            for joint_id in self._joint_ids[:6]
+        )
+
+    @property
+    def arm_actuator_force_limits(self) -> tuple[float, ...]:
+        """Return symmetric arm actuator limits used for safety validation."""
+        self._ensure_open()
+        limits = []
+        for actuator_id in self._actuator_ids[:6]:
+            if int(self._model.actuator_ctrllimited[actuator_id]):
+                lower, upper = self._model.actuator_ctrlrange[actuator_id]
+                limits.append(max(abs(float(lower)), abs(float(upper))))
+            else:
+                limits.append(math.inf)
+        return tuple(limits)
+
     def randomization_session(self, sample: RandomizationSample):
         from .sim2real.randomization import RandomizationSession
 
@@ -473,6 +495,7 @@ class RebotArmMujoco:
                 geom2=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_GEOM, geom2) or f"geom{geom2}"),
                 position=tuple(float(value) for value in contact.pos),
                 force=float(np.linalg.norm(force[:3])),
+                penetration_depth=max(0.0, -float(contact.dist)),
             ))
         return tuple(contacts)
 

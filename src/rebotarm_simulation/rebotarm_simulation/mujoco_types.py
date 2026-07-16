@@ -75,6 +75,7 @@ class ContactInfo:
     geom2: str
     position: Vector3
     force: float
+    penetration_depth: float = 0.0
 
     def __post_init__(self) -> None:
         names = (self.body1, self.body2, self.geom1, self.geom2)
@@ -89,6 +90,10 @@ class ContactInfo:
         if force < 0.0:
             raise ValueError("contact force must be non-negative")
         object.__setattr__(self, "force", force)
+        penetration_depth = float(self.penetration_depth)
+        if not math.isfinite(penetration_depth) or penetration_depth < 0.0:
+            raise ValueError("contact penetration_depth must be finite and non-negative")
+        object.__setattr__(self, "penetration_depth", penetration_depth)
 
 
 @dataclass(frozen=True)

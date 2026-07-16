@@ -162,6 +162,10 @@ class RebotArmReachEnv:
             max_contact_force=max((float(contact.force) for contact in contacts), default=0.0),
             contact_count=len(contacts),
             source="sim",
+            max_contact_penetration=max(
+                (float(getattr(contact, "penetration_depth", 0.0)) for contact in contacts),
+                default=0.0,
+            ),
         )
 
     def step_done(self, action: Sequence[float]):

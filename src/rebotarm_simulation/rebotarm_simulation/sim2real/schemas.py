@@ -44,6 +44,7 @@ class TrajectorySample:
     max_contact_force: float
     contact_count: int
     source: str
+    max_contact_penetration: float = 0.0
 
     def __post_init__(self) -> None:
         version = int(self.schema_version)
@@ -102,6 +103,12 @@ class TrajectorySample:
             raise ValueError("contact_count must be non-negative")
         object.__setattr__(self, "contact_count", contact_count)
         object.__setattr__(self, "source", source)
+        penetration = _finite_scalar(
+            self.max_contact_penetration, "max_contact_penetration"
+        )
+        if penetration < 0.0:
+            raise ValueError("max_contact_penetration must be non-negative")
+        object.__setattr__(self, "max_contact_penetration", penetration)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -121,6 +128,7 @@ class TrajectorySample:
             "max_contact_force": self.max_contact_force,
             "contact_count": self.contact_count,
             "source": self.source,
+            "max_contact_penetration": self.max_contact_penetration,
         }
 
     @classmethod

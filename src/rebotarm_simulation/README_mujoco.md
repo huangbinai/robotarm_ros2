@@ -1,5 +1,9 @@
 # reBotArm MuJoCo 仿真底座
 
+Sim2Real/Real2Sim 的仿真侧随机化、JSONL 记录、确定性回放、轨迹比较和批量安全
+检查见 [`../../docs/sim2real_workflow_zh.md`](../../docs/sim2real_workflow_zh.md)。该流程
+不连接实机。
+
 本目录提供可独立使用的 MuJoCo 物理仿真核心、桌面 Viewer 和 ROS 2
 适配层。已验证的目标环境是 Ubuntu 24.04、ROS 2 Jazzy、Python 3.12。
 本阶段尚未开始强化学习训练；已提供轻量 Gym 风格 Reach API 和 headless 批量

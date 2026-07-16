@@ -1,5 +1,8 @@
 # reBotArm ROS2 SDK
 
+MuJoCo Sim2Real/Real2Sim 仿真侧命令和验收流程见
+[`docs/sim2real_workflow_zh.md`](docs/sim2real_workflow_zh.md)。
+
 <p align="center">
   <strong>ROS2 Jazzy · 机械臂控制 · 夹爪控制 · JointTrajectory · 自定义单电机调试接口</strong>
 </p>

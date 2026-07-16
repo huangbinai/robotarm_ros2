@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 README = ROOT / "src" / "rebotarm_simulation" / "README_mujoco.md"
 COMMANDS = ROOT / "docs" / "rebotarm_feature_commands.md"
+SIM2REAL = ROOT / "docs" / "sim2real_workflow_zh.md"
 
 
 def _text(path: Path) -> str:
@@ -140,4 +141,25 @@ def test_mujoco_readme_documents_local_urdf_to_mjcf_workflow() -> None:
         "不连接实机",
     )
     for value in required:
+        assert value in text
+
+
+def test_sim2real_documentation_has_complete_no_hardware_workflow() -> None:
+    readme = _text(README)
+    text = _text(SIM2REAL)
+    assert "../../docs/sim2real_workflow_zh.md" in readme
+    for value in (
+        "不连接机械臂实机",
+        "rebotarm_simulation.sim2real_cli rollout",
+        "--randomization-profile training_profile",
+        "--record logs/sim2real/seed-7-reference.jsonl",
+        "rebotarm_simulation.sim2real_cli replay",
+        "rebotarm_simulation.sim2real_cli compare",
+        "rebotarm_simulation.sim2real_cli batch-check",
+        "seed_reproducible",
+        "joint_limit",
+        "actuator_torque",
+        "contact_penetration",
+        "source` 设置为 `real",
+    ):
         assert value in text

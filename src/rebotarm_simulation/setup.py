@@ -47,6 +47,7 @@ setup(
             "rebotarm_mujoco_cli = rebotarm_simulation.mujoco_cli:main",
             "rebotarm_mujoco_viewer = rebotarm_simulation.mujoco_viewer:main",
             "rebotarm_mujoco_node = rebotarm_simulation.mujoco_ros_node:main",
+            "rebotarm_sim2real = rebotarm_simulation.sim2real_cli:main",
             "rebotarm_urdf_to_mjcf = rebotarm_simulation.urdf_to_mjcf:main",
         ],
     },

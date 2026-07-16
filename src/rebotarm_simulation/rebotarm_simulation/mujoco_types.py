@@ -92,6 +92,31 @@ class ContactInfo:
 
 
 @dataclass(frozen=True)
+class RandomizedScene:
+    cube_pose: Pose
+    reach_target_position: Vector3
+    seed: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "cube_pose",
+            _float_tuple(self.cube_pose, length=7, label="cube_pose"),
+        )
+        object.__setattr__(
+            self,
+            "reach_target_position",
+            _float_tuple(
+                self.reach_target_position,
+                length=3,
+                label="reach_target_position",
+            ),
+        )
+        if self.seed is not None:
+            object.__setattr__(self, "seed", int(self.seed))
+
+
+@dataclass(frozen=True)
 class SavedSimulationState:
     model_identity: int
     model_fingerprint: str

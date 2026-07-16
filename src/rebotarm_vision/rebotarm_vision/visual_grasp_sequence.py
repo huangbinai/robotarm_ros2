@@ -43,6 +43,20 @@ class VisualGraspStage:
     detected_jaw_width_m: float = 0.0
 
 
+def append_visual_ready_return_stages(
+    stages: list[VisualGraspStage],
+    *,
+    enabled: bool,
+    place_after_grasp_enabled: bool,
+) -> list[VisualGraspStage]:
+    if not enabled or place_after_grasp_enabled:
+        return stages
+    return stages + [
+        VisualGraspStage(name="plan_visual_ready", kind="trigger"),
+        VisualGraspStage(name="return_visual_ready", kind="trigger"),
+    ]
+
+
 def _clamp(value: float, lower: float, upper: float) -> float:
     return min(max(float(value), float(lower)), float(upper))
 
@@ -129,7 +143,12 @@ def build_visual_grasp_sequence(
             VisualGraspStage(
                 name="safe_retreat",
                 kind="move",
-                pose=build_retreat_pose(lift_pose, config.retreat_policy),
+                pose=build_retreat_pose(
+                    lift_pose,
+                    config.retreat_policy,
+                    pregrasp=pregrasp,
+                    grasp=grasp,
+                ),
             )
         )
     if config.include_safe_home:

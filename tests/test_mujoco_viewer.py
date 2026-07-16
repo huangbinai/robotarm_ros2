@@ -4,6 +4,7 @@ import io
 from queue import SimpleQueue
 import threading
 from types import SimpleNamespace
+from collections.abc import Mapping
 
 import pytest
 
@@ -40,16 +41,23 @@ class FakeSim:
     def get_state(self):
         return SimpleNamespace(
             joint_positions=tuple(self.targets) + (self.width / 2.0, -self.width / 2.0),
+            joint_velocities=(0.01,) * 6 + (0.0, 0.0),
             gripper_width=self.width,
             simulation_time=self.time,
         )
 
+    def get_contacts(self):
+        return (SimpleNamespace(force=2.5), SimpleNamespace(force=0.4))
+
     def set_joint_position_targets(self, targets):
         self.call_threads.append(threading.get_ident())
-        self.calls.append(("joints", dict(targets)))
-        for name, value in targets.items():
-            index = int(name.removeprefix("joint")) - 1
-            self.targets[index] = min(1.0, max(-1.0, float(value)))
+        self.calls.append(("joints", dict(targets) if isinstance(targets, Mapping) else list(targets)))
+        if isinstance(targets, Mapping):
+            for name, value in targets.items():
+                index = int(name.removeprefix("joint")) - 1
+                self.targets[index] = min(1.0, max(-1.0, float(value)))
+        else:
+            self.targets[:] = [min(1.0, max(-1.0, float(value))) for value in targets]
         return tuple(self.targets)
 
     def set_gripper_width(self, width):
@@ -304,16 +312,66 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
         selected_joint=2,
         joint_targets=(0.0, 0.0, 0.25, 0.0, 0.0, 0.0),
         joint_positions=(0.0, 0.0, 0.20, 0.0, 0.0, 0.0),
+        joint_velocities=(0.0, 0.0, 0.03, 0.0, 0.0, 0.0),
         gripper_width=0.04,
+        gripper_actual_width=0.035,
+        max_contact_force=2.5,
+        contact_count=2,
         paused=True,
         active_mode="gravity_comp",
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
-        "gravity_comp", "joint3", "0.200", "0.250", "0.040", "paused",
-        "torque/force", "[ / ]", "hold J/K",
+        "gravity_comp", "joint3", "0.200", "0.030", "0.250", "0.035", "0.040",
+        "contacts: 2", "2.50 N", "paused", "torque/force", "[ / ]", "hold J/K",
     ):
         assert expected in text
+
+
+def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
+    sim = FakeSim()
+    events = SimpleQueue()
+    for line in (
+        "joints 0.1 -0.2 -0.3 0.4 0.5 0.6",
+        "gripper 0.04",
+        "mode hold",
+    ):
+        events.put(line)
+    status = io.StringIO()
+
+    state = mujoco_viewer.process_command_events(
+        sim,
+        events,
+        mujoco_viewer.ViewerControlState(),
+        status,
+    )
+
+    assert sim.targets == pytest.approx([0.1, -0.2, -0.3, 0.4, 0.5, 0.6])
+    assert sim.width == pytest.approx(0.04)
+    assert sim.control_mode == "hold"
+    assert state.joint_targets == pytest.approx(tuple(sim.targets))
+    assert state.gripper_width == pytest.approx(0.04)
+    assert state.active_mode == "hold"
+    assert status.getvalue().count("command result:") == 3
+
+
+def test_command_events_report_errors_and_keep_running():
+    sim = FakeSim()
+    events = SimpleQueue()
+    events.put("joints 1 2")
+    events.put("joint joint1 0.2")
+    status = io.StringIO()
+
+    state = mujoco_viewer.process_command_events(
+        sim,
+        events,
+        mujoco_viewer.ViewerControlState(),
+        status,
+    )
+
+    assert "command error: usage: joints" in status.getvalue()
+    assert sim.targets[0] == pytest.approx(0.2)
+    assert state.quit is False
 
 
 def test_continuous_jog_advances_target_until_hold_window_expires():
@@ -354,6 +412,7 @@ def test_parser_accepts_model_and_positive_steps():
     assert (args.model, args.joint_step, args.gripper_step, args.duration) == (
         "scene.xml", 0.2, 0.01, 1.5,
     )
+    assert args.no_command_input is False
     for flag in ("--joint-step", "--gripper-step", "--duration"):
         with pytest.raises(SystemExit):
             mujoco_viewer.build_parser().parse_args([flag, "0"])
@@ -390,9 +449,51 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "target", "gripper", "paused", "hold J/K", "torque/force"):
+    for expected in ("joint1", "dq", "target", "gripper", "contacts", "paused", "hold J/K", "torque/force"):
         assert expected in output
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
+    assert holder["viewer"].closed is True
+    assert sim.closed is True
+
+
+def test_runtime_accepts_terminal_joint_commands_while_viewer_runs():
+    sim = FakeSim("scene.xml")
+    holder = {}
+
+    class ThreeCycleViewer:
+        def __init__(self, key_callback):
+            self.key_callback = key_callback
+            self.cycles = 0
+            self.closed = False
+
+        def is_running(self):
+            self.cycles += 1
+            return self.cycles <= 3
+
+        def sync(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    def launch(model, data, *, key_callback):
+        holder["viewer"] = ThreeCycleViewer(key_callback)
+        return holder["viewer"]
+
+    status = io.StringIO()
+    code = mujoco_viewer.main(
+        [],
+        sim_factory=lambda _: sim,
+        launch_passive=launch,
+        sleep=lambda _: None,
+        status_stream=status,
+        command_stream=io.StringIO("joints 0.1 -0.2 -0.3 0.4 0.5 0.6\ngripper 0.04\n"),
+    )
+
+    assert code == 0
+    assert sim.targets == pytest.approx([0.1, -0.2, -0.3, 0.4, 0.5, 0.6])
+    assert sim.width == pytest.approx(0.04)
+    assert "command result:" in status.getvalue()
     assert holder["viewer"].closed is True
     assert sim.closed is True
 

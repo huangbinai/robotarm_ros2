@@ -248,6 +248,21 @@ def test_visual_grasp_system_can_move_to_visual_ready_on_start():
     assert 'self.declare_parameter("startup_delay_sec", 0.0)' in node_text
     assert 'self.declare_parameter("joint_positions", [0.0, -0.1, -0.2, 0.2, 0.0, 0.0])' in node_text
     assert 'f"/{namespace}/visual_ready/move"' in node_text
+    assert "from rebotarm_motion.moveit_planner import MoveItMotionPlanner" in node_text
+    assert 'f"/{namespace}/visual_ready/plan"' in node_text
+    assert 'self.declare_parameter("return_start_tolerance_rad", 0.05)' in node_text
+    assert 'self.declare_parameter("velocity_scaling", 0.08)' in node_text
+    assert 'self.declare_parameter("acceleration_scaling", 0.05)' in node_text
+    assert "plan_joint_positions(" in node_text
+    assert "cached visual_ready plan start mismatch" in node_text
+    assert "visual_ready planning failed" in node_text
+    assert "MultiThreadedExecutor" in node_text
+    assert "ReentrantCallbackGroup" in node_text
+    assert "self._callback_group = ReentrantCallbackGroup()" in node_text
+    assert "callback_group=self._callback_group" in node_text
+    assert "target=executor.spin" in node_text
+    assert "rclpy.spin_until_future_complete" not in node_text
+    assert "node.move_to_visual_ready(use_planned=False)" in node_text
     assert "create_service(" in node_text
     assert "Trigger," in node_text
     assert "ARM_JOINT_NAMES" in node_text
@@ -344,7 +359,7 @@ def test_real_perception_sim_execution_launch_uses_independent_sim_namespace():
     assert '"candidate_max_joint6_delta_rad": "0.0"' in launch_text
     assert '"tcp_offset_xyz": "[0.0, 0.0, 0.0]"' in launch_text
     assert '"gripper_grasp_enabled": "false"' in launch_text
-    assert '"grasp_verification_enabled": "false"' in launch_text
+    assert "grasp_verification_enabled" not in launch_text
     assert '"moveit_planning_time": "8.0"' in launch_text
     assert "reBotArmController" not in launch_text
 
@@ -620,19 +635,26 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
 
     assert "GraspCandidateArray, GraspPlan" in executor_text
     assert "from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices" in executor_text
-    assert "from .grasp_verification_policy import" in executor_text
+    assert "grasp_verification_policy" not in executor_text
     assert "from .place_task_policy import PlaceTaskConfig, build_place_stages" in executor_text
     assert "from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage" in executor_text
     assert 'self.declare_parameter("candidates_topic", "/grasp/filtered_candidates")' in executor_text
     assert 'self.declare_parameter("auto_retry_enabled", False)' in executor_text
-    assert 'self.declare_parameter("grasp_verification_enabled", True)' in executor_text
+    assert 'self.declare_parameter("dynamic_retreat_enabled", True)' in executor_text
+    assert "visual_lift_check_enabled" not in executor_text
+    assert "grasp_verification_enabled" not in executor_text
     assert 'self.declare_parameter("place_after_grasp_enabled", False)' in executor_text
+    assert 'self.declare_parameter("return_visual_ready_after_grasp", True)' in executor_text
+    assert 'f"/{self._arm_namespace}/visual_ready/plan"' in executor_text
+    assert 'f"/{self._arm_namespace}/visual_ready/move"' in executor_text
+    assert 'stage.name == "plan_visual_ready"' in executor_text
+    assert 'stage.name == "return_visual_ready"' in executor_text
     assert 'self.declare_parameter("trajectory_precheck_enabled", True)' in executor_text
     assert "def _candidate_plans_for_attempts" in executor_text
     assert "attempts: list[tuple[int, GraspPlan]] = [(-1, deepcopy(self._latest_plan))]" in executor_text
     assert "if index == int(candidates.best_index):" in executor_text
     assert "continue" in executor_text
-    assert "def _verify_after_lift" in executor_text
+    assert "def _verify_after_lift" not in executor_text
     assert "def _append_place_stages" in executor_text
     assert "def _precheck_execute_pose" in executor_text
     assert 'name="retry_safe_retreat"' in executor_text
@@ -642,12 +664,17 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert '"close_gripper"' not in recovery_text
     assert '"lift"' not in recovery_text
     assert 'DeclareLaunchArgument("auto_retry_enabled", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("dynamic_retreat_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("place_after_grasp_enabled", default_value="false")' in launch_text
+    assert 'DeclareLaunchArgument("return_visual_ready_after_grasp", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("trajectory_precheck_enabled", default_value="true")' in launch_text
     assert '"candidates_topic": filtered_candidates_topic' in launch_text
     assert '"auto_retry_enabled": auto_retry_enabled' in launch_text
-    assert '"grasp_verification_enabled": grasp_verification_enabled' in launch_text
+    assert '"dynamic_retreat_enabled": dynamic_retreat_enabled' in launch_text
+    assert "visual_lift_check_enabled" not in launch_text
+    assert "grasp_verification_enabled" not in launch_text
     assert '"place_after_grasp_enabled": place_after_grasp_enabled' in launch_text
+    assert '"return_visual_ready_after_grasp": return_visual_ready_after_grasp' in launch_text
     assert '"trajectory_precheck_enabled": trajectory_precheck_enabled' in launch_text
 
 

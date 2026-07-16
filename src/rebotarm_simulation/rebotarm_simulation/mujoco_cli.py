@@ -8,7 +8,8 @@ import math
 from pathlib import Path
 import sys
 
-from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
+from .mujoco_commands import dispatch_sim_command
+from .mujoco_sim import RebotArmMujoco
 
 
 def _nonnegative_finite(value: str) -> float:
@@ -58,62 +59,8 @@ def _emit(value, stdout) -> None:
 
 
 def dispatch_command(sim, line: str, *, paused: bool = False):
-    parts = line.split()
-    if not parts:
-        return paused, None, False
-    command, arguments = parts[0].lower(), parts[1:]
-    if command == "quit":
-        if arguments:
-            raise ValueError("usage: quit")
-        return paused, "bye", True
-    if command == "state":
-        if arguments:
-            raise ValueError("usage: state")
-        return paused, sim.get_state(), False
-    if command == "joint":
-        if len(arguments) != 2 or arguments[0] not in ARM_JOINT_NAMES:
-            raise ValueError("usage: joint NAME VALUE")
-        return paused, sim.set_joint_position_targets({arguments[0]: float(arguments[1])}), False
-    if command == "joints":
-        if len(arguments) != 6:
-            raise ValueError("usage: joints J1 J2 J3 J4 J5 J6")
-        values = [float(value) for value in arguments]
-        return paused, sim.set_joint_position_targets(values), False
-    if command == "jog":
-        if len(arguments) != 2 or arguments[0] not in ARM_JOINT_NAMES:
-            raise ValueError("usage: jog NAME DELTA")
-        state = sim.get_state()
-        index = ARM_JOINT_NAMES.index(arguments[0])
-        target = float(state.joint_positions[index]) + float(arguments[1])
-        return paused, sim.set_joint_position_targets({arguments[0]: target}), False
-    if command == "gripper":
-        if len(arguments) != 1:
-            raise ValueError("usage: gripper WIDTH")
-        return paused, sim.set_gripper_width(float(arguments[0])), False
-    if command == "step":
-        if len(arguments) > 1:
-            raise ValueError("usage: step [N]")
-        count = 1 if not arguments else _positive_int(arguments[0])
-        if paused:
-            return paused, "paused; step ignored", False
-        return paused, sim.step(count), False
-    if command == "reset":
-        if arguments:
-            raise ValueError("usage: reset")
-        return paused, sim.reset(), False
-    if command == "contacts":
-        if arguments:
-            raise ValueError("usage: contacts")
-        return paused, sim.get_contacts(), False
-    if command == "pause":
-        if arguments:
-            raise ValueError("usage: pause")
-        return True, "paused", False
-    if command == "resume":
-        if arguments:
-            raise ValueError("usage: resume")
-        return False, "running", False
-    raise ValueError(f"unknown command: {command}")
+    result = dispatch_sim_command(sim, line, paused=paused)
+    return result.paused, result.value, result.should_quit
 
 
 def _run_headless(sim, duration: float | None, steps: int | None):

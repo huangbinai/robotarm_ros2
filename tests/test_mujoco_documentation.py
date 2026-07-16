@@ -23,12 +23,16 @@ def test_mujoco_readme_documents_reproducible_install_and_runtime_commands():
         ".venv-mujoco-ros/bin/python -m colcon build --symlink-install --packages-select rebotarm_simulation",
         "MUJOCO_GL=egl",
         "rebotarm_mujoco_health --renderer-timeout",
+        "rebotarm_mujoco_acceptance --skip-renderer",
         "rebotarm_mujoco_cli --headless --duration",
+        "rebotarm_mujoco_contact_check",
         '"requested_duration"',
         '"achieved_duration"',
         "DISPLAY",
         "XAUTHORITY",
         "rebotarm_mujoco_viewer --duration",
+        "joints 0.0 -0.8 -1.0 0.3 0.0 0.0",
+        "--no-command-input",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_health",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_cli",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_viewer",
@@ -50,6 +54,8 @@ def test_mujoco_readme_documents_ros_interfaces_examples_and_moveit_safety():
         "ros2 action send_goal",
         "ros2 service call /rebotarm/gripper/set",
         "ros2 service call /rebotarm/trajectory_stop",
+        "rebotarm_mujoco_ros_acceptance --timeout 15",
+        "rebotarm_mujoco_moveit_acceptance --timeout 30",
         "use_hardware:=false",
         "MoveIt",
         "ros2 launch rebotarm_bringup interactive_system.launch.py use_moveit_preview:=true use_hardware:=false use_moveit_fake_joint_states:=false start_passive_joint_state_publisher:=false use_sim_time:=true",
@@ -70,6 +76,16 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
         "save_state()",
         "restore_state()",
         "set_object_pose",
+        "randomize_scene()",
+        "RebotArmReachEnv",
+        "reset(seed=7)",
+        "step([0.0] * 7)",
+        "step_done([0.0] * 7)",
+        "RandomizationConfig",
+        "TrajectoryRecorder",
+        "training_profile",
+        "sample_from_last_step",
+        "rebotarm_mujoco_batch --episodes",
         "云服务器",
         "本地 Ubuntu VM",
         "Gymnasium",
@@ -98,7 +114,7 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
     for value in required:
         assert value in text
     assert "pkill" not in text
-    assert "尚未实现强化学习训练" in text
+    assert "尚未开始强化学习训练" in text
     assert "已实现强化学习训练" not in text
 
 

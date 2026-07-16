@@ -12,7 +12,8 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from .motor_control import GripperMitController, PosVelController, load_motor_control_parameters
-from .mujoco_types import ContactInfo, SavedSimulationState, SimulationState
+from .mujoco_types import ContactInfo, RandomizedScene, SavedSimulationState, SimulationState
+from .sim2real.randomization import RandomizationSample
 from .sim_gripper import gripper_joint_positions_for_width
 from .urdf_to_mjcf import actuator_name_for_joint
 
@@ -51,6 +52,33 @@ def _finite_vector(values: Sequence[float], length: int, label: str) -> tuple[fl
     return result
 
 
+def _ordered_bounds(values: Sequence[float], label: str) -> tuple[float, float]:
+    lower, upper = float(values[0]), float(values[1])
+    if lower > upper:
+        raise ValueError(f"{label} lower bound must be <= upper bound")
+    return lower, upper
+
+
+def _bounds2(values: Sequence[Sequence[float]], label: str) -> tuple[tuple[float, float], tuple[float, float]]:
+    bounds = tuple(_finite_vector(item, 2, label) for item in values)
+    if len(bounds) != 2:
+        raise ValueError(f"{label} must contain exactly 2 bounds")
+    return (_ordered_bounds(bounds[0], label), _ordered_bounds(bounds[1], label))
+
+
+def _bounds3(
+    values: Sequence[Sequence[float]], label: str
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    bounds = tuple(_finite_vector(item, 2, label) for item in values)
+    if len(bounds) != 3:
+        raise ValueError(f"{label} must contain exactly 3 bounds")
+    return (
+        _ordered_bounds(bounds[0], label),
+        _ordered_bounds(bounds[1], label),
+        _ordered_bounds(bounds[2], label),
+    )
+
+
 class RebotArmMujoco:
     joint_names = JOINT_NAMES
 
@@ -66,6 +94,13 @@ class RebotArmMujoco:
         self._model = self._mj.MjModel.from_xml_path(self.model_path)
         self._data = self._mj.MjData(self._model)
         self._closed = False
+        self._randomization_baseline = {
+            "body_mass": np.asarray(self._model.body_mass).copy(),
+            "dof_damping": np.asarray(self._model.dof_damping).copy(),
+            "geom_friction": np.asarray(self._model.geom_friction).copy(),
+        }
+        self._randomization_sample: RandomizationSample | None = None
+        self._randomization_torque_scale = 1.0
         self._rng = np.random.default_rng()
         motor_parameters = load_motor_control_parameters(Path(__file__).resolve().parents[3])
         self._motor_parameters = motor_parameters
@@ -126,6 +161,37 @@ class RebotArmMujoco:
     def control_mode(self) -> str:
         self._ensure_open()
         return self._control_mode
+
+    @property
+    def randomization_sample(self) -> RandomizationSample | None:
+        self._ensure_open()
+        return self._randomization_sample
+
+    def randomization_session(self, sample: RandomizationSample):
+        from .sim2real.randomization import RandomizationSession
+
+        return RandomizationSession(self, sample)
+
+    def apply_randomization(self, sample: RandomizationSample) -> None:
+        self._ensure_open()
+        if not isinstance(sample, RandomizationSample):
+            raise TypeError("sample must be a RandomizationSample")
+        self.restore_randomization()
+        self._model.body_mass[:] = self._randomization_baseline["body_mass"] * sample.mass_scale
+        self._model.dof_damping[:] = self._randomization_baseline["dof_damping"] * sample.damping_scale
+        self._model.geom_friction[:] = self._randomization_baseline["geom_friction"] * sample.friction_scale
+        self._randomization_torque_scale = float(sample.torque_scale)
+        self._randomization_sample = sample
+        self._mj.mj_forward(self._model, self._data)
+
+    def restore_randomization(self) -> None:
+        self._ensure_open()
+        self._model.body_mass[:] = self._randomization_baseline["body_mass"]
+        self._model.dof_damping[:] = self._randomization_baseline["dof_damping"]
+        self._model.geom_friction[:] = self._randomization_baseline["geom_friction"]
+        self._randomization_torque_scale = 1.0
+        self._randomization_sample = None
+        self._mj.mj_forward(self._model, self._data)
 
     def set_control_mode(self, mode: str) -> str:
         self._ensure_open()
@@ -289,6 +355,7 @@ class RebotArmMujoco:
                 dt=1.0 / self._motor_parameters.control_rate_hz,
                 feedforward=gravity,
             )
+        arm_torque = np.asarray(arm_torque, dtype=float) * self._randomization_torque_scale
         for actuator_id, torque in zip(self._actuator_ids[:6], arm_torque):
             self._data.ctrl[actuator_id] = torque
 
@@ -488,6 +555,45 @@ class RebotArmMujoco:
             self._data.qvel[dof_address : dof_address + 6] = 0.0
         self._mj.mj_forward(self._model, self._data)
         return (*position_values, *orientation_xyzw)
+
+    def randomize_scene(
+        self,
+        seed: int | None = None,
+        *,
+        cube_xy_bounds: Sequence[Sequence[float]] = ((0.22, 0.38), (-0.14, 0.14)),
+        cube_z: float = 0.04,
+        reach_target_bounds: Sequence[Sequence[float]] = (
+            (0.18, 0.45),
+            (-0.22, 0.22),
+            (0.08, 0.35),
+        ),
+    ) -> RandomizedScene:
+        self._ensure_open()
+        rng = np.random.default_rng(seed) if seed is not None else self._rng
+        cube_x_bounds, cube_y_bounds = _bounds2(cube_xy_bounds, "cube_xy_bounds")
+        target_x_bounds, target_y_bounds, target_z_bounds = _bounds3(
+            reach_target_bounds, "reach_target_bounds"
+        )
+        cube_position = (
+            float(rng.uniform(*cube_x_bounds)),
+            float(rng.uniform(*cube_y_bounds)),
+            float(cube_z),
+        )
+        target = (
+            float(rng.uniform(*target_x_bounds)),
+            float(rng.uniform(*target_y_bounds)),
+            float(rng.uniform(*target_z_bounds)),
+        )
+        cube_pose = self.set_object_pose(
+            "test_cube",
+            cube_position,
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        return RandomizedScene(
+            cube_pose=cube_pose,
+            reach_target_position=target,
+            seed=seed,
+        )
 
     def close(self) -> None:
         if self._closed:

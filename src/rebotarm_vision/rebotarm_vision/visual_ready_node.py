@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import math
+from threading import Thread
 import time
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+from rebotarm_motion.moveit_planner import MoveItMotionPlanner
 
 
 ARM_JOINT_NAMES = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
@@ -35,6 +40,7 @@ def _finite_positions(values: list[float] | tuple[float, ...]) -> bool:
 class VisualReadyNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_visual_ready")
+        self._callback_group = ReentrantCallbackGroup()
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("auto_move_on_start", True)
         self.declare_parameter("exit_after_startup_move", False)
@@ -43,18 +49,49 @@ class VisualReadyNode(Node):
         self.declare_parameter("duration_sec", 4.0)
         self.declare_parameter("wait_timeout_sec", 12.0)
         self.declare_parameter("max_start_delta_rad", 1.0)
+        self.declare_parameter("return_start_tolerance_rad", 0.05)
+        self.declare_parameter("velocity_scaling", 0.08)
+        self.declare_parameter("acceleration_scaling", 0.05)
+        self.declare_parameter("moveit_group_name", "arm")
+        self.declare_parameter("moveit_planning_service", "/plan_kinematic_path")
+        self.declare_parameter("moveit_planning_pipeline", "ompl")
+        self.declare_parameter("moveit_planner_id", "")
+        self.declare_parameter("moveit_planning_time", 8.0)
+        self.declare_parameter("moveit_num_planning_attempts", 5)
 
         namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._joint_state_topic = f"/{namespace}/joint_states"
         self._action_name = f"/{namespace}/follow_joint_trajectory"
         self._latest_joint_state: JointState | None = None
+        self._cached_trajectory: JointTrajectory | None = None
+        self._cached_start_positions: list[float] | None = None
 
         self.create_subscription(JointState, self._joint_state_topic, self._on_joint_state, qos_profile_sensor_data)
         self._trajectory_client = ActionClient(self, FollowJointTrajectory, self._action_name)
+        self._planner = MoveItMotionPlanner(
+            self,
+            group_name=str(self.get_parameter("moveit_group_name").value),
+            ee_frame_id="end_link",
+            frame_id="base_link",
+            planning_service=str(self.get_parameter("moveit_planning_service").value),
+            planning_pipeline=str(self.get_parameter("moveit_planning_pipeline").value),
+            planner_id=str(self.get_parameter("moveit_planner_id").value),
+            planning_time=float(self.get_parameter("moveit_planning_time").value),
+            num_attempts=int(self.get_parameter("moveit_num_planning_attempts").value),
+            goal_position_tolerance=0.005,
+            goal_orientation_tolerance=0.02,
+        )
+        self._plan_service = self.create_service(
+            Trigger,
+            f"/{namespace}/visual_ready/plan",
+            self._handle_plan_request,
+            callback_group=self._callback_group,
+        )
         self._move_service = self.create_service(
             Trigger,
             f"/{namespace}/visual_ready/move",
             self._handle_move_request,
+            callback_group=self._callback_group,
         )
 
     def _on_joint_state(self, msg: JointState) -> None:
@@ -65,7 +102,36 @@ class VisualReadyNode(Node):
         response.message = "visual_ready reached" if response.success else "visual_ready move failed"
         return response
 
-    def move_to_visual_ready(self) -> bool:
+    def _handle_plan_request(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        response.success = self.plan_visual_ready()
+        response.message = "visual_ready planned" if response.success else "visual_ready planning failed"
+        return response
+
+    def plan_visual_ready(self) -> bool:
+        target = [float(v) for v in self.get_parameter("joint_positions").value]
+        if not _finite_positions(target):
+            self.get_logger().error(f"joint_positions must contain 6 finite values, got {target}")
+            return False
+        current = self._wait_for_current_positions()
+        if current is None:
+            self.get_logger().error(f"no valid arm joint state received on {self._joint_state_topic}")
+            return False
+        result = self._planner.plan_joint_positions(
+            joint_names=ARM_JOINT_NAMES,
+            target_positions=tuple(target),
+            velocity_scaling=float(self.get_parameter("velocity_scaling").value),
+            acceleration_scaling=float(self.get_parameter("acceleration_scaling").value),
+        )
+        if not result.success or result.trajectory is None:
+            self._cached_trajectory = None
+            self._cached_start_positions = None
+            self.get_logger().error(f"visual_ready planning failed: {result.message}")
+            return False
+        self._cached_trajectory = result.trajectory
+        self._cached_start_positions = current
+        return True
+
+    def move_to_visual_ready(self, *, use_planned: bool = True) -> bool:
         target = [float(v) for v in self.get_parameter("joint_positions").value]
         if not _finite_positions(target):
             self.get_logger().error(f"joint_positions must contain 6 finite values, got {target}")
@@ -85,31 +151,58 @@ class VisualReadyNode(Node):
             )
             return False
 
+        trajectory = self._build_trajectory(current, target)
+        if use_planned:
+            tolerance = max(float(self.get_parameter("return_start_tolerance_rad").value), 0.0)
+            cache_matches = self._cached_start_positions is not None and max(
+                abs(actual - planned)
+                for actual, planned in zip(current, self._cached_start_positions)
+            ) <= tolerance
+            if self._cached_trajectory is None or not cache_matches:
+                if self._cached_trajectory is not None:
+                    self.get_logger().warn("cached visual_ready plan start mismatch; replanning")
+                if not self.plan_visual_ready():
+                    return False
+                current = self._wait_for_current_positions()
+                if current is None or self._cached_start_positions is None:
+                    return False
+                if max(abs(a - b) for a, b in zip(current, self._cached_start_positions)) > tolerance:
+                    self.get_logger().error("cached visual_ready plan start mismatch after planning")
+                    return False
+            trajectory = self._cached_trajectory
+
         if not self._trajectory_client.wait_for_server(timeout_sec=float(self.get_parameter("wait_timeout_sec").value)):
             self.get_logger().error(f"follow_joint_trajectory action unavailable: {self._action_name}")
             return False
 
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory = self._build_trajectory(current, target)
+        goal.trajectory = trajectory
         self.get_logger().info(
             "moving to visual_ready: "
             + ", ".join(f"{name}={value:+.3f}" for name, value in zip(ARM_JOINT_NAMES, target))
         )
         send_future = self._trajectory_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
+        if not self._wait_for_future(send_future):
+            self.get_logger().error("visual_ready goal request timed out")
+            return False
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
             self.get_logger().error("visual_ready trajectory rejected")
             return False
 
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
+        if not self._wait_for_future(result_future):
+            self.get_logger().error("visual_ready trajectory result timed out")
+            return False
         result = result_future.result().result
         success = int(result.error_code) == int(FollowJointTrajectory.Result.SUCCESSFUL)
         if not success:
             self.get_logger().error(
                 f"visual_ready trajectory failed: error_code={result.error_code}, message={result.error_string}"
             )
+        if success:
+            self._cached_trajectory = None
+            self._cached_start_positions = None
         return success
 
     def _wait_for_current_positions(self) -> list[float] | None:
@@ -120,8 +213,14 @@ class VisualReadyNode(Node):
                 positions = self._extract_arm_positions(msg)
                 if positions is not None:
                     return positions
-            rclpy.spin_once(self, timeout_sec=0.05)
+            time.sleep(0.05)
         return None
+
+    def _wait_for_future(self, future) -> bool:
+        deadline = time.monotonic() + float(self.get_parameter("wait_timeout_sec").value)
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return future.done()
 
     def _extract_arm_positions(self, msg: JointState) -> list[float] | None:
         by_name = {name: index for index, name in enumerate(msg.name)}
@@ -153,23 +252,28 @@ class VisualReadyNode(Node):
         self.get_logger().info(f"visual_ready startup move delayed {delay:.1f}s")
         deadline = time.monotonic() + delay
         while rclpy.ok() and time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=min(0.1, max(deadline - time.monotonic(), 0.0)))
+            time.sleep(min(0.1, max(deadline - time.monotonic(), 0.0)))
 
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = VisualReadyNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
+    spin_thread = Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
     try:
         if bool(node.get_parameter("auto_move_on_start").value):
             node.wait_before_startup_move()
-            if node.move_to_visual_ready():
+            if node.move_to_visual_ready(use_planned=False):
                 node.get_logger().info("visual_ready startup move complete")
             if bool(node.get_parameter("exit_after_startup_move").value):
                 return
-        rclpy.spin(node)
+        spin_thread.join()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

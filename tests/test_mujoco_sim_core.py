@@ -18,7 +18,7 @@ ALL_JOINTS = ARM_JOINTS + ("left_finger_joint", "right_finger_joint")
 
 
 def test_state_records_are_immutable() -> None:
-    from rebotarm_simulation.mujoco_types import ContactInfo, SimulationState
+    from rebotarm_simulation.mujoco_types import ContactInfo, RandomizedScene, SimulationState
 
     state = SimulationState(
         joint_names=ALL_JOINTS,
@@ -32,11 +32,18 @@ def test_state_records_are_immutable() -> None:
         simulation_time=0.0,
     )
     contact = ContactInfo("a", "b", "ga", "gb", (0.0, 0.0, 0.0), 0.0)
+    scene = RandomizedScene(
+        cube_pose=(0.28, 0.0, 0.04, 0.0, 0.0, 0.0, 1.0),
+        reach_target_position=(0.3, 0.0, 0.2),
+        seed=1,
+    )
 
     with pytest.raises(FrozenInstanceError):
         state.simulation_time = 1.0
     with pytest.raises(FrozenInstanceError):
         contact.force = 1.0
+    with pytest.raises(FrozenInstanceError):
+        scene.seed = 2
     with pytest.raises(TypeError):
         state.object_poses["cube"] = (1.0,) * 7
     with pytest.raises(TypeError):
@@ -83,6 +90,27 @@ def test_contact_record_validates_names_shape_finiteness_and_force() -> None:
         ContactInfo("a", "b", "ga", "gb", (0.0, float("nan"), 0.0), 0.0)
     with pytest.raises(ValueError, match="non-negative"):
         ContactInfo("a", "b", "ga", "gb", (0.0, 0.0, 0.0), -1.0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"cube_pose": (0.0,) * 6}, "7 values"),
+        ({"reach_target_position": (0.0, 0.0)}, "3 values"),
+        ({"reach_target_position": (0.0, float("inf"), 0.0)}, "finite"),
+    ],
+)
+def test_randomized_scene_record_validates_shapes_and_finiteness(overrides, message: str) -> None:
+    from rebotarm_simulation.mujoco_types import RandomizedScene
+
+    values = dict(
+        cube_pose=(0.28, 0.0, 0.04, 0.0, 0.0, 0.0, 1.0),
+        reach_target_position=(0.3, 0.0, 0.2),
+        seed=1,
+    )
+    values.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        RandomizedScene(**values)
 
 
 def test_missing_mujoco_dependency_has_actionable_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,6 +442,79 @@ def test_set_object_pose_can_zero_or_preserve_free_joint_velocity(runtime_sim) -
     runtime_sim.step()
     zeroed_z = runtime_sim.get_state().object_poses["test_cube"][2]
     assert preserved_z < zeroed_z
+
+
+def test_randomize_scene_is_seeded_and_keeps_objects_inside_bounds(runtime_sim) -> None:
+    cube_xy_bounds = ((0.25, 0.26), (-0.02, 0.02))
+    target_bounds = ((0.30, 0.31), (-0.03, 0.03), (0.18, 0.19))
+
+    first = runtime_sim.randomize_scene(
+        seed=11,
+        cube_xy_bounds=cube_xy_bounds,
+        cube_z=0.05,
+        reach_target_bounds=target_bounds,
+    )
+    runtime_sim.reset_home(seed=99)
+    second = runtime_sim.randomize_scene(
+        seed=11,
+        cube_xy_bounds=cube_xy_bounds,
+        cube_z=0.05,
+        reach_target_bounds=target_bounds,
+    )
+
+    assert second == first
+    assert runtime_sim.get_state().object_poses["test_cube"] == pytest.approx(first.cube_pose)
+    assert cube_xy_bounds[0][0] <= first.cube_pose[0] <= cube_xy_bounds[0][1]
+    assert cube_xy_bounds[1][0] <= first.cube_pose[1] <= cube_xy_bounds[1][1]
+    assert first.cube_pose[2] == pytest.approx(0.05)
+    assert target_bounds[0][0] <= first.reach_target_position[0] <= target_bounds[0][1]
+    assert target_bounds[1][0] <= first.reach_target_position[1] <= target_bounds[1][1]
+    assert target_bounds[2][0] <= first.reach_target_position[2] <= target_bounds[2][1]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"cube_xy_bounds": ((0.3, 0.2), (0.0, 0.1))}, "lower bound"),
+        ({"cube_xy_bounds": ((0.2, 0.3),)}, "2 bounds"),
+        ({"reach_target_bounds": ((0.2, 0.3), (0.0, 0.1))}, "3 bounds"),
+        ({"reach_target_bounds": ((0.2, 0.3), (0.0, 0.1), (0.2, float("nan")))}, "finite"),
+    ],
+)
+def test_randomize_scene_rejects_invalid_bounds(runtime_sim, kwargs, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        runtime_sim.randomize_scene(**kwargs)
+
+
+def test_randomization_session_changes_and_restores_model_parameters(runtime_sim) -> None:
+    from rebotarm_simulation.sim2real.randomization import RandomizationSample
+
+    model, _data = runtime_sim._unsafe_viewer_handles()
+    baseline_mass = np.asarray(model.body_mass).copy()
+    baseline_damping = np.asarray(model.dof_damping).copy()
+    baseline_friction = np.asarray(model.geom_friction).copy()
+    sample = RandomizationSample(
+        seed=3,
+        mass_scale=1.05,
+        damping_scale=0.9,
+        friction_scale=1.1,
+        torque_scale=0.95,
+        control_latency_steps=1,
+        action_noise_std=0.0,
+        position_noise_std=0.0,
+        velocity_noise_std=0.0,
+    )
+
+    with runtime_sim.randomization_session(sample):
+        assert np.asarray(model.body_mass) == pytest.approx(baseline_mass * 1.05)
+        assert np.asarray(model.dof_damping) == pytest.approx(baseline_damping * 0.9)
+        assert np.asarray(model.geom_friction) == pytest.approx(baseline_friction * 1.1)
+        assert runtime_sim.randomization_sample == sample
+
+    assert np.asarray(model.body_mass) == pytest.approx(baseline_mass)
+    assert np.asarray(model.dof_damping) == pytest.approx(baseline_damping)
+    assert np.asarray(model.geom_friction) == pytest.approx(baseline_friction)
+    assert runtime_sim.randomization_sample is None
 
 
 def test_contacts_have_stable_named_schema(runtime_sim) -> None:

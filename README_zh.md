@@ -40,6 +40,7 @@
 - 支持标准轨迹接口：`control_msgs/action/FollowJointTrajectory`
 - 支持夹爪控制：`SetGripper` service、`GripperCommand` action
 - 支持 controller 内部重力补偿：`gravity_compensation/start`、`gravity_compensation/stop`
+- 支持 `POS_VEL ↔ MIT` 无扰切换，VEL 默认关闭；测试方法见 [电机模式平滑切换测试手册](docs/mode_transition_test.md)
 - 支持 per-joint sparse raw command：`JointMotorCmd`
 - 复用 `reBotArm_control_py` 的 `RobotArm`、`ArmEndPos`、FK/IK、动力学和夹爪配置加载
 

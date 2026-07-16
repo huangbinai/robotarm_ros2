@@ -199,13 +199,30 @@ auto_gripper_effort=true
 gripper_grasp_enabled=true
 gripper_grasp_timeout_sec=8.0
 safe_retreat_enabled=true
+dynamic_retreat_enabled=true
 safe_retreat_min_lift_z_m=0.12
 lift_z_m=0.04
+return_visual_ready_after_grasp=true
 moveit_planning_time=8.0
 moveit_num_planning_attempts=5
 base_pregrasp_distance_m=0.06
 safe_home_after_grasp=false
 ```
+
+单次执行成功时的预期流程：
+
+```text
+move_to_pregrasp
+→ approach_grasp
+→ GraspGripper 确认接触并保持
+→ lift（默认 4 cm）
+→ safe_retreat（沿本次 approach 的反方向动态撤退）
+→ plan_visual_ready（MoveIt 低速预规划）
+→ return_visual_ready（保持夹爪闭合并执行缓存轨迹）
+→ 停止
+```
+
+如果 `plan_visual_ready` 或 `return_visual_ready` 失败，流程会在对应阶段停止，夹爪不会自动松开。
 
 执行一次真实抓取：
 

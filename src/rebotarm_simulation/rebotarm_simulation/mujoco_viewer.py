@@ -3,18 +3,22 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, replace
 import importlib
+import json
 import math
 from queue import Empty, SimpleQueue
 import sys
+import threading
 import time
 from typing import Callable, Sequence
 
+from .mujoco_commands import dispatch_sim_command
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 
 HELP = (
     "[ / ] select | 1-6 select | hold J/K joint | hold C/O gripper | "
-    "G gravity | H hold | P pos | R zero | T home | Q quit"
+    "G gravity | H hold | P pos | R zero | T home | Q quit | "
+    "type: joints J1..J6, joint NAME VALUE, gripper WIDTH"
 )
 _RETAINED_UNSAFE_VIEWERS = []
 
@@ -24,7 +28,11 @@ class ViewerControlState:
     selected_joint: int = 0
     joint_targets: tuple[float, ...] = (0.0,) * 6
     joint_positions: tuple[float, ...] = (0.0,) * 6
+    joint_velocities: tuple[float, ...] = (0.0,) * 6
     gripper_width: float = 0.09
+    gripper_actual_width: float = 0.09
+    max_contact_force: float = 0.0
+    contact_count: int = 0
     paused: bool = False
     joint_delta: int = 0
     gripper_delta: int = 0
@@ -84,11 +92,71 @@ def _take_key_snapshot(events: SimpleQueue) -> tuple[int, ...]:
     return tuple(snapshot)
 
 
+def _take_line_snapshot(events: SimpleQueue) -> tuple[str, ...]:
+    snapshot = []
+    for _ in range(events.qsize()):
+        try:
+            snapshot.append(events.get_nowait())
+        except Empty:
+            break
+    return tuple(snapshot)
+
+
+def start_command_reader(command_stream, command_events: SimpleQueue) -> threading.Thread:
+    def read_lines() -> None:
+        for line in command_stream:
+            command_events.put(str(line).strip())
+
+    thread = threading.Thread(target=read_lines, name="mujoco-viewer-command-input", daemon=True)
+    thread.start()
+    return thread
+
+
 def drain_key_events(events: SimpleQueue, state: ViewerControlState) -> ViewerControlState:
     """Consume a finite FIFO snapshot, leaving new events for the next cycle."""
     for keycode in _take_key_snapshot(events):
         state = reduce_key(state, _decode_key(keycode))
     return state
+
+
+def process_command_events(sim, events: SimpleQueue, state: ViewerControlState, status_stream) -> ViewerControlState:
+    for line in _take_line_snapshot(events):
+        if not line:
+            continue
+        try:
+            result = dispatch_sim_command(sim, line, paused=state.paused)
+        except (TypeError, ValueError) as exc:
+            print(f"command error: {exc}", file=status_stream, flush=True)
+            continue
+        state = replace(state, paused=result.paused, quit=state.quit or result.should_quit)
+        if result.value is not None:
+            print(f"command result: {_command_value_text(result.value)}", file=status_stream, flush=True)
+        state = _state_from_sim(sim, paused=state.paused, selected_joint=state.selected_joint)
+        state = replace(state, quit=state.quit)
+        if state.quit:
+            break
+    return state
+
+
+def _command_value_text(value) -> str:
+    try:
+        return json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return repr(value)
+
+
+def _jsonable(value):
+    if hasattr(value, "__dataclass_fields__"):
+        return {name: _jsonable(getattr(value, name)) for name in value.__dataclass_fields__}
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "__dict__"):
+        return {key: _jsonable(item) for key, item in vars(value).items()}
+    return value
 
 
 def process_key_events(
@@ -117,13 +185,41 @@ def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> Vi
     state = sim.get_state()
     targets = tuple(float(value) for value in sim.control_targets[:6])
     positions = tuple(float(value) for value in state.joint_positions[:6])
+    velocities = tuple(float(value) for value in state.joint_velocities[:6])
+    contacts = _contact_summary(sim)
     return ViewerControlState(
         selected_joint=selected_joint,
         joint_targets=targets,
         joint_positions=positions,
+        joint_velocities=velocities,
         gripper_width=float(state.gripper_width),
+        gripper_actual_width=float(state.gripper_width),
+        max_contact_force=contacts[0],
+        contact_count=contacts[1],
         paused=paused,
         active_mode=str(getattr(sim, "control_mode", "pos_vel")),
+    )
+
+
+def _contact_summary(sim) -> tuple[float, int]:
+    if not hasattr(sim, "get_contacts"):
+        return 0.0, 0
+    contacts = tuple(sim.get_contacts())
+    if not contacts:
+        return 0.0, 0
+    return max(float(contact.force) for contact in contacts), len(contacts)
+
+
+def _refresh_observed_state(sim, state: ViewerControlState) -> ViewerControlState:
+    sim_state = sim.get_state()
+    max_contact_force, contact_count = _contact_summary(sim)
+    return replace(
+        state,
+        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
+        joint_velocities=tuple(float(value) for value in sim_state.joint_velocities[:6]),
+        gripper_actual_width=float(sim_state.gripper_width),
+        max_contact_force=max_contact_force,
+        contact_count=contact_count,
     )
 
 
@@ -174,11 +270,9 @@ def apply_pending_commands(
         width = float(sim.set_gripper_width(width + state.gripper_delta * gripper_step))
         jog_time_remaining = jog_hold_time
 
-    sim_state = sim.get_state()
-    return replace(
+    state = replace(
         state,
         joint_targets=targets,
-        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
         gripper_width=width,
         joint_delta=0,
         gripper_delta=0,
@@ -188,6 +282,7 @@ def apply_pending_commands(
         mode=None,
         active_mode=str(active_mode),
     )
+    return _refresh_observed_state(sim, state)
 
 
 def apply_continuous_jog(
@@ -211,18 +306,17 @@ def apply_continuous_jog(
     if state.gripper_jog_direction:
         width = float(sim.set_gripper_width(width + state.gripper_jog_direction * gripper_rate * dt))
 
-    sim_state = sim.get_state()
     remaining = max(0.0, state.jog_time_remaining - dt)
-    return replace(
+    state = replace(
         state,
         joint_targets=targets,
-        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
         gripper_width=width,
         jog_time_remaining=remaining,
         joint_jog_direction=state.joint_jog_direction if remaining > 0.0 else 0,
         gripper_jog_direction=state.gripper_jog_direction if remaining > 0.0 else 0,
         active_mode=str(getattr(sim, "control_mode", state.active_mode)),
     )
+    return _refresh_observed_state(sim, state)
 
 
 def overlay_text(state: ViewerControlState) -> str:
@@ -231,8 +325,11 @@ def overlay_text(state: ViewerControlState) -> str:
     return (
         f"mode: {state.active_mode}  selected: {name}  "
         f"q: {state.joint_positions[state.selected_joint]:.3f} rad  "
+        f"dq: {state.joint_velocities[state.selected_joint]:.3f} rad/s  "
         f"target: {state.joint_targets[state.selected_joint]:.3f} rad\n"
-        f"gripper target: {state.gripper_width:.3f} m  state: {run_state}\n"
+        f"gripper: {state.gripper_actual_width:.3f} m  target: {state.gripper_width:.3f} m  "
+        f"contacts: {state.contact_count}  max contact: {state.max_contact_force:.2f} N  "
+        f"state: {run_state}\n"
         "MuJoCo control panel shows torque/force, not joint position.\n"
         f"{HELP}"
     )
@@ -263,6 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_float,
         default=None,
         help="exit after this many seconds of simulated time",
+    )
+    parser.add_argument(
+        "--no-command-input",
+        action="store_true",
+        help="disable terminal line commands while the viewer is running",
     )
     return parser
 
@@ -331,6 +433,7 @@ def main(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     status_stream=None,
+    command_stream=None,
 ) -> int:
     args = build_parser().parse_args(argv)
     if status_stream is None:
@@ -348,6 +451,22 @@ def main(
         state = _state_from_sim(sim)
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
+        command_events = SimpleQueue()
+        if command_stream is None:
+            command_stream = sys.stdin
+            command_input_enabled = (
+                not args.no_command_input
+                and hasattr(command_stream, "isatty")
+                and command_stream.isatty()
+            )
+        else:
+            command_input_enabled = not args.no_command_input
+        if command_input_enabled:
+            command_thread = start_command_reader(command_stream, command_events)
+            if command_stream is not sys.stdin and (
+                not hasattr(command_stream, "isatty") or not command_stream.isatty()
+            ):
+                command_thread.join(timeout=0.05)
         previous_status = overlay_text(state)
         print(previous_status, file=status_stream, flush=True)
 
@@ -362,6 +481,9 @@ def main(
         )
         try:
             while viewer.is_running():
+                state = process_command_events(sim, command_events, state, status_stream)
+                if state.quit:
+                    break
                 state = process_key_events(
                     sim,
                     events,
@@ -382,12 +504,7 @@ def main(
                         gripper_rate=args.gripper_rate,
                     )
                     sim.step()
-                    sim_state = sim.get_state()
-                    state = replace(
-                        state,
-                        joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
-                        single_step=False,
-                    )
+                    state = _refresh_observed_state(sim, replace(state, single_step=False))
                 current_status = overlay_text(state)
                 if current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)

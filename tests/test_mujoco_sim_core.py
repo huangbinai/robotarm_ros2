@@ -486,6 +486,37 @@ def test_randomize_scene_rejects_invalid_bounds(runtime_sim, kwargs, message: st
         runtime_sim.randomize_scene(**kwargs)
 
 
+def test_randomization_session_changes_and_restores_model_parameters(runtime_sim) -> None:
+    from rebotarm_simulation.sim2real.randomization import RandomizationSample
+
+    model, _data = runtime_sim._unsafe_viewer_handles()
+    baseline_mass = np.asarray(model.body_mass).copy()
+    baseline_damping = np.asarray(model.dof_damping).copy()
+    baseline_friction = np.asarray(model.geom_friction).copy()
+    sample = RandomizationSample(
+        seed=3,
+        mass_scale=1.05,
+        damping_scale=0.9,
+        friction_scale=1.1,
+        torque_scale=0.95,
+        control_latency_steps=1,
+        action_noise_std=0.0,
+        position_noise_std=0.0,
+        velocity_noise_std=0.0,
+    )
+
+    with runtime_sim.randomization_session(sample):
+        assert np.asarray(model.body_mass) == pytest.approx(baseline_mass * 1.05)
+        assert np.asarray(model.dof_damping) == pytest.approx(baseline_damping * 0.9)
+        assert np.asarray(model.geom_friction) == pytest.approx(baseline_friction * 1.1)
+        assert runtime_sim.randomization_sample == sample
+
+    assert np.asarray(model.body_mass) == pytest.approx(baseline_mass)
+    assert np.asarray(model.dof_damping) == pytest.approx(baseline_damping)
+    assert np.asarray(model.geom_friction) == pytest.approx(baseline_friction)
+    assert runtime_sim.randomization_sample is None
+
+
 def test_contacts_have_stable_named_schema(runtime_sim) -> None:
     runtime_sim.reset()
     runtime_sim.step(100)

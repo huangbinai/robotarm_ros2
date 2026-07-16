@@ -13,6 +13,7 @@ import numpy as np
 
 from .motor_control import GripperMitController, PosVelController, load_motor_control_parameters
 from .mujoco_types import ContactInfo, RandomizedScene, SavedSimulationState, SimulationState
+from .sim2real.randomization import RandomizationSample
 from .sim_gripper import gripper_joint_positions_for_width
 from .urdf_to_mjcf import actuator_name_for_joint
 
@@ -93,6 +94,13 @@ class RebotArmMujoco:
         self._model = self._mj.MjModel.from_xml_path(self.model_path)
         self._data = self._mj.MjData(self._model)
         self._closed = False
+        self._randomization_baseline = {
+            "body_mass": np.asarray(self._model.body_mass).copy(),
+            "dof_damping": np.asarray(self._model.dof_damping).copy(),
+            "geom_friction": np.asarray(self._model.geom_friction).copy(),
+        }
+        self._randomization_sample: RandomizationSample | None = None
+        self._randomization_torque_scale = 1.0
         self._rng = np.random.default_rng()
         motor_parameters = load_motor_control_parameters(Path(__file__).resolve().parents[3])
         self._motor_parameters = motor_parameters
@@ -153,6 +161,37 @@ class RebotArmMujoco:
     def control_mode(self) -> str:
         self._ensure_open()
         return self._control_mode
+
+    @property
+    def randomization_sample(self) -> RandomizationSample | None:
+        self._ensure_open()
+        return self._randomization_sample
+
+    def randomization_session(self, sample: RandomizationSample):
+        from .sim2real.randomization import RandomizationSession
+
+        return RandomizationSession(self, sample)
+
+    def apply_randomization(self, sample: RandomizationSample) -> None:
+        self._ensure_open()
+        if not isinstance(sample, RandomizationSample):
+            raise TypeError("sample must be a RandomizationSample")
+        self.restore_randomization()
+        self._model.body_mass[:] = self._randomization_baseline["body_mass"] * sample.mass_scale
+        self._model.dof_damping[:] = self._randomization_baseline["dof_damping"] * sample.damping_scale
+        self._model.geom_friction[:] = self._randomization_baseline["geom_friction"] * sample.friction_scale
+        self._randomization_torque_scale = float(sample.torque_scale)
+        self._randomization_sample = sample
+        self._mj.mj_forward(self._model, self._data)
+
+    def restore_randomization(self) -> None:
+        self._ensure_open()
+        self._model.body_mass[:] = self._randomization_baseline["body_mass"]
+        self._model.dof_damping[:] = self._randomization_baseline["dof_damping"]
+        self._model.geom_friction[:] = self._randomization_baseline["geom_friction"]
+        self._randomization_torque_scale = 1.0
+        self._randomization_sample = None
+        self._mj.mj_forward(self._model, self._data)
 
     def set_control_mode(self, mode: str) -> str:
         self._ensure_open()
@@ -316,6 +355,7 @@ class RebotArmMujoco:
                 dt=1.0 / self._motor_parameters.control_rate_hz,
                 feedforward=gravity,
             )
+        arm_torque = np.asarray(arm_torque, dtype=float) * self._randomization_torque_scale
         for actuator_id, torque in zip(self._actuator_ids[:6], arm_torque):
             self._data.ctrl[actuator_id] = torque
 

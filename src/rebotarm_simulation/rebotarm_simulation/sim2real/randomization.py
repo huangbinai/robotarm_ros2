@@ -132,6 +132,29 @@ class RandomizationConfig:
         )
 
 
+class RandomizationSession:
+    """Apply one sample to a simulator and restore its baseline on exit."""
+
+    def __init__(self, simulation, sample: RandomizationSample) -> None:
+        if not isinstance(sample, RandomizationSample):
+            raise TypeError("sample must be a RandomizationSample")
+        self._simulation = simulation
+        self.sample = sample
+        self._entered = False
+
+    def __enter__(self) -> "RandomizationSession":
+        if self._entered:
+            raise RuntimeError("randomization session cannot be entered twice")
+        self._simulation.apply_randomization(self.sample)
+        self._entered = True
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        if self._entered:
+            self._simulation.restore_randomization()
+            self._entered = False
+
+
 def _parse_range(value: Any, *, strictly_positive: bool, integer: bool) -> RandomizationRange:
     if isinstance(value, (int, float)):
         values = (value, value)

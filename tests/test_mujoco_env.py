@@ -9,6 +9,8 @@ import pytest
 
 from rebotarm_simulation import mujoco_batch
 from rebotarm_simulation.mujoco_env import RebotArmReachEnv, ReachEnvConfig
+from rebotarm_simulation.sim2real.randomization import RandomizationSample
+from rebotarm_simulation.sim2real.trajectory_log import TrajectoryRecorder
 from rebotarm_simulation.mujoco_types import RandomizedScene
 
 
@@ -22,6 +24,7 @@ class FakeSim:
         self.ee = np.array([0.2, 0.0, 0.2], dtype=float)
         self.cube_pose = (0.28, 0.0, 0.04, 0.0, 0.0, 0.0, 1.0)
         self.closed = False
+        self.randomization_sample = None
 
     @property
     def control_targets(self):
@@ -77,6 +80,12 @@ class FakeSim:
 
     def close(self):
         self.closed = True
+
+    def apply_randomization(self, sample):
+        self.randomization_sample = sample
+
+    def restore_randomization(self):
+        self.randomization_sample = None
 
 
 def test_reach_env_reset_returns_gym_style_observation_and_info():
@@ -143,3 +152,32 @@ def test_headless_batch_outputs_json_summary():
     assert payload["episodes"] == 2
     assert len(payload["results"]) == 2
     assert payload["requested_steps"] == 3
+
+
+def test_reach_env_randomization_and_sample_recording_are_optional():
+    sample = RandomizationSample(
+        seed=7,
+        mass_scale=1.0,
+        damping_scale=1.0,
+        friction_scale=1.0,
+        torque_scale=1.0,
+        control_latency_steps=0,
+        action_noise_std=0.0,
+        position_noise_std=0.0,
+        velocity_noise_std=0.0,
+    )
+    with RebotArmReachEnv(sim_factory=FakeSim) as env:
+        env.reset(seed=7, randomization=sample)
+        assert env.randomization_sample == sample
+        assert env.sim.randomization_sample == sample
+        action = [0.0] * 7
+        env.step(action)
+        recorded = env.sample_from_last_step(action, episode_id="episode-1", step_index=0)
+        assert recorded.episode_id == "episode-1"
+        assert recorded.source == "sim"
+        assert recorded.action == tuple(action)
+        assert recorded.joint_targets == tuple(env.sim.control_targets[:6])
+
+        recorder = TrajectoryRecorder(episode_id="episode-1", source="sim")
+        recorder.append(recorded)
+        assert recorder.summary()["sample_count"] == 1

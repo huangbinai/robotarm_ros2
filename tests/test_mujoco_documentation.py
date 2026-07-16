@@ -31,6 +31,8 @@ def test_mujoco_readme_documents_reproducible_install_and_runtime_commands():
         "DISPLAY",
         "XAUTHORITY",
         "rebotarm_mujoco_viewer --duration",
+        "joints 0.0 -0.8 -1.0 0.3 0.0 0.0",
+        "--no-command-input",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_health",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_cli",
         "PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_viewer",

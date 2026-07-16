@@ -118,6 +118,26 @@ rebotarm_mujoco_viewer --duration 30
 键盘 jog 或 ROS/API 发送目标。若从 SSH 启动，需正确配置 X11 转发，且
 `DISPLAY` 与 `XAUTHORITY` 必须指向当前桌面会话；否则请改用 headless CLI。
 
+Viewer 运行时也可以直接在启动它的终端输入目标命令，命令会排队到仿真主线程执行，
+不会从键盘回调线程直接改 MuJoCo 状态：
+
+```text
+joints 0.0 -0.8 -1.0 0.3 0.0 0.0
+joint joint2 -0.6
+jog joint3 -0.1
+gripper 0.05
+mode hold
+mode pos_vel
+home
+reset
+state
+contacts
+```
+
+其中 `joints` 一次设置六个关节目标角，`joint` 设置单个关节目标角，`jog` 是以当前
+实际关节角为基准加一个增量，`gripper` 设置夹爪目标开口宽度。若只想看 Viewer 而不
+读取终端命令，可加 `--no-command-input`。
+
 模型使用同一套原始 STL 作为 visual 与 collision。为避免两个完全重合的网格在
 Viewer 中互相闪烁或遮挡，collision 网格保留参与碰撞，但显示为半透明调试层；
 正常观察以 visual 网格为准。场景只 include `models/rebotarm/robot.xml`，没有再叠加

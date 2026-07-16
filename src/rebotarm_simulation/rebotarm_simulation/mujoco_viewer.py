@@ -3,18 +3,22 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, replace
 import importlib
+import json
 import math
 from queue import Empty, SimpleQueue
 import sys
+import threading
 import time
 from typing import Callable, Sequence
 
+from .mujoco_commands import dispatch_sim_command
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 
 HELP = (
     "[ / ] select | 1-6 select | hold J/K joint | hold C/O gripper | "
-    "G gravity | H hold | P pos | R zero | T home | Q quit"
+    "G gravity | H hold | P pos | R zero | T home | Q quit | "
+    "type: joints J1..J6, joint NAME VALUE, gripper WIDTH"
 )
 _RETAINED_UNSAFE_VIEWERS = []
 
@@ -88,11 +92,71 @@ def _take_key_snapshot(events: SimpleQueue) -> tuple[int, ...]:
     return tuple(snapshot)
 
 
+def _take_line_snapshot(events: SimpleQueue) -> tuple[str, ...]:
+    snapshot = []
+    for _ in range(events.qsize()):
+        try:
+            snapshot.append(events.get_nowait())
+        except Empty:
+            break
+    return tuple(snapshot)
+
+
+def start_command_reader(command_stream, command_events: SimpleQueue) -> threading.Thread:
+    def read_lines() -> None:
+        for line in command_stream:
+            command_events.put(str(line).strip())
+
+    thread = threading.Thread(target=read_lines, name="mujoco-viewer-command-input", daemon=True)
+    thread.start()
+    return thread
+
+
 def drain_key_events(events: SimpleQueue, state: ViewerControlState) -> ViewerControlState:
     """Consume a finite FIFO snapshot, leaving new events for the next cycle."""
     for keycode in _take_key_snapshot(events):
         state = reduce_key(state, _decode_key(keycode))
     return state
+
+
+def process_command_events(sim, events: SimpleQueue, state: ViewerControlState, status_stream) -> ViewerControlState:
+    for line in _take_line_snapshot(events):
+        if not line:
+            continue
+        try:
+            result = dispatch_sim_command(sim, line, paused=state.paused)
+        except (TypeError, ValueError) as exc:
+            print(f"command error: {exc}", file=status_stream, flush=True)
+            continue
+        state = replace(state, paused=result.paused, quit=state.quit or result.should_quit)
+        if result.value is not None:
+            print(f"command result: {_command_value_text(result.value)}", file=status_stream, flush=True)
+        state = _state_from_sim(sim, paused=state.paused, selected_joint=state.selected_joint)
+        state = replace(state, quit=state.quit)
+        if state.quit:
+            break
+    return state
+
+
+def _command_value_text(value) -> str:
+    try:
+        return json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return repr(value)
+
+
+def _jsonable(value):
+    if hasattr(value, "__dataclass_fields__"):
+        return {name: _jsonable(getattr(value, name)) for name in value.__dataclass_fields__}
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "__dict__"):
+        return {key: _jsonable(item) for key, item in vars(value).items()}
+    return value
 
 
 def process_key_events(
@@ -297,6 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="exit after this many seconds of simulated time",
     )
+    parser.add_argument(
+        "--no-command-input",
+        action="store_true",
+        help="disable terminal line commands while the viewer is running",
+    )
     return parser
 
 
@@ -364,6 +433,7 @@ def main(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     status_stream=None,
+    command_stream=None,
 ) -> int:
     args = build_parser().parse_args(argv)
     if status_stream is None:
@@ -381,6 +451,22 @@ def main(
         state = _state_from_sim(sim)
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
+        command_events = SimpleQueue()
+        if command_stream is None:
+            command_stream = sys.stdin
+            command_input_enabled = (
+                not args.no_command_input
+                and hasattr(command_stream, "isatty")
+                and command_stream.isatty()
+            )
+        else:
+            command_input_enabled = not args.no_command_input
+        if command_input_enabled:
+            command_thread = start_command_reader(command_stream, command_events)
+            if command_stream is not sys.stdin and (
+                not hasattr(command_stream, "isatty") or not command_stream.isatty()
+            ):
+                command_thread.join(timeout=0.05)
         previous_status = overlay_text(state)
         print(previous_status, file=status_stream, flush=True)
 
@@ -395,6 +481,9 @@ def main(
         )
         try:
             while viewer.is_running():
+                state = process_command_events(sim, command_events, state, status_stream)
+                if state.quit:
+                    break
                 state = process_key_events(
                     sim,
                     events,

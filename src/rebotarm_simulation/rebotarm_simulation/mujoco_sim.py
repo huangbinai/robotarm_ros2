@@ -333,6 +333,49 @@ class RebotArmMujoco:
         self._position_targets[-1] = right
         return reached
 
+    def mirror_joint_state(
+        self,
+        positions: Sequence[float],
+        velocities: Sequence[float] | None = None,
+        *,
+        gripper_width: float | None = None,
+    ) -> SimulationState:
+        """Kinematically synchronize arm state while preserving free objects."""
+        self._ensure_open()
+        position_values = _finite_vector(positions, len(ARM_JOINT_NAMES), "joint positions")
+        velocity_values = (
+            (0.0,) * len(ARM_JOINT_NAMES)
+            if velocities is None
+            else _finite_vector(velocities, len(ARM_JOINT_NAMES), "joint velocities")
+        )
+        for index, (joint_id, position, velocity) in enumerate(
+            zip(self._joint_ids[:6], position_values, velocity_values)
+        ):
+            lower, upper = (float(value) for value in self._model.jnt_range[joint_id])
+            if position < lower - 1e-6 or position > upper + 1e-6:
+                raise ValueError(
+                    f"joint position {ARM_JOINT_NAMES[index]}={position} is outside [{lower}, {upper}]"
+                )
+            qpos_address = int(self._model.jnt_qposadr[joint_id])
+            qvel_address = int(self._model.jnt_dofadr[joint_id])
+            self._data.qpos[qpos_address] = min(max(position, lower), upper)
+            self._data.qvel[qvel_address] = velocity
+            self._position_targets[index] = self._data.qpos[qpos_address]
+        if gripper_width is not None:
+            left, right, _reached = gripper_joint_positions_for_width(gripper_width)
+            for index, value in zip((-2, -1), (left, right)):
+                joint_id = self._joint_ids[index]
+                self._data.qpos[int(self._model.jnt_qposadr[joint_id])] = value
+                self._data.qvel[int(self._model.jnt_dofadr[joint_id])] = 0.0
+                self._position_targets[index] = value
+        self._arm_controller.reset()
+        self._control_phase = 0
+        self._mj.mj_forward(self._model, self._data)
+        self._seed_arm_torque_from_gravity()
+        self._apply_motor_control()
+        self._mj.mj_forward(self._model, self._data)
+        return self.get_state()
+
     def step(self, n_steps: int = 1) -> SimulationState:
         self._ensure_open()
         if isinstance(n_steps, bool) or not isinstance(n_steps, int):

@@ -1,5 +1,8 @@
 # reBotArm ROS2 SDK
 
+Real2Sim 实时跟随与 MuJoCo Viewer 见
+[`docs/real2sim_bridge_zh.md`](docs/real2sim_bridge_zh.md)。
+
 MuJoCo Pick 精细抓取环境见 [`docs/mujoco_pick_zh.md`](docs/mujoco_pick_zh.md)。
 
 MuJoCo Sim2Real/Real2Sim 仿真侧命令和验收流程见

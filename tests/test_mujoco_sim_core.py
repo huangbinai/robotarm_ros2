@@ -50,6 +50,27 @@ def test_state_records_are_immutable() -> None:
         state.joint_positions[0] = 1.0
 
 
+def test_mirror_joint_state_sets_exact_arm_and_gripper_state(runtime_sim) -> None:
+    target = (0.1, -0.8, -1.0, 0.3, 0.0, 0.0)
+    velocity = (0.01, 0.0, 0.0, 0.0, 0.0, -0.01)
+
+    state = runtime_sim.mirror_joint_state(
+        target,
+        velocity,
+        gripper_width=0.04,
+    )
+
+    assert state.joint_positions[:6] == pytest.approx(target)
+    assert state.joint_velocities[:6] == pytest.approx(velocity)
+    assert state.gripper_width == pytest.approx(0.04)
+    assert runtime_sim.control_targets[:6] == pytest.approx(target)
+
+
+def test_mirror_joint_state_rejects_out_of_range_position(runtime_sim) -> None:
+    with pytest.raises(ValueError, match="outside"):
+        runtime_sim.mirror_joint_state((0.0, 0.1, -1.0, 0.3, 0.0, 0.0))
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [

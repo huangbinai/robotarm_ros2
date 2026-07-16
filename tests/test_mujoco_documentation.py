@@ -6,6 +6,7 @@ README = ROOT / "src" / "rebotarm_simulation" / "README_mujoco.md"
 COMMANDS = ROOT / "docs" / "rebotarm_feature_commands.md"
 SIM2REAL = ROOT / "docs" / "sim2real_workflow_zh.md"
 PICK = ROOT / "docs" / "mujoco_pick_zh.md"
+REAL2SIM = ROOT / "docs" / "real2sim_bridge_zh.md"
 
 
 def _text(path: Path) -> str:
@@ -178,5 +179,22 @@ def test_pick_documentation_defines_task_contract_and_acceptance() -> None:
         "dropped_after_grasp",
         "success_rate=0",
         "脚本专家或 IK 抓取基线",
+    ):
+        assert value in text
+
+
+def test_real2sim_documentation_defines_read_only_bridge_and_viewer() -> None:
+    readme = _text(README)
+    text = _text(REAL2SIM)
+    assert "../../docs/real2sim_bridge_zh.md" in readme
+    for value in (
+        "默认只读 ROS 2 状态",
+        "/real2sim/joint_states",
+        "real2sim_mapping.yaml",
+        "real2sim_acceptance",
+        "real2sim_bridge.launch.py",
+        "real2sim_viewer",
+        "mode:=mirror",
+        "不把 MuJoCo 接触力反馈给实机电机",
     ):
         assert value in text

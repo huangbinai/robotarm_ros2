@@ -1,5 +1,8 @@
 # reBotArm MuJoCo 仿真底座
 
+实机状态驱动 MuJoCo 的只读 Real2Sim Bridge、mirror/physics 模式和 Viewer 使用方法见
+[`../../docs/real2sim_bridge_zh.md`](../../docs/real2sim_bridge_zh.md)。
+
 Pick 精细抓取环境、成功/失败判定和批量验收见
 [`../../docs/mujoco_pick_zh.md`](../../docs/mujoco_pick_zh.md)。
 

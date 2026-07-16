@@ -267,6 +267,51 @@ with RebotArmReachEnv() as env:
 默认 `step()` 使用 Gymnasium 的 `terminated/truncated` 形状，同时在 `info` 里提供
 `done`；旧 Gym 风格代码可直接调用 `step_done()` 获取 `(obs, reward, done, info)`。
 
+## Sim2Real / Real2Sim 基础层
+
+当前先实现不连接实机的基础设施：随机化、统一轨迹日志、仿真回放和误差比较。
+默认 profile 不改变现有 MuJoCo 行为；`training_profile` 只在显式传入时启用。
+
+```python
+from pathlib import Path
+
+from rebotarm_simulation.mujoco_env import RebotArmReachEnv
+from rebotarm_simulation.sim2real import (
+    RandomizationConfig,
+    TrajectoryRecorder,
+)
+
+config = RandomizationConfig.from_yaml(
+    Path("src/rebotarm_simulation/config/sim2real_randomization.yaml"),
+    profile="training_profile",
+)
+sample = config.sample(seed=7)
+recorder = TrajectoryRecorder(episode_id="reach-0007", source="sim")
+
+with RebotArmReachEnv() as env:
+    env.reset(seed=7, randomization=sample)
+    for step_index in range(100):
+        action = [0.0] * 7
+        obs, reward, terminated, truncated, info = env.step(action)
+        recorder.append(
+            env.sample_from_last_step(
+                action,
+                episode_id="reach-0007",
+                step_index=step_index,
+            )
+        )
+        if terminated or truncated:
+            break
+
+recorder.to_jsonl("logs/reach-0007.jsonl")
+```
+
+相同 seed 会得到相同随机化 sample。`RandomizationSession` 会显式修改并在退出时恢复
+MuJoCo 的质量、阻尼、摩擦和 arm torque scale。日志格式不依赖 ROS 2，未来真实机械臂
+只需要把数据转换成同一个 `TrajectorySample(source="real")`。`replay_actions()` 和
+`compare_trajectories()` 可用于仿真回放和误差报告；当前阶段不宣称已经完成真实系统辨识
+或 sim-to-real 精度标定。
+
 后续架构是云服务器运行无界面 MuJoCo 并行训练，本地 Ubuntu VM 做模型验证、
 ROS 2 联调和策略推理。现在只提供可复用物理/API 底座和 Reach rollout 验证，
 不宣称已经有可用策略或训练收敛结果。

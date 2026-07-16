@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 from .mujoco_batch import run_batch
 from .mujoco_contact_check import run_contact_check
 from .mujoco_health import collect_health
+from .mujoco_pick_batch import run_pick_batch
 
 
 def _run_step(name: str, operation: Callable[[], dict]) -> dict:
@@ -63,6 +64,18 @@ def run_acceptance_suite(
         _run_step(
             "headless_reach_batch",
             lambda: run_batch(model=model, episodes=1, steps=5, seed=0),
+        ),
+        _run_step(
+            "headless_pick_environment",
+            lambda: run_pick_batch(
+                model=model,
+                episodes=1,
+                steps=5,
+                seed=0,
+                action_magnitude=0.0,
+                config_path=None,
+                profile="default",
+            ),
         ),
         _run_step(
             "cube_contact",

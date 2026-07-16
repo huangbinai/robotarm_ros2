@@ -5,6 +5,7 @@ ROOT = Path(__file__).parents[1]
 README = ROOT / "src" / "rebotarm_simulation" / "README_mujoco.md"
 COMMANDS = ROOT / "docs" / "rebotarm_feature_commands.md"
 SIM2REAL = ROOT / "docs" / "sim2real_workflow_zh.md"
+PICK = ROOT / "docs" / "mujoco_pick_zh.md"
 
 
 def _text(path: Path) -> str:
@@ -161,5 +162,21 @@ def test_sim2real_documentation_has_complete_no_hardware_workflow() -> None:
         "actuator_torque",
         "contact_penetration",
         "source` 设置为 `real",
+    ):
+        assert value in text
+
+
+def test_pick_documentation_defines_task_contract_and_acceptance() -> None:
+    readme = _text(README)
+    text = _text(PICK)
+    assert "../../docs/mujoco_pick_zh.md" in readme
+    for value in (
+        "不进行强化学习训练，也不连接实机",
+        "RebotArmPickEnv",
+        "rebotarm_simulation.mujoco_pick_batch",
+        "force_closure_candidate",
+        "dropped_after_grasp",
+        "success_rate=0",
+        "脚本专家或 IK 抓取基线",
     ):
         assert value in text

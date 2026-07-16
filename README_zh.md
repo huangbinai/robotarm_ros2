@@ -1,5 +1,7 @@
 # reBotArm ROS2 SDK
 
+MuJoCo Pick 精细抓取环境见 [`docs/mujoco_pick_zh.md`](docs/mujoco_pick_zh.md)。
+
 MuJoCo Sim2Real/Real2Sim 仿真侧命令和验收流程见
 [`docs/sim2real_workflow_zh.md`](docs/sim2real_workflow_zh.md)。
 

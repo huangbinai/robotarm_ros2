@@ -90,6 +90,16 @@ def test_contact_record_validates_names_shape_finiteness_and_force() -> None:
         ContactInfo("a", "b", "ga", "gb", (0.0, float("nan"), 0.0), 0.0)
     with pytest.raises(ValueError, match="non-negative"):
         ContactInfo("a", "b", "ga", "gb", (0.0, 0.0, 0.0), -1.0)
+    with pytest.raises(ValueError, match="finite"):
+        ContactInfo(
+            "a",
+            "b",
+            "ga",
+            "gb",
+            (0.0, 0.0, 0.0),
+            1.0,
+            normal=(0.0, float("nan"), 0.0),
+        )
 
 
 @pytest.mark.parametrize(

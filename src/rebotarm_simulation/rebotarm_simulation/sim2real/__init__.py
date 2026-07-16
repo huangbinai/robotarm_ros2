@@ -5,6 +5,7 @@ from .randomization import (
     RandomizationRange,
     RandomizationSample,
     RandomizationSession,
+    default_randomization_config_path,
 )
 from .replay_compare import ComparisonThresholds, compare_trajectories, replay_actions
 from .schemas import ComparisonReport, TrajectoryMetrics, TrajectorySample
@@ -23,6 +24,7 @@ __all__ = [
     "TrajectorySample",
     "SafetyLimits",
     "compare_trajectories",
+    "default_randomization_config_path",
     "replay_actions",
     "safety_limits_from_env",
     "validate_trajectory",

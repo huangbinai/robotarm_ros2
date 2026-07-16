@@ -9,6 +9,7 @@ from rebotarm_simulation import mujoco_acceptance
 def test_acceptance_suite_aggregates_core_steps(monkeypatch):
     monkeypatch.setattr(mujoco_acceptance, "collect_health", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_batch", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(mujoco_acceptance, "run_pick_batch", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_contact_check", lambda *a, **k: {"ok": True})
 
     payload = mujoco_acceptance.run_acceptance_suite(skip_renderer=True)
@@ -17,6 +18,7 @@ def test_acceptance_suite_aggregates_core_steps(monkeypatch):
     assert [step["name"] for step in payload["steps"]] == [
         "health",
         "headless_reach_batch",
+        "headless_pick_environment",
         "cube_contact",
     ]
 
@@ -27,6 +29,7 @@ def test_acceptance_suite_marks_failed_step_without_crashing(monkeypatch):
 
     monkeypatch.setattr(mujoco_acceptance, "collect_health", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_batch", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(mujoco_acceptance, "run_pick_batch", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_contact_check", fail_contact)
 
     payload = mujoco_acceptance.run_acceptance_suite(skip_renderer=True)
@@ -40,6 +43,7 @@ def test_acceptance_suite_marks_failed_step_without_crashing(monkeypatch):
 def test_acceptance_main_outputs_json_and_exit_code(monkeypatch):
     monkeypatch.setattr(mujoco_acceptance, "collect_health", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_batch", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(mujoco_acceptance, "run_pick_batch", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(mujoco_acceptance, "run_contact_check", lambda *a, **k: {"ok": True})
     output = io.StringIO()
 
@@ -58,6 +62,7 @@ def test_acceptance_source_documents_optional_ros_and_moveit_probes():
         "include_ros",
         "include_moveit",
         "headless_reach_batch",
+        "headless_pick_environment",
         "cube_contact",
     ):
         assert value in source

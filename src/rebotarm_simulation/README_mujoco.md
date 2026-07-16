@@ -1,5 +1,8 @@
 # reBotArm MuJoCo 仿真底座
 
+Pick 精细抓取环境、成功/失败判定和批量验收见
+[`../../docs/mujoco_pick_zh.md`](../../docs/mujoco_pick_zh.md)。
+
 Sim2Real/Real2Sim 的仿真侧随机化、JSONL 记录、确定性回放、轨迹比较和批量安全
 检查见 [`../../docs/sim2real_workflow_zh.md`](../../docs/sim2real_workflow_zh.md)。该流程
 不连接实机。

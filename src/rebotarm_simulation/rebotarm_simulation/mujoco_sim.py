@@ -496,6 +496,7 @@ class RebotArmMujoco:
                 position=tuple(float(value) for value in contact.pos),
                 force=float(np.linalg.norm(force[:3])),
                 penetration_depth=max(0.0, -float(contact.dist)),
+                normal=tuple(float(value) for value in contact.frame[:3]),
             ))
         return tuple(contacts)
 

@@ -97,6 +97,19 @@ class RebotArmReachEnv:
         return obs, self._info(obs)
 
     def step(self, action: Sequence[float]):
+        self._advance_action(action)
+        obs = self._observation()
+        distance = float(np.linalg.norm(obs["ee_position"] - obs["target_position"]))
+        reward = -distance
+        terminated = distance <= self.config.target_tolerance_m
+        truncated = self._step_count >= self.config.max_steps
+        info = self._info(obs)
+        info["done"] = terminated or truncated
+        info["terminated"] = terminated
+        info["truncated"] = truncated
+        return obs, reward, terminated, truncated, info
+
+    def _advance_action(self, action: Sequence[float]) -> np.ndarray:
         action_vector = _finite_action(action)
         applied_action = self._apply_randomized_action(action_vector)
         current_targets = np.asarray(self._sim.control_targets[:6], dtype=float)
@@ -109,16 +122,7 @@ class RebotArmReachEnv:
             )
         self._sim.step(self.config.physics_steps_per_action)
         self._step_count += 1
-        obs = self._observation()
-        distance = float(np.linalg.norm(obs["ee_position"] - obs["target_position"]))
-        reward = -distance
-        terminated = distance <= self.config.target_tolerance_m
-        truncated = self._step_count >= self.config.max_steps
-        info = self._info(obs)
-        info["done"] = terminated or truncated
-        info["terminated"] = terminated
-        info["truncated"] = truncated
-        return obs, reward, terminated, truncated, info
+        return applied_action
 
     def _apply_randomized_action(self, action_vector: np.ndarray) -> np.ndarray:
         sample = self._randomization_sample

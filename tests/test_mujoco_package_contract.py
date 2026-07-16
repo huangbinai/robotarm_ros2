@@ -66,6 +66,7 @@ def test_setup_installs_mujoco_resources_and_entrypoints() -> None:
         "rebotarm_mujoco_cli",
         "rebotarm_mujoco_viewer",
         "rebotarm_mujoco_node",
+        "rebotarm_mujoco_pick_batch",
         "rebotarm_sim2real",
         "rebotarm_urdf_to_mjcf",
     ):

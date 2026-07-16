@@ -4,7 +4,6 @@ import argparse
 from dataclasses import asdict
 import json
 import math
-import os
 from pathlib import Path
 import sys
 from typing import Callable, Sequence
@@ -17,6 +16,7 @@ from .sim2real import (
     RandomizationConfig,
     TrajectoryRecorder,
     compare_trajectories,
+    default_randomization_config_path,
     safety_limits_from_env,
     validate_trajectory,
 )
@@ -114,7 +114,7 @@ def run_rollout(
     env_factory: Callable = RebotArmReachEnv,
 ) -> dict:
     config = RandomizationConfig.from_yaml(
-        config_path or _default_randomization_config(), profile=profile
+        config_path or default_randomization_config_path(), profile=profile
     )
     randomization = config.sample(seed)
     rng = np.random.default_rng(seed)
@@ -157,7 +157,7 @@ def run_replay(
 ) -> dict:
     reference = TrajectoryRecorder.from_jsonl(input_path)
     randomization = RandomizationConfig.from_yaml(
-        config_path or _default_randomization_config(), profile=profile
+        config_path or default_randomization_config_path(), profile=profile
     ).sample(seed)
     candidate, safety = _run_actions(
         model=model,
@@ -219,7 +219,7 @@ def run_batch_check(
     env_factory: Callable = RebotArmReachEnv,
 ) -> dict:
     config = RandomizationConfig.from_yaml(
-        config_path or _default_randomization_config(), profile=profile
+        config_path or default_randomization_config_path(), profile=profile
     )
     results = []
     for episode in range(episodes):
@@ -316,22 +316,6 @@ def _thresholds(args) -> ComparisonThresholds:
         actuator_torque_max=args.actuator_torque_max,
         contact_force_max=args.contact_force_max,
     )
-
-
-def _default_randomization_config() -> Path:
-    relative = Path("config/sim2real_randomization.yaml")
-    package_root = Path(__file__).resolve().parents[1]
-    candidates = [
-        package_root / relative,
-        Path(sys.prefix) / "share/rebotarm_simulation" / relative,
-    ]
-    for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(os.pathsep):
-        if prefix:
-            candidates.append(Path(prefix) / "share/rebotarm_simulation" / relative)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("could not locate sim2real_randomization.yaml")
 
 
 def _write_report(path: str | None, payload: dict) -> None:

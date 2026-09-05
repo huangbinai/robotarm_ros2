@@ -144,14 +144,14 @@ def alert_panel(state) -> TextPanel | None:
 
 def compact_help_panel() -> TextPanel:
     return TextPanel(
-        "Tab / F1\nZ/X  J/K  C/O  S\n-/+  G/H/P  V\nF2  F6  F7  Q",
-        "mode / frame\nselect  move  grip  stop\nspeed  control  collision\nplot  page  help  quit",
+        "Tab / F8\nZ/X  J/K  C/O  S\n-/+  G/H/P  V\nF6/7/9  F10/11/12  Q",
+        "mode / frame\nselect  move  grip  stop\nspeed  control  collision\npage/help/plot  rec/play/clear  quit",
     )
 
 
 def full_help_panel() -> TextPanel:
     return TextPanel(
-        "CONTROLS\nTab\nF1\nZ / X\nJ / K\nC / O\nS\n- / +\nG / H / P\nV\nF2\nF3 / F4 / F5\nF6\nF7\nT / R\nQ",
+        "CONTROLS\nTab\nF8\nZ / X\nJ / K\nC / O\nS\n- / +\nG / H / P\nV\nF9\nF10 / F11 / F12\nF6\nF7\nT / R\nQ",
         "\nJoint / XYZ / RPY\nWorld / Tool frame\nPrevious / next item\nStart negative / positive jog\nClose / open gripper\nStop and Hold\nSpeed down / up\nGravity / Hold / Position\nCollision layer\nPlot: off / tracking / effort\nRecord / replay / clear\nOverview / Joints / Trajectory\nClose help\nHome / reset\nQuit",
     )
 

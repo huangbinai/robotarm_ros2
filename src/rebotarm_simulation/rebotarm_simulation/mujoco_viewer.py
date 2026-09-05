@@ -28,8 +28,8 @@ from .mujoco_visualization import GhostArmOverlay, TelemetryFigures
 
 HELP = (
     "Tab JOINT/XYZ/RPY | Z/X select | J/K start jog | C/O gripper | S stop\n"
-    "-/+ speed | F1 world/tool | G gravity | H hold | P position | V collision | F2 plots\n"
-    "F3 record | F4 replay/pause | F5 clear | F6 page | F7 help | T home | Q quit\n"
+    "-/+ speed | G gravity | H hold | P position | V collision | F6 page | F7 help\n"
+    "F8 world/tool | F9 plots | F10 record | F11 replay | F12 clear | T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
 )
 JOG_SPEED_LEVELS = (
@@ -184,20 +184,20 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
         )
     if key == "v":
         return replace(state, collision_visible=not state.collision_visible)
-    if key == "f2":
+    if key == "f9":
         page = PLOT_PAGES[(PLOT_PAGES.index(state.plot_page) + 1) % len(PLOT_PAGES)]
         return replace(state, plot_page=page, help_visible=False)
-    if key == "f1":
+    if key == "f8":
         return replace(
             state,
             cartesian_frame="tool" if state.cartesian_frame == "world" else "world",
             joint_jog_direction=0,
         )
-    if key == "f3":
+    if key == "f10":
         return replace(state, record_toggle=True)
-    if key == "f4":
+    if key == "f11":
         return replace(state, replay_toggle=True)
-    if key == "f5":
+    if key == "f12":
         return replace(state, trajectory_clear=True)
     if key == "f6":
         page = DASHBOARD_PAGES[
@@ -712,7 +712,7 @@ def configure_viewer_rendering(
     viewer, *, collision_visible: bool, target_visible: bool = False
 ) -> None:
     # ``show_left_ui=False`` and ``show_right_ui=False`` only set the initial
-    # state.  Simulate still handles Tab/F1 after our callback and can reopen
+    # state.  Simulate still handles Tab after our callback and can reopen
     # its native panels.  Keep those panels disabled so project controls never
     # change the dashboard layout.  This is isolated behind a compatibility
     # guard because MuJoCo currently exposes the switches on the passive
@@ -746,7 +746,7 @@ def configure_viewer_rendering(
                 flags[index] = int(default)
             # Some stock shortcuts select labels or RGB coordinate frames via
             # fields outside ``flags``.  Reset those too; otherwise controls
-            # such as Tab/F1/V can leave large debug axes over the robot even
+            # such as Tab/F6/F7/V can leave large debug axes over the robot even
             # when the dashboard says the collision layer is hidden.
             option.frame = mujoco.mjtFrame.mjFRAME_NONE
             option.label = mujoco.mjtLabel.mjLABEL_NONE
@@ -910,13 +910,13 @@ def _decode_key(keycode: int) -> str:
         return "+"
     special = {
         258: "tab",
-        290: "f1",
-        291: "f2",
-        292: "f3",
-        293: "f4",
-        294: "f5",
         295: "f6",
         296: "f7",
+        297: "f8",
+        298: "f9",
+        299: "f10",
+        300: "f11",
+        301: "f12",
     }
     if keycode in special:
         return special[keycode]

@@ -419,8 +419,8 @@ def test_default_overlay_is_compact_and_contains_only_operational_overview():
     text = mujoco_viewer.overlay_text(state)
     for expected in (
         "GRAVITY_COMP", "J3", "+0.200", "+0.250", "+0.050", "0.035/0.040",
-        "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "Tab / F1",
-        "F2  F6  F7  Q",
+        "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "Tab / F8",
+        "F6/7/9  F10/11/12  Q",
     ):
         assert expected in text
     for hidden_detail in ("TAU REQ/OUT", "+1.50/ +1.20", "TRAJECTORY\nRECORD"):
@@ -584,18 +584,24 @@ def test_tab_cycles_joint_xyz_rpy_and_axis_selection_is_independent():
     assert state.interaction_mode == "joint"
 
 
-def test_special_keys_toggle_plots_record_replay_and_clear():
+def test_conflict_free_function_keys_toggle_plots_record_replay_and_clear():
     state = mujoco_viewer.ViewerControlState()
-    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(291))
+    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(298))
     assert state.plot_page == "tracking"
-    state = mujoco_viewer.reduce_key(state, "f2")
+    state = mujoco_viewer.reduce_key(state, "f9")
     assert state.plot_page == "effort"
-    state = mujoco_viewer.reduce_key(state, "f2")
+    state = mujoco_viewer.reduce_key(state, "f9")
     assert state.plot_page == "off"
-    for keycode, field in ((292, "record_toggle"), (293, "replay_toggle"),
-                           (294, "trajectory_clear")):
+    for keycode, field in ((299, "record_toggle"), (300, "replay_toggle"),
+                           (301, "trajectory_clear")):
         state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode))
         assert getattr(state, field) is True
+
+
+def test_native_f1_to_f5_are_not_reused_by_project_controls():
+    state = mujoco_viewer.ViewerControlState()
+    for keycode in range(290, 295):
+        assert mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode)) == state
 
 
 def test_f7_help_hides_plot_and_restores_page_when_closed():

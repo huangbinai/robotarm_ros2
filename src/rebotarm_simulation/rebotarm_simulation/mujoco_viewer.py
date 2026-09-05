@@ -19,8 +19,14 @@ from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 HELP = (
     "Z/X select | J/K start joint jog | C/O start gripper jog | S stop + hold\n"
-    "G gravity | H capture + hold | P track target | V collision | T home | Q quit\n"
+    "-/+ speed | G gravity | H capture + hold | P track target | V collision\n"
+    "T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
+)
+JOG_SPEED_LEVELS = (
+    ("PRECISION", 0.25),
+    ("NORMAL", 1.0),
+    ("FAST", 2.5),
 )
 MODE_DESCRIPTIONS = {
     "position": "tracks saved target",
@@ -57,6 +63,9 @@ class ViewerControlState:
     home: bool = False
     mode: str | None = None
     active_mode: str = "hold"
+    jog_speed_index: int = 1
+    joint_jog_rate: float = 0.20
+    gripper_jog_rate: float = 0.02
     stop_jog: bool = False
     quit: bool = False
 
@@ -85,6 +94,13 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
         return replace(state, joint_jog_direction=0, gripper_jog_direction=-1)
     if key == "o":
         return replace(state, joint_jog_direction=0, gripper_jog_direction=1)
+    if key == "-":
+        return replace(state, jog_speed_index=max(0, state.jog_speed_index - 1))
+    if key in ("=", "+"):
+        return replace(
+            state,
+            jog_speed_index=min(len(JOG_SPEED_LEVELS) - 1, state.jog_speed_index + 1),
+        )
     if key == "s":
         return replace(
             state,
@@ -169,7 +185,12 @@ def process_command_events(sim, events: SimpleQueue, state: ViewerControlState, 
         state = replace(state, paused=result.paused, quit=state.quit or result.should_quit)
         if result.value is not None:
             print(f"command result: {_command_value_text(result.value)}", file=status_stream, flush=True)
-        state = _state_from_sim(sim, paused=state.paused, selected_joint=state.selected_joint)
+        state = _state_from_sim(
+            sim,
+            paused=state.paused,
+            selected_joint=state.selected_joint,
+            previous=state,
+        )
         state = replace(state, quit=state.quit)
         if state.quit:
             break
@@ -219,7 +240,13 @@ def process_key_events(
     return state
 
 
-def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> ViewerControlState:
+def _state_from_sim(
+    sim,
+    *,
+    paused: bool = False,
+    selected_joint: int = 0,
+    previous: ViewerControlState | None = None,
+) -> ViewerControlState:
     state = sim.get_state()
     targets = tuple(float(value) for value in sim.control_targets[:6])
     positions = tuple(float(value) for value in state.joint_positions[:6])
@@ -241,6 +268,10 @@ def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> Vi
         saturated=control[2],
         watchdog_remaining_s=control[3],
         active_mode=control[4],
+        collision_visible=False if previous is None else previous.collision_visible,
+        jog_speed_index=1 if previous is None else previous.jog_speed_index,
+        joint_jog_rate=0.20 if previous is None else previous.joint_jog_rate,
+        gripper_jog_rate=0.02 if previous is None else previous.gripper_jog_rate,
     )
 
 
@@ -322,7 +353,10 @@ def apply_pending_commands(
             sim.reset()
         _set_mode(sim, "hold")
         state = _state_from_sim(
-            sim, paused=state.paused, selected_joint=state.selected_joint
+            sim,
+            paused=state.paused,
+            selected_joint=state.selected_joint,
+            previous=state,
         )
         state = replace(
             state,
@@ -378,14 +412,20 @@ def apply_continuous_jog(
         return state
 
     targets = state.joint_targets
+    speed_scale = JOG_SPEED_LEVELS[state.jog_speed_index][1]
     if state.joint_jog_direction:
         name = ARM_JOINT_NAMES[state.selected_joint]
-        requested = targets[state.selected_joint] + state.joint_jog_direction * joint_rate * dt
+        requested = (
+            targets[state.selected_joint]
+            + state.joint_jog_direction * joint_rate * speed_scale * dt
+        )
         targets = tuple(_command_positions(sim, {name: requested}))
 
     width = state.gripper_width
     if state.gripper_jog_direction:
-        width = _command_gripper(sim, width + state.gripper_jog_direction * gripper_rate * dt)
+        width = _command_gripper(
+            sim, width + state.gripper_jog_direction * gripper_rate * speed_scale * dt
+        )
 
     state = replace(
         state,
@@ -415,10 +455,13 @@ def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
     mode = state.active_mode
     description = MODE_DESCRIPTIONS.get(mode, "unknown control mode")
     saturation_count = sum(state.saturated)
-    left = "SYSTEM\nMODE\nBEHAVIOR\nMOTION\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
+    speed_name, speed_scale = JOG_SPEED_LEVELS[state.jog_speed_index]
+    left = "SYSTEM\nMODE\nBEHAVIOR\nMOTION\nSPEED\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
     right = (
         f"{_run_state_text(state)}\n{mode.upper()}\n{description}\n"
         f"{_jog_state_text(state)}\n"
+        f"{speed_name} J:{state.joint_jog_rate * speed_scale:.2f} "
+        f"G:{state.gripper_jog_rate * speed_scale:.3f}\n"
         f"{'SHOWN' if state.collision_visible else 'HIDDEN'}\n"
         f"{state.contact_count}\n{state.max_contact_force:.2f} N\n"
         f"{saturation_count}/6"
@@ -460,8 +503,8 @@ def gripper_panel_text(state: ViewerControlState) -> tuple[str, str]:
 
 def controls_panel_text() -> tuple[str, str]:
     return (
-        "Z / X\nJ / K\nC / O\nS\nG\nH\nP\nV\nT / R\nQ",
-        "select joint\nstart joint - / +\nclose / open gripper\nSTOP + hold\n"
+        "Z / X\nJ / K\nC / O\n- / +\nS\nG\nH\nP\nV\nT / R\nQ",
+        "select joint\nstart joint - / +\nclose / open gripper\nspeed down / up\nSTOP + hold\n"
         "gravity only\ncapture + hold\ntrack saved target\ncollision view\n"
         "home / reset\nquit",
     )
@@ -543,8 +586,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="MuJoCo scene XML path")
     parser.add_argument("--joint-step", type=_positive_float, default=0.01, help="joint jog in radians")
     parser.add_argument("--gripper-step", type=_positive_float, default=0.001, help="gripper jog in metres")
-    parser.add_argument("--joint-rate", type=_positive_float, default=0.08, help="held joint jog rate in rad/s")
-    parser.add_argument("--gripper-rate", type=_positive_float, default=0.01, help="held gripper jog rate in m/s")
+    parser.add_argument(
+        "--joint-rate",
+        type=_positive_float,
+        default=0.20,
+        help="normal-gear joint jog rate in rad/s",
+    )
+    parser.add_argument(
+        "--gripper-rate",
+        type=_positive_float,
+        default=0.02,
+        help="normal-gear gripper jog rate in m/s",
+    )
     parser.add_argument(
         "--jog-hold-time",
         type=_positive_float,
@@ -665,7 +718,11 @@ def main(
         if launch_passive is None:
             launch_passive = importlib.import_module("mujoco.viewer").launch_passive
 
-        state = _state_from_sim(sim)
+        state = replace(
+            _state_from_sim(sim),
+            joint_jog_rate=args.joint_rate,
+            gripper_jog_rate=args.gripper_rate,
+        )
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
         command_events = SimpleQueue()

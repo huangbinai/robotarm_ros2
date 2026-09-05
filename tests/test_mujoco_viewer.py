@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 from queue import SimpleQueue
 import threading
@@ -206,6 +207,20 @@ def test_stop_key_cancels_all_jog_and_requests_hold():
     assert state.joint_jog_direction == 0
     assert state.gripper_jog_direction == 0
     assert state.stop_jog is True
+
+
+def test_speed_keys_select_bounded_precision_normal_and_fast_gears():
+    state = mujoco_viewer.ViewerControlState()
+    assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "NORMAL"
+
+    state = mujoco_viewer.reduce_key(state, "-")
+    assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "PRECISION"
+    assert mujoco_viewer.reduce_key(state, "-").jog_speed_index == 0
+
+    state = mujoco_viewer.reduce_key(state, "+")
+    state = mujoco_viewer.reduce_key(state, "=")
+    assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "FAST"
+    assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 2
 
 
 def test_drain_key_events_preserves_burst_order_and_counts():
@@ -427,7 +442,11 @@ def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
     state = mujoco_viewer.process_command_events(
         sim,
         events,
-        mujoco_viewer.ViewerControlState(),
+        mujoco_viewer.ViewerControlState(
+            jog_speed_index=2,
+            joint_jog_rate=0.3,
+            gripper_jog_rate=0.04,
+        ),
         status,
     )
 
@@ -437,6 +456,9 @@ def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
     assert state.joint_targets == pytest.approx(tuple(sim.targets))
     assert state.gripper_width == pytest.approx(0.04)
     assert state.active_mode == "hold"
+    assert state.jog_speed_index == 2
+    assert state.joint_jog_rate == pytest.approx(0.3)
+    assert state.gripper_jog_rate == pytest.approx(0.04)
     assert status.getvalue().count("command result:") == 3
 
 
@@ -492,6 +514,33 @@ def test_continuous_jog_advances_target_until_explicit_stop():
     assert sim.control_mode == "hold"
 
 
+def test_fast_gear_scales_joint_and_gripper_jog_rates():
+    sim = FakeSim()
+    state = mujoco_viewer.ViewerControlState(
+        joint_jog_direction=1,
+        jog_speed_index=2,
+        gripper_width=0.05,
+    )
+    state = mujoco_viewer.apply_continuous_jog(
+        sim,
+        state,
+        dt=0.01,
+        joint_rate=0.4,
+        gripper_rate=0.03,
+    )
+    assert sim.targets[0] == pytest.approx(0.01)
+
+    state = replace(state, joint_jog_direction=0, gripper_jog_direction=-1)
+    state = mujoco_viewer.apply_continuous_jog(
+        sim,
+        state,
+        dt=0.01,
+        joint_rate=0.4,
+        gripper_rate=0.03,
+    )
+    assert sim.width == pytest.approx(0.04925)
+
+
 def test_parser_accepts_model_and_positive_steps():
     args = mujoco_viewer.build_parser().parse_args(
         [
@@ -504,6 +553,8 @@ def test_parser_accepts_model_and_positive_steps():
     )
     assert args.no_command_input is False
     assert args.verbose_status is False
+    assert args.joint_rate == pytest.approx(0.20)
+    assert args.gripper_rate == pytest.approx(0.02)
     for flag in ("--joint-step", "--gripper-step", "--duration"):
         with pytest.raises(SystemExit):
             mujoco_viewer.build_parser().parse_args([flag, "0"])
@@ -562,7 +613,7 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
         status_stream=status,
     )
     assert code == 0
-    assert ("joints", {"joint1": pytest.approx(0.0008)}) in sim.calls
+    assert ("joints", {"joint1": pytest.approx(0.002)}) in sim.calls
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
@@ -703,7 +754,7 @@ def test_callback_from_other_thread_only_enqueues_until_main_loop_drains():
         sleep=lambda _: None,
         status_stream=io.StringIO(),
     ) == 0
-    assert sim.targets[0] == pytest.approx(0.0008)
+    assert sim.targets[0] == pytest.approx(0.002)
     assert sim.call_threads and set(sim.call_threads) == {main_thread}
 
 

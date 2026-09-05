@@ -5,6 +5,7 @@ from queue import SimpleQueue
 import threading
 from types import SimpleNamespace
 from collections.abc import Mapping
+import warnings
 
 import pytest
 
@@ -511,6 +512,25 @@ def test_parser_accepts_model_and_positive_steps():
 def test_parser_enables_terminal_state_stream_only_on_request():
     args = mujoco_viewer.build_parser().parse_args(["--verbose-status"])
     assert args.verbose_status is True
+
+
+def test_viewer_launch_hides_only_known_wayland_window_position_warning():
+    def launch(*_args, **_kwargs):
+        warnings.warn(
+            "(65548) b'Wayland: The platform does not provide the window position'",
+            UserWarning,
+        )
+        warnings.warn("different GLFW problem", UserWarning)
+        return object()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        viewer = mujoco_viewer._launch_passive_viewer(
+            launch, object(), object(), lambda _keycode: None
+        )
+
+    assert viewer is not None
+    assert [str(item.message) for item in caught] == ["different GLFW problem"]
 
 
 @pytest.mark.parametrize("value", ["-1", "nan", "inf"])

@@ -236,6 +236,41 @@ def test_control_modes_use_public_names_and_accept_legacy_pos_vel_alias(runtime_
         runtime_sim.set_control_mode("unknown")
 
 
+def test_reentering_hold_is_an_exact_noop(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.step(200)
+    targets_before = tuple(runtime_sim.control_targets)
+    status_before = runtime_sim.get_control_status()
+    controller_state_before = runtime_sim._arm_controller.applied_torque.copy()
+    actuator_control_before = runtime_sim._data.ctrl.copy()
+    control_phase_before = runtime_sim._control_phase
+
+    assert runtime_sim.set_mode("hold") == "hold"
+
+    status_after = runtime_sim.get_control_status()
+    assert tuple(runtime_sim.control_targets) == targets_before
+    assert status_after.joint_targets == status_before.joint_targets
+    assert status_after.requested_torques == status_before.requested_torques
+    assert status_after.applied_torques == status_before.applied_torques
+    assert runtime_sim._arm_controller.applied_torque == pytest.approx(
+        controller_state_before
+    )
+    assert runtime_sim._data.ctrl == pytest.approx(actuator_control_before)
+    assert runtime_sim._control_phase == control_phase_before
+
+
+def test_entering_hold_from_gravity_comp_captures_pose(runtime_sim) -> None:
+    runtime_sim.reset_home()
+    runtime_sim.set_mode("gravity_comp")
+    runtime_sim.step(20)
+    position_before_hold = runtime_sim.get_state().joint_positions[:6]
+
+    assert runtime_sim.set_mode("hold") == "hold"
+    assert runtime_sim.get_control_status().joint_targets == pytest.approx(
+        position_before_hold
+    )
+
+
 def test_default_reset_uses_home_and_hold(runtime_sim) -> None:
     state = runtime_sim.reset()
 

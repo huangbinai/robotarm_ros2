@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from typing import Callable, Sequence
+import warnings
 
 from .mujoco_commands import dispatch_sim_command
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
@@ -578,6 +579,23 @@ def _decode_key(keycode: int) -> str:
         return ""
 
 
+def _launch_passive_viewer(launch_passive: Callable, model, data, on_key):
+    """Launch while hiding one harmless GLFW/Wayland capability warning."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Wayland: The platform does not provide the window position.*",
+            category=Warning,
+        )
+        return launch_passive(
+            model,
+            data,
+            key_callback=on_key,
+            show_left_ui=False,
+            show_right_ui=False,
+        )
+
+
 def _close_viewer_then_sim(
     viewer,
     sim,
@@ -678,13 +696,7 @@ def main(
             events.put(keycode)
 
         model, data = sim._unsafe_viewer_handles()
-        viewer = launch_passive(
-            model,
-            data,
-            key_callback=on_key,
-            show_left_ui=False,
-            show_right_ui=False,
-        )
+        viewer = _launch_passive_viewer(launch_passive, model, data, on_key)
         configure_viewer_rendering(viewer, collision_visible=False)
         update_viewer_overlay(viewer, state)
         try:

@@ -235,6 +235,13 @@ class RebotArmMujoco:
         mode = _CONTROL_MODE_ALIASES.get(str(mode), str(mode))
         if mode not in CONTROL_MODES:
             raise ValueError(f"control mode must be one of {CONTROL_MODES}")
+        # Re-entering Hold must be a true no-op. Re-capturing the measured
+        # position and resetting the simulated firmware controller on every
+        # keyboard-repeat event creates a small target/torque discontinuity
+        # that is visible as a shake even though the requested mode did not
+        # change.
+        if mode == "hold" and self._control_mode == "hold":
+            return self._control_mode
         if mode == "hold":
             self._sync_arm_targets_to_current_position()
         if mode != "raw_torque":

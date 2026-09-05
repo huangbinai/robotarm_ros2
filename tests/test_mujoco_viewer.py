@@ -223,6 +223,14 @@ def test_speed_keys_select_bounded_precision_normal_and_fast_gears():
     assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 2
 
 
+def test_keypad_plus_and_minus_control_speed_gears():
+    state = mujoco_viewer.ViewerControlState()
+    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(334))
+    assert state.jog_speed_index == 2
+    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(333))
+    assert state.jog_speed_index == 1
+
+
 def test_drain_key_events_preserves_burst_order_and_counts():
     events = SimpleQueue()
     for key in (ord("k"), ord("k"), ord("j"), ord("o"), ord(" "), ord(".")):

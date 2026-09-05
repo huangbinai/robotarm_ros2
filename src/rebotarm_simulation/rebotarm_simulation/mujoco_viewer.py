@@ -626,6 +626,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _decode_key(keycode: int) -> str:
     if keycode == 256:
         return "\x1b"
+    if keycode == 333:  # GLFW_KEY_KP_SUBTRACT
+        return "-"
+    if keycode == 334:  # GLFW_KEY_KP_ADD
+        return "+"
     try:
         return chr(keycode)
     except (TypeError, ValueError):

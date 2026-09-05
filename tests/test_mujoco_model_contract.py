@@ -274,6 +274,14 @@ def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -
     _assert_close(cube.attrib["pos"], "0.28 0 0.04")
     assert cube.find("geom").attrib["type"] == "box"
     assert world.find('light[@name="key_light"]') is not None
+    target = world.find('body[@name="ee_target"]')
+    assert target is not None and target.attrib["mocap"] == "true"
+    target_handle = target.find('geom[@name="ee_target_handle"]')
+    assert target_handle is not None
+    assert target_handle.attrib["contype"] == "0"
+    assert target_handle.attrib["conaffinity"] == "0"
+    assert target_handle.attrib["group"] == "1"
+    assert target.find('site[@name="ee_target_frame"]') is not None
     camera = world.find('camera[@name="fixed_camera"]')
     assert camera is not None
     _assert_close(camera.attrib["pos"], "0.85 -0.90 0.55")

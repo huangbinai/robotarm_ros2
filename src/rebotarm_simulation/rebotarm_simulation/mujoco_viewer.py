@@ -13,20 +13,25 @@ import time
 from typing import Callable, Sequence
 import warnings
 
+from .mujoco_cartesian import CartesianDelta, MujocoCartesianController
 from .mujoco_commands import dispatch_sim_command
+from .mujoco_session import MujocoSession
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
+from .mujoco_telemetry import MujocoTelemetryHistory
+from .mujoco_visualization import GhostArmOverlay, TelemetryFigures
 
 
 HELP = (
-    "Z/X select | J/K start joint jog | C/O start gripper jog | S stop + hold\n"
-    "-/+ speed | G gravity | H capture + hold | P track target | V collision\n"
-    "T home | Q quit\n"
+    "Tab JOINT/XYZ/RPY | Z/X select | J/K start jog | C/O gripper | S stop\n"
+    "-/+ speed | F1 world/tool | G gravity | H hold | P position | V collision | F2 plots\n"
+    "F3 record | F4 replay/pause | F5 clear | T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
 )
 JOG_SPEED_LEVELS = (
     ("PRECISION", 0.25),
     ("NORMAL", 1.0),
     ("FAST", 2.5),
+    ("TURBO", 5.0),
 )
 MODE_DESCRIPTIONS = {
     "position": "tracks saved target",
@@ -67,12 +72,43 @@ class ViewerControlState:
     joint_jog_rate: float = 0.20
     gripper_jog_rate: float = 0.02
     stop_jog: bool = False
+    interaction_mode: str = "joint"
+    selected_cartesian_axis: int = 0
+    cartesian_frame: str = "world"
+    cartesian_accumulator_s: float = 0.0
+    ik_status: str = "idle"
+    ik_error: float = 0.0
+    plots_visible: bool = False
+    recording: bool = False
+    playback_state: str = "idle"
+    playback_progress: float = 0.0
+    record_toggle: bool = False
+    replay_toggle: bool = False
+    trajectory_clear: bool = False
+    cartesian_target_reset: bool = False
     quit: bool = False
 
 
 def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     key = key.lower()
+    if key == "tab":
+        modes = ("joint", "xyz", "rpy")
+        mode = modes[(modes.index(state.interaction_mode) + 1) % len(modes)]
+        return replace(
+            state,
+            interaction_mode=mode,
+            joint_jog_direction=0,
+            gripper_jog_direction=0,
+            cartesian_accumulator_s=0.0,
+        )
     if key == "x":
+        if state.interaction_mode != "joint":
+            return replace(
+                state,
+                selected_cartesian_axis=(state.selected_cartesian_axis + 1) % 3,
+                joint_jog_direction=0,
+                stop_jog=bool(state.joint_jog_direction),
+            )
         return replace(
             state,
             selected_joint=(state.selected_joint + 1) % 6,
@@ -80,6 +116,13 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
             stop_jog=bool(state.joint_jog_direction),
         )
     if key == "z":
+        if state.interaction_mode != "joint":
+            return replace(
+                state,
+                selected_cartesian_axis=(state.selected_cartesian_axis - 1) % 3,
+                joint_jog_direction=0,
+                stop_jog=bool(state.joint_jog_direction),
+            )
         return replace(
             state,
             selected_joint=(state.selected_joint - 1) % 6,
@@ -131,6 +174,20 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
         )
     if key == "v":
         return replace(state, collision_visible=not state.collision_visible)
+    if key == "f2":
+        return replace(state, plots_visible=not state.plots_visible)
+    if key == "f1":
+        return replace(
+            state,
+            cartesian_frame="tool" if state.cartesian_frame == "world" else "world",
+            joint_jog_direction=0,
+        )
+    if key == "f3":
+        return replace(state, record_toggle=True)
+    if key == "f4":
+        return replace(state, replay_toggle=True)
+    if key == "f5":
+        return replace(state, trajectory_clear=True)
     if key in ("q", "\x1b"):
         return replace(state, quit=True)
     return state
@@ -173,13 +230,29 @@ def drain_key_events(events: SimpleQueue, state: ViewerControlState) -> ViewerCo
     return state
 
 
-def process_command_events(sim, events: SimpleQueue, state: ViewerControlState, status_stream) -> ViewerControlState:
+def process_command_events(
+    sim, events: SimpleQueue, state: ViewerControlState, status_stream, session=None
+) -> ViewerControlState:
     for line in _take_line_snapshot(events):
         if not line:
             continue
         try:
-            result = dispatch_sim_command(sim, line, paused=state.paused)
-        except (TypeError, ValueError) as exc:
+            command_name = line.split(maxsplit=1)[0].lower()
+            if (
+                session is not None
+                and command_name in {"joint", "joints", "jog", "gripper", "home", "reset", "mode"}
+                and session.playback is not None
+                and session.playback.state in ("playing", "paused")
+            ):
+                session.replay_stop()
+            if (
+                session is not None
+                and command_name in {"home", "reset"}
+                and session.recorder.is_recording
+            ):
+                session.record_stop()
+            result = dispatch_sim_command(sim, line, paused=state.paused, session=session)
+        except (RuntimeError, TypeError, ValueError) as exc:
             print(f"command error: {exc}", file=status_stream, flush=True)
             continue
         state = replace(state, paused=result.paused, quit=state.quit or result.should_quit)
@@ -192,6 +265,10 @@ def process_command_events(sim, events: SimpleQueue, state: ViewerControlState, 
             previous=state,
         )
         state = replace(state, quit=state.quit)
+        if command_name in {"home", "reset"}:
+            state = replace(state, cartesian_target_reset=True)
+        if session is not None:
+            state = _state_from_session(state, session)
         if state.quit:
             break
     return state
@@ -225,6 +302,7 @@ def process_key_events(
     joint_step: float,
     gripper_step: float,
     jog_hold_time: float = 0.18,
+    session=None,
 ) -> ViewerControlState:
     """Execute one finite event snapshot sequentially on the simulation thread."""
     for keycode in _take_key_snapshot(events):
@@ -235,7 +313,7 @@ def process_key_events(
         if state.quit:
             break
         if state.single_step:
-            sim.step()
+            (session.step() if session is not None else sim.step())
             state = replace(state, single_step=False)
     return state
 
@@ -272,6 +350,13 @@ def _state_from_sim(
         jog_speed_index=1 if previous is None else previous.jog_speed_index,
         joint_jog_rate=0.20 if previous is None else previous.joint_jog_rate,
         gripper_jog_rate=0.02 if previous is None else previous.gripper_jog_rate,
+        interaction_mode="joint" if previous is None else previous.interaction_mode,
+        selected_cartesian_axis=0 if previous is None else previous.selected_cartesian_axis,
+        cartesian_frame="world" if previous is None else previous.cartesian_frame,
+        plots_visible=False if previous is None else previous.plots_visible,
+        recording=False if previous is None else previous.recording,
+        playback_state="idle" if previous is None else previous.playback_state,
+        playback_progress=0.0 if previous is None else previous.playback_progress,
     )
 
 
@@ -363,6 +448,7 @@ def apply_pending_commands(
             joint_delta=pending_joint_delta,
             gripper_delta=pending_gripper_delta,
             quit=quit_requested,
+            cartesian_target_reset=True,
         )
 
     if state.mode is not None:
@@ -407,19 +493,50 @@ def apply_continuous_jog(
     dt: float,
     joint_rate: float,
     gripper_rate: float,
+    cartesian_controller=None,
+    cartesian_update_period_s: float = 0.02,
+    session=None,
 ) -> ViewerControlState:
     if not state.joint_jog_direction and not state.gripper_jog_direction:
         return state
 
+    if session is not None and session.playback is not None and session.playback.state in (
+        "playing", "paused"
+    ):
+        session.replay_stop()
+        state = _state_from_session(state, session)
+
     targets = state.joint_targets
     speed_scale = JOG_SPEED_LEVELS[state.jog_speed_index][1]
-    if state.joint_jog_direction:
+    cartesian_accumulator = state.cartesian_accumulator_s
+    ik_status = state.ik_status
+    ik_error = state.ik_error
+    if state.joint_jog_direction and state.interaction_mode == "joint":
         name = ARM_JOINT_NAMES[state.selected_joint]
         requested = (
             targets[state.selected_joint]
             + state.joint_jog_direction * joint_rate * speed_scale * dt
         )
         targets = tuple(_command_positions(sim, {name: requested}))
+    elif state.joint_jog_direction and cartesian_controller is not None:
+        cartesian_accumulator += dt
+        if cartesian_accumulator >= cartesian_update_period_s:
+            rate = gripper_rate if state.interaction_mode == "xyz" else joint_rate
+            distance_or_angle = rate * speed_scale * cartesian_accumulator
+            direction = state.joint_jog_direction
+            values = [0.0, 0.0, 0.0]
+            values[state.selected_cartesian_axis] = direction * distance_or_angle
+            delta = CartesianDelta(
+                xyz_m=values if state.interaction_mode == "xyz" else (0.0, 0.0, 0.0),
+                rpy_rad=values if state.interaction_mode == "rpy" else (0.0, 0.0, 0.0),
+                frame=state.cartesian_frame,
+            )
+            result = cartesian_controller.command_delta(delta)
+            ik_status = result.status
+            ik_error = max(result.position_error_m, result.orientation_error_rad)
+            if result.success:
+                targets = tuple(result.joint_positions)
+            cartesian_accumulator = 0.0
 
     width = state.gripper_width
     if state.gripper_jog_direction:
@@ -433,8 +550,49 @@ def apply_continuous_jog(
         gripper_width=width,
         jog_time_remaining=0.0,
         active_mode=str(getattr(sim, "control_mode", state.active_mode)),
+        cartesian_accumulator_s=cartesian_accumulator,
+        ik_status=ik_status,
+        ik_error=ik_error,
     )
     return _refresh_observed_state(sim, state)
+
+
+def _state_from_session(state: ViewerControlState, session) -> ViewerControlState:
+    values = session.state()
+    return replace(
+        state,
+        recording=bool(values["recording"]),
+        playback_state=str(values["replay_state"]),
+        playback_progress=float(values["replay_progress"]),
+    )
+
+
+def apply_session_commands(session, state: ViewerControlState) -> ViewerControlState:
+    """Apply one-shot Viewer trajectory requests on the simulation owner thread."""
+    try:
+        if state.cartesian_target_reset and session.recorder.is_recording:
+            session.record_stop()
+        if state.record_toggle:
+            if session.recorder.is_recording:
+                session.record_stop()
+            else:
+                session.record_start()
+        if state.replay_toggle:
+            replay_state = "idle" if session.playback is None else session.playback.state
+            if replay_state == "playing":
+                session.replay_pause()
+            elif replay_state == "paused":
+                session.replay_resume()
+            else:
+                session.replay_start()
+        if state.trajectory_clear:
+            session.record_clear()
+        state = _state_from_session(state, session)
+    except RuntimeError as exc:
+        state = replace(state, ik_status=f"trajectory: {exc}")
+    return replace(
+        state, record_toggle=False, replay_toggle=False, trajectory_clear=False
+    )
 
 
 def _run_state_text(state: ViewerControlState) -> str:
@@ -444,6 +602,11 @@ def _run_state_text(state: ViewerControlState) -> str:
 def _jog_state_text(state: ViewerControlState) -> str:
     if state.joint_jog_direction:
         sign = "+" if state.joint_jog_direction > 0 else "-"
+        if state.interaction_mode != "joint":
+            axis = ("X", "Y", "Z")[state.selected_cartesian_axis]
+            if state.interaction_mode == "rpy":
+                axis = ("ROLL", "PITCH", "YAW")[state.selected_cartesian_axis]
+            return f"{state.interaction_mode.upper()} {axis} {sign} (S to stop)"
         return f"{ARM_JOINT_NAMES[state.selected_joint]} {sign} (S to stop)"
     if state.gripper_jog_direction:
         action = "opening" if state.gripper_jog_direction > 0 else "closing"
@@ -456,9 +619,10 @@ def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
     description = MODE_DESCRIPTIONS.get(mode, "unknown control mode")
     saturation_count = sum(state.saturated)
     speed_name, speed_scale = JOG_SPEED_LEVELS[state.jog_speed_index]
-    left = "SYSTEM\nMODE\nBEHAVIOR\nMOTION\nSPEED\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
+    left = "SYSTEM\nMODE\nBEHAVIOR\nINPUT\nMOTION\nSPEED\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
     right = (
         f"{_run_state_text(state)}\n{mode.upper()}\n{description}\n"
+        f"{state.interaction_mode.upper()} / {state.cartesian_frame.upper()}\n"
         f"{_jog_state_text(state)}\n"
         f"{speed_name} J:{state.joint_jog_rate * speed_scale:.2f} "
         f"G:{state.gripper_jog_rate * speed_scale:.3f}\n"
@@ -469,6 +633,14 @@ def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
     if mode == "raw_torque":
         left += "\nWATCHDOG"
         right += f"\n{state.watchdog_remaining_s:.3f} s"
+    if state.ik_status != "idle":
+        left += "\nIK"
+        right += f"\n{state.ik_status} ({state.ik_error:.4f})"
+    left += "\nRECORD\nREPLAY"
+    right += (
+        f"\n{'ON' if state.recording else 'OFF'}"
+        f"\n{state.playback_state} {state.playback_progress:.0%}"
+    )
     return left, right
 
 
@@ -503,9 +675,9 @@ def gripper_panel_text(state: ViewerControlState) -> tuple[str, str]:
 
 def controls_panel_text() -> tuple[str, str]:
     return (
-        "Z / X\nJ / K\nC / O\n- / +\nS\nG\nH\nP\nV\nT / R\nQ",
-        "select joint\nstart joint - / +\nclose / open gripper\nspeed down / up\nSTOP + hold\n"
-        "gravity only\ncapture + hold\ntrack saved target\ncollision view\n"
+        "Tab / F1\nZ / X\nJ / K\nC / O\n- / +\nS\nG / H / P\nV / F2\nF3 / F4 / F5\nT / R\nQ",
+        "joint/xyz/rpy; world/tool\nselect joint or axis\nstart - / +\nclose / open gripper\nspeed down / up\nSTOP + hold\n"
+        "gravity / hold / position\ncollision / plots\nrecord / replay / clear\n"
         "home / reset\nquit",
     )
 
@@ -531,6 +703,7 @@ def configure_viewer_rendering(viewer, *, collision_visible: bool) -> None:
         return
     lock = getattr(viewer, "lock", None)
     with lock() if lock is not None else nullcontext():
+        groups[1] = 1
         groups[2] = 1
         groups[3] = int(collision_visible)
         # The stock Simulate UI handles the same key event after our callback.
@@ -572,6 +745,59 @@ def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
                 ),
             ]
         )
+
+
+def align_cartesian_target(model, data) -> tuple[int, tuple[float, ...], tuple[float, ...]]:
+    """Place the draggable mocap target on the current end-effector pose."""
+    mujoco = importlib.import_module("mujoco")
+    body_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ee_target"))
+    site_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "ee_site"))
+    if body_id < 0 or site_id < 0:
+        raise ValueError("scene must define ee_target mocap body and ee_site")
+    mocap_id = int(model.body_mocapid[body_id])
+    if mocap_id < 0:
+        raise ValueError("ee_target must be a mocap body")
+    data.mocap_pos[mocap_id] = data.site_xpos[site_id]
+    mujoco.mju_mat2Quat(data.mocap_quat[mocap_id], data.site_xmat[site_id])
+    return (
+        mocap_id,
+        tuple(float(value) for value in data.mocap_pos[mocap_id]),
+        tuple(float(value) for value in data.mocap_quat[mocap_id]),
+    )
+
+
+def process_cartesian_target(
+    controller,
+    data,
+    mocap_id: int,
+    previous_pose: tuple[tuple[float, ...], tuple[float, ...]],
+    state: ViewerControlState,
+    session=None,
+) -> tuple[tuple[tuple[float, ...], tuple[float, ...]], ViewerControlState]:
+    """Submit a dragged mocap pose once, leaving failed targets visible for diagnosis."""
+    position = tuple(float(value) for value in data.mocap_pos[mocap_id])
+    quaternion = tuple(float(value) for value in data.mocap_quat[mocap_id])
+    pose = (position, quaternion)
+    changed = any(
+        abs(current - old) > 1e-8
+        for current, old in zip(position + quaternion, previous_pose[0] + previous_pose[1])
+    )
+    if not changed:
+        return previous_pose, state
+    if session is not None and session.playback is not None and session.playback.state in (
+        "playing", "paused"
+    ):
+        session.replay_stop()
+        state = _state_from_session(state, session)
+    result = controller.command_pose(position, quaternion)
+    return pose, replace(
+        state,
+        joint_targets=(tuple(result.joint_positions) if result.success else state.joint_targets),
+        joint_jog_direction=0,
+        gripper_jog_direction=0,
+        ik_status=result.status,
+        ik_error=max(result.position_error_m, result.orientation_error_rad),
+    )
 
 
 def _positive_float(value: str) -> float:
@@ -630,6 +856,9 @@ def _decode_key(keycode: int) -> str:
         return "-"
     if keycode == 334:  # GLFW_KEY_KP_ADD
         return "+"
+    special = {258: "tab", 290: "f1", 291: "f2", 292: "f3", 293: "f4", 294: "f5"}
+    if keycode in special:
+        return special[keycode]
     try:
         return chr(keycode)
     except (TypeError, ValueError):
@@ -727,6 +956,11 @@ def main(
             joint_jog_rate=args.joint_rate,
             gripper_jog_rate=args.gripper_rate,
         )
+        cartesian_controller = (
+            MujocoCartesianController(sim) if isinstance(sim, RebotArmMujoco) else None
+        )
+        telemetry = MujocoTelemetryHistory(capacity=1000)
+        session = MujocoSession(sim)
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
         command_events = SimpleQueue()
@@ -757,12 +991,23 @@ def main(
             events.put(keycode)
 
         model, data = sim._unsafe_viewer_handles()
+        ghost = GhostArmOverlay(model)
+        figures = TelemetryFigures(max_points=500)
+        target_mocap_id = None
+        target_pose = None
+        if cartesian_controller is not None:
+            target_mocap_id, target_position, target_quaternion = align_cartesian_target(
+                model, data
+            )
+            target_pose = (target_position, target_quaternion)
         viewer = _launch_passive_viewer(launch_passive, model, data, on_key)
         configure_viewer_rendering(viewer, collision_visible=False)
         update_viewer_overlay(viewer, state)
         try:
             while viewer.is_running():
-                state = process_command_events(sim, command_events, state, status_stream)
+                state = process_command_events(
+                    sim, command_events, state, status_stream, session=session
+                )
                 if state.quit:
                     break
                 state = process_key_events(
@@ -772,9 +1017,26 @@ def main(
                     args.joint_step,
                     args.gripper_step,
                     args.jog_hold_time,
+                    session=session,
                 )
                 if state.quit:
                     break
+                state = apply_session_commands(session, state)
+                if cartesian_controller is not None and state.cartesian_target_reset:
+                    target_mocap_id, target_position, target_quaternion = align_cartesian_target(
+                        model, data
+                    )
+                    target_pose = (target_position, target_quaternion)
+                    state = replace(state, cartesian_target_reset=False, ik_status="idle")
+                if cartesian_controller is not None and target_pose is not None:
+                    target_pose, state = process_cartesian_target(
+                        cartesian_controller,
+                        data,
+                        target_mocap_id,
+                        target_pose,
+                        state,
+                        session=session,
+                    )
                 cycle_start = clock()
                 if not state.paused or state.single_step:
                     state = apply_continuous_jog(
@@ -783,9 +1045,23 @@ def main(
                         dt=sim.timestep,
                         joint_rate=args.joint_rate,
                         gripper_rate=args.gripper_rate,
+                        cartesian_controller=cartesian_controller,
+                        session=session,
                     )
-                    sim.step()
+                    session.step()
                     state = _refresh_observed_state(sim, replace(state, single_step=False))
+                    state = _state_from_session(state, session)
+                    if hasattr(sim, "get_control_status"):
+                        try:
+                            telemetry.append(
+                                float(sim.get_state().simulation_time),
+                                sim.get_control_status(),
+                                sim.get_contacts() if hasattr(sim, "get_contacts") else (),
+                            )
+                        except (AttributeError, TypeError, ValueError):
+                            # Test doubles and third-party adapters may expose only
+                            # the older, smaller status record.
+                            pass
                 current_status = overlay_text(state)
                 if args.verbose_status and current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)
@@ -793,6 +1069,12 @@ def main(
                 configure_viewer_rendering(
                     viewer, collision_visible=state.collision_visible
                 )
+                ghost.update(viewer, state.joint_targets)
+                figures.update(telemetry.snapshot(), joint_index=state.selected_joint)
+                if state.plots_visible:
+                    figures.attach_all(viewer)
+                else:
+                    figures.clear(viewer)
                 update_viewer_overlay(viewer, state)
                 viewer.sync()
                 elapsed = float(sim.get_state().simulation_time) - start_simulation_time

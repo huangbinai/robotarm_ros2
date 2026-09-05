@@ -209,7 +209,7 @@ def test_stop_key_cancels_all_jog_and_requests_hold():
     assert state.stop_jog is True
 
 
-def test_speed_keys_select_bounded_precision_normal_and_fast_gears():
+def test_speed_keys_select_bounded_precision_normal_fast_and_turbo_gears():
     state = mujoco_viewer.ViewerControlState()
     assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "NORMAL"
 
@@ -220,7 +220,9 @@ def test_speed_keys_select_bounded_precision_normal_and_fast_gears():
     state = mujoco_viewer.reduce_key(state, "+")
     state = mujoco_viewer.reduce_key(state, "=")
     assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "FAST"
-    assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 2
+    state = mujoco_viewer.reduce_key(state, "+")
+    assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "TURBO"
+    assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 3
 
 
 def test_keypad_plus_and_minus_control_speed_gears():
@@ -400,7 +402,7 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
     for expected in (
         "GRAVITY_COMP", "J3", "+0.200", "+0.030", "+0.250", "0.035", "0.040",
         "CONTACTS", "2.50 N", "PAUSED", "+1.50/ +1.20", "!", "Z/X",
-        "J/K start joint jog", "SHOWN",
+        "J/K start jog", "SHOWN",
     ):
         assert expected in text
 
@@ -547,6 +549,95 @@ def test_fast_gear_scales_joint_and_gripper_jog_rates():
         gripper_rate=0.03,
     )
     assert sim.width == pytest.approx(0.04925)
+
+
+def test_tab_cycles_joint_xyz_rpy_and_axis_selection_is_independent():
+    state = mujoco_viewer.ViewerControlState(selected_joint=2)
+    state = mujoco_viewer.reduce_key(state, "tab")
+    assert state.interaction_mode == "xyz"
+    state = mujoco_viewer.reduce_key(state, "x")
+    assert state.selected_cartesian_axis == 1
+    assert state.selected_joint == 2
+    state = mujoco_viewer.reduce_key(state, "tab")
+    assert state.interaction_mode == "rpy"
+    state = mujoco_viewer.reduce_key(state, "tab")
+    assert state.interaction_mode == "joint"
+
+
+def test_special_keys_toggle_plots_record_replay_and_clear():
+    state = mujoco_viewer.ViewerControlState()
+    for keycode, field in ((291, "plots_visible"), (292, "record_toggle"),
+                           (293, "replay_toggle"), (294, "trajectory_clear")):
+        state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode))
+        assert getattr(state, field) is True
+
+
+def test_cartesian_jog_is_rate_limited_and_uses_selected_axis():
+    sim = FakeSim()
+
+    class FakeCartesian:
+        calls = []
+
+        def command_delta(self, delta):
+            self.calls.append(delta)
+            return SimpleNamespace(
+                success=True,
+                status="converged",
+                position_error_m=0.0001,
+                orientation_error_rad=0.0,
+                joint_positions=(0.1,) * 6,
+            )
+
+    controller = FakeCartesian()
+    state = mujoco_viewer.ViewerControlState(
+        interaction_mode="xyz", selected_cartesian_axis=1, joint_jog_direction=1
+    )
+    state = mujoco_viewer.apply_continuous_jog(
+        sim, state, dt=0.01, joint_rate=0.2, gripper_rate=0.02,
+        cartesian_controller=controller,
+    )
+    assert controller.calls == []
+    state = mujoco_viewer.apply_continuous_jog(
+        sim, state, dt=0.01, joint_rate=0.2, gripper_rate=0.02,
+        cartesian_controller=controller,
+    )
+    assert controller.calls[0].xyz_m == pytest.approx((0.0, 0.0004, 0.0))
+    assert state.ik_status == "converged"
+
+
+def test_draggable_target_aligns_with_end_effector_and_submits_changed_pose():
+    mujoco = pytest.importorskip("mujoco")
+    from pathlib import Path
+
+    scene = Path(__file__).resolve().parents[1] / "src/rebotarm_simulation/models/rebotarm/scene.xml"
+    model = mujoco.MjModel.from_xml_path(str(scene))
+    data = mujoco.MjData(model)
+    mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+    mujoco.mj_forward(model, data)
+    mocap_id, position, quaternion = mujoco_viewer.align_cartesian_target(model, data)
+    ee_site = model.site("ee_site").id
+    assert position == pytest.approx(tuple(data.site_xpos[ee_site]))
+    assert sum(value * value for value in quaternion) == pytest.approx(1.0)
+
+    class Controller:
+        calls = []
+
+        def command_pose(self, pos, quat):
+            self.calls.append((pos, quat))
+            return SimpleNamespace(
+                success=True, status="converged", joint_positions=(0.2,) * 6,
+                position_error_m=0.0, orientation_error_rad=0.0,
+            )
+
+    controller = Controller()
+    old_pose = (position, quaternion)
+    data.mocap_pos[mocap_id, 0] += 0.005
+    new_pose, state = mujoco_viewer.process_cartesian_target(
+        controller, data, mocap_id, old_pose, mujoco_viewer.ViewerControlState()
+    )
+    assert new_pose != old_pose
+    assert len(controller.calls) == 1
+    assert state.joint_targets == pytest.approx((0.2,) * 6)
 
 
 def test_parser_accepts_model_and_positive_steps():

@@ -136,6 +136,40 @@ rebotarm_mujoco_viewer --duration 30
 | Precision | `0.05 rad/s` | `0.005 m/s` | 接近目标、精细调整 |
 | Normal | `0.20 rad/s` | `0.020 m/s` | 默认手动操作 |
 | Fast | `0.50 rad/s` | `0.050 m/s` | 大范围快速移动 |
+| Turbo | `1.00 rad/s` | `0.100 m/s` | 无接触区快速定位；接近物体前降档 |
+
+`J/K/C/O` 采用锁存式连续控制：按一次开始连续运动，不需要一直按键或反复点击；按
+`S` 才停止并进入 Hold。若仍觉得慢，连续按 `+` 可升到 Turbo；靠近桌面、方块或关节
+限位时应退回 Precision/Normal，避免大步目标造成碰撞。
+
+按 `Tab` 可在三类手动控制间循环：`JOINT`（单关节）、`XYZ`（末端平移）、`RPY`
+（末端转动）。`Z/X` 在当前类别中选择关节或轴，`J/K` 沿负/正方向连续移动；在
+XYZ/RPY 中按 `F1` 切换世界坐标与工具坐标。末端控制使用阻尼最小二乘 IK，并保持
+关节限位；不可达目标不会写入关节命令，窗口会显示 IK 状态。
+
+绿色球是末端目标。用 MuJoCo 原生方式双击选中它，按住 `Ctrl` 配合鼠标拖动即可
+平移/旋转目标，求解成功后蓝色半透明幽灵机械臂显示目标姿态，实体机械臂通过
+POS_VEL 控制跟踪。绿色目标本身没有质量和碰撞，不会给物理世界施加额外外力。
+
+`F2` 显示/隐藏当前关节的实时跟踪（实际/目标/误差/速度）与控制（请求/施加力矩、
+最大接触力）两张曲线；`F3` 开始/停止轨迹录制，`F4` 开始/
+暂停/继续回放，`F5` 清空内存轨迹。也可在 Viewer 终端中输入：
+
+```text
+record start
+record stop
+trajectory state
+trajectory save "logs/demo trajectory.json"
+trajectory load "logs/demo trajectory.json"
+replay start
+replay pause
+replay resume
+replay stop
+record clear
+```
+
+轨迹 JSON 保存仿真时间、六轴目标/实际角和夹爪目标/实际宽度。回放结束或停止后自动
+进入 Hold；人工关节、末端或夹爪命令会停止正在进行的回放，防止两个输入源同时改目标。
 
 `G` 进入重力补偿，`H` 捕获并保持当前位置，`P` 进入
 Position（内部仍为 POS_VEL→motor 力矩），`V` 显示/隐藏碰撞代理，空格暂停，

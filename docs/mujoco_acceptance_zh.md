@@ -121,7 +121,7 @@ python -m pytest tests/test_mujoco_motor_control.py tests/test_mujoco_sim_core.p
 Headless 运行：
 
 ```bash
-python -m rebotarm_simulation.mujoco_cli --headless --duration 5
+python -m rebotarm_simulation.mujoco_cli run --duration 5
 ```
 
 预期：
@@ -183,11 +183,11 @@ python -m rebotarm_simulation.mujoco_viewer --duration 60
 ```text
 1. 机械臂位于桌面场景
 2. R 能回零位，T 能回到 home 姿态
-3. G/H/P 能切换重力补偿、保持、POS_VEL 模式
-4. 1-6 选择关节，按住 J/K 能连续移动当前关节
+3. G/H/P 能切换重力补偿、保持、Position（内部 POS_VEL）模式
+4. Z/X 选择关节，按住 J/K 能连续移动当前关节
 5. C/O 能连续闭合/打开夹爪，夹爪 visual 可见且能接近/接触方块
 6. 终端状态栏显示 mode、当前关节实际角 q、速度 dq、target、夹爪实际/目标宽度、接触数量和最大接触力
-7. 右侧 control 面板不作为日常位置控制入口；它显示的是 torque/force
+7. 右侧原始 Control 面板默认隐藏；窗口叠加层显示请求/施加力矩、饱和和模式
 8. 空格暂停，. 单步，Q 退出
 9. 机械臂不飞、不爆、不明显穿桌
 ```
@@ -210,8 +210,8 @@ with RebotArmMujoco() as sim:
     print("home", state0.joint_positions)
     print("targets0", sim.control_targets)
 
-    sim.set_joint_position_targets([0.1, -0.2, -0.2, 0.2, 0.0, 0.0])
-    sim.set_gripper_width(0.05)
+    sim.command_joint_positions([0.1, -0.2, -0.2, 0.2, 0.0, 0.0])
+    sim.command_gripper_width(0.05)
     saved = sim.save_state()
     state1 = sim.step(100)
     print("time1", state1.simulation_time)

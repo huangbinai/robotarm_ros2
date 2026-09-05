@@ -8,7 +8,7 @@
 [MuJoCo 仿真底座](../src/rebotarm_simulation/README_mujoco.md)。快速入口：
 
 ```bash
-rebotarm_mujoco_cli --headless --duration 5
+rebotarm_mujoco_cli run --duration 5
 ros2 launch rebotarm_simulation mujoco_sim.launch.py
 ```
 

@@ -142,7 +142,7 @@ def test_robot_model_couples_finger_joints_with_equal_and_opposite_motion() -> N
     }
 
 
-def test_robot_model_uses_original_meshes_for_visuals_and_collisions() -> None:
+def test_robot_model_uses_original_meshes_for_visuals_and_hybrid_collisions() -> None:
     robot = _robot_root()
     assets = {mesh.attrib["name"]: mesh for mesh in robot.findall("asset/mesh")}
     expected_assets = {
@@ -158,11 +158,23 @@ def test_robot_model_uses_original_meshes_for_visuals_and_collisions() -> None:
     collision_geoms = robot.findall('.//geom[@class="collision"]')
     assert {geom.attrib["mesh"] for geom in visual_geoms} == expected_assets
     assert collision_geoms
-    assert {geom.attrib["mesh"] for geom in collision_geoms} == expected_assets
-    assert all(geom.attrib.get("type", "mesh") == "mesh" for geom in collision_geoms)
+    assert {geom.attrib["mesh"] for geom in collision_geoms if geom.attrib["type"] == "mesh"} == {
+        "left_finger", "right_finger",
+    }
+    assert {geom.attrib["type"] for geom in collision_geoms} == {
+        "box", "capsule", "cylinder", "mesh",
+    }
+    assert len(collision_geoms) == 10
     assert all(geom.attrib.get("contype") == "1" for geom in collision_geoms)
     assert all(geom.attrib.get("conaffinity") == "1" for geom in collision_geoms)
     assert all("rgba" not in geom.attrib for geom in collision_geoms)
+
+    bodies = {body.attrib["name"]: body for body in robot.findall("worldbody//body")}
+    for link_name in LINKS:
+        # Explicit URDF inertials remain authoritative; collision proxies must
+        # never contribute inferred mass or inertia.
+        assert bodies[link_name].find("inertial") is not None
+    assert all("mass" not in geom.attrib and "density" not in geom.attrib for geom in collision_geoms)
 
 
 def test_robot_model_filters_adjacent_chain_and_gripper_parent_contacts() -> None:
@@ -435,6 +447,17 @@ def test_canonical_zero_pose_has_no_false_robot_self_contacts_when_runtime_is_av
     mujoco = pytest.importorskip("mujoco")
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
     data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    assert _robot_self_contact_pairs(mujoco, model, data) == set()
+
+
+def test_home_pose_has_no_false_robot_self_contacts_when_runtime_is_available() -> None:
+    mujoco = pytest.importorskip("mujoco")
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    data = mujoco.MjData(model)
+    home_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    assert home_id >= 0
+    data.qpos[:] = model.key_qpos[home_id]
     mujoco.mj_forward(model, data)
     assert _robot_self_contact_pairs(mujoco, model, data) == set()
 

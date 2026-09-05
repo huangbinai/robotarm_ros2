@@ -27,7 +27,7 @@ def test_mujoco_readme_documents_reproducible_install_and_runtime_commands():
         "MUJOCO_GL=egl",
         "rebotarm_mujoco_health --renderer-timeout",
         "rebotarm_mujoco_acceptance --skip-renderer",
-        "rebotarm_mujoco_cli --headless --duration",
+        "rebotarm_mujoco_cli run --duration",
         "rebotarm_mujoco_contact_check",
         '"requested_duration"',
         '"achieved_duration"',
@@ -53,6 +53,8 @@ def test_mujoco_readme_documents_ros_interfaces_examples_and_moveit_safety():
         "/rebotarm/gripper/set",
         "/rebotarm/gripper/state",
         "/rebotarm/trajectory_stop",
+        "/rebotarm/sim/set_mode",
+        "/diagnostics",
         "/clock",
         "ros2 action send_goal",
         "ros2 service call /rebotarm/gripper/set",
@@ -74,6 +76,9 @@ def test_mujoco_readme_documents_api_architecture_sync_and_troubleshooting():
     text = _text(README)
     required = (
         "RebotArmMujoco",
+        "command_joint_positions",
+        "command_gripper_width",
+        "get_control_status",
         "get_state()",
         "XYZW",
         "save_state()",
@@ -125,7 +130,7 @@ def test_feature_commands_links_to_mujoco_readme_and_safe_entry_points():
     text = _text(COMMANDS)
     assert "../src/rebotarm_simulation/README_mujoco.md" in text
     assert "ros2 launch rebotarm_simulation mujoco_sim.launch.py" in text
-    assert "rebotarm_mujoco_cli --headless --duration" in text
+    assert "rebotarm_mujoco_cli run --duration" in text
     assert "use_hardware:=false" in text
 
 

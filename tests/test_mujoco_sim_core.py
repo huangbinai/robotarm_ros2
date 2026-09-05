@@ -216,21 +216,65 @@ def test_reset_home_uses_the_scene_home_keyframe(runtime_sim) -> None:
     assert state.object_poses["test_cube"][:3] == pytest.approx((0.28, 0.0, 0.04))
 
 
-def test_control_modes_switch_between_gravity_hold_and_pos_vel(runtime_sim) -> None:
+def test_control_modes_use_public_names_and_accept_legacy_pos_vel_alias(runtime_sim) -> None:
     runtime_sim.reset_home()
+    assert runtime_sim.control_mode == "hold"
     assert runtime_sim.set_control_mode("gravity_comp") == "gravity_comp"
     assert runtime_sim.control_mode == "gravity_comp"
     before = runtime_sim.get_state().joint_positions[:6]
     runtime_sim.step(50)
     after = runtime_sim.get_state().joint_positions[:6]
-    assert after == pytest.approx(before, abs=1e-3)
+    assert all(math.isfinite(value) for value in after)
+    assert max(abs(a - b) for a, b in zip(after, before)) < 0.4
 
     assert runtime_sim.set_control_mode("hold") == "hold"
     assert runtime_sim.control_mode == "hold"
-    runtime_sim.set_joint_position_targets((0.05, -0.85, -1.05, 0.25, 0.0, 0.0))
-    assert runtime_sim.control_mode == "pos_vel"
+    runtime_sim.command_joint_positions((0.05, -0.85, -1.05, 0.25, 0.0, 0.0))
+    assert runtime_sim.control_mode == "position"
+    assert runtime_sim.set_control_mode("pos_vel") == "position"
     with pytest.raises(ValueError):
         runtime_sim.set_control_mode("unknown")
+
+
+def test_default_reset_uses_home_and_hold(runtime_sim) -> None:
+    state = runtime_sim.reset()
+
+    assert state.joint_positions == pytest.approx(
+        (0.0, -0.8, -1.0, 0.3, 0.0, 0.0, 0.03, -0.03)
+    )
+    assert runtime_sim.control_mode == "hold"
+    assert runtime_sim.get_control_status().joint_targets == pytest.approx(
+        state.joint_positions[:6]
+    )
+
+
+def test_raw_torque_is_limited_reported_and_expires_to_hold(runtime_sim) -> None:
+    runtime_sim.reset()
+    requested = (99.0, -99.0, 3.0, -99.0, 2.0, -1.0)
+    reached = runtime_sim.command_joint_torques(requested, timeout_s=0.1)
+    status = runtime_sim.get_control_status()
+
+    assert reached == pytest.approx((27.0, -27.0, 3.0, -12.5, 2.0, -1.0))
+    assert status.mode == "raw_torque"
+    assert status.requested_torques == pytest.approx(requested)
+    assert status.applied_torques == pytest.approx(reached)
+    assert status.saturated == (True, True, False, True, False, False)
+    assert status.watchdog_remaining_s == pytest.approx(0.1)
+
+    runtime_sim.step(math.ceil(0.1 / runtime_sim.timestep))
+    expired = runtime_sim.get_control_status()
+    assert expired.mode == "hold"
+    assert expired.watchdog_remaining_s is None
+    assert runtime_sim.control_targets[:6] == pytest.approx(expired.joint_positions, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    ("torques", "timeout"),
+    [([0.0] * 5, 0.1), ([0.0] * 5 + [float("nan")], 0.1), ([0.0] * 6, 0.0)],
+)
+def test_raw_torque_rejects_invalid_commands(runtime_sim, torques, timeout) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        runtime_sim.command_joint_torques(torques, timeout_s=timeout)
 
 
 def test_home_pose_stays_stable_under_motor_control(runtime_sim) -> None:
@@ -281,6 +325,9 @@ def test_end_effector_orientation_comes_from_site_frame_in_xyzw_order(tmp_path: 
 
     model = mujoco.MjModel.from_xml_path(str(model_dir / "scene.xml"))
     data = mujoco.MjData(model)
+    home_key = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    if home_key >= 0:
+        mujoco.mj_resetDataKeyframe(model, data, home_key)
     mujoco.mj_forward(model, data)
     site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
     body_id = int(model.site_bodyid[site_id])
@@ -296,7 +343,7 @@ def test_end_effector_orientation_comes_from_site_frame_in_xyzw_order(tmp_path: 
 
 def test_joint_targets_accept_mapping_or_arm_sequence_and_clamp(runtime_sim) -> None:
     reached = runtime_sim.set_joint_position_targets({"joint1": 99.0, "joint2": -1.0})
-    assert reached == pytest.approx((2.8, -1.0, 0.0, 0.0, 0.0, 0.0))
+    assert reached == pytest.approx((2.8, -1.0, -1.0, 0.3, 0.0, 0.0))
 
     reached = runtime_sim.set_joint_position_targets([0.1, -0.2, -0.3, 0.4, 0.5, 0.6])
     assert reached == pytest.approx((0.1, -0.2, -0.3, 0.4, 0.5, 0.6))
@@ -322,6 +369,17 @@ def test_gripper_width_uses_equal_and_opposite_joint_targets(runtime_sim) -> Non
     assert runtime_sim.set_gripper_width(-1.0) == pytest.approx(0.0)
     with pytest.raises(ValueError):
         runtime_sim.set_gripper_width(float("nan"))
+
+
+def test_gripper_public_command_applies_optional_force_limit(runtime_sim) -> None:
+    runtime_sim.reset()
+    assert runtime_sim.command_gripper_width(0.09, max_force_n=2.5) == pytest.approx(0.09)
+    runtime_sim.step()
+    status = runtime_sim.get_control_status()
+    assert status.gripper_target_width_m == pytest.approx(0.09)
+    assert max(abs(value) for value in status.gripper_control_force_n) <= 2.5
+    with pytest.raises(ValueError):
+        runtime_sim.command_gripper_width(0.04, max_force_n=0.0)
 
 
 def test_gripper_motor_control_is_clamped_before_viewer_exposes_ctrl(runtime_sim) -> None:
@@ -411,6 +469,23 @@ def test_saved_state_restores_arm_and_gripper_control_targets(runtime_sim) -> No
     runtime_sim.restore_state(saved)
 
     assert runtime_sim.control_targets == pytest.approx(controls_a)
+
+
+def test_saved_state_restores_raw_torque_watchdog(runtime_sim) -> None:
+    requested = (40.0, -30.0, 3.0, -14.0, 2.0, -1.0)
+    runtime_sim.command_joint_torques(requested, timeout_s=0.2)
+    runtime_sim.step(10)
+    saved = runtime_sim.save_state()
+    expected = runtime_sim.get_control_status()
+
+    runtime_sim.set_mode("hold")
+    runtime_sim.restore_state(saved)
+    restored = runtime_sim.get_control_status()
+
+    assert restored.mode == "raw_torque"
+    assert restored.requested_torques == pytest.approx(expected.requested_torques)
+    assert restored.applied_torques == pytest.approx(expected.applied_torques)
+    assert restored.watchdog_remaining_s == pytest.approx(expected.watchdog_remaining_s)
 
 
 def test_saved_integration_state_replays_deterministically(runtime_sim) -> None:

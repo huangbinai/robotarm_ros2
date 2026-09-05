@@ -6,11 +6,13 @@ import xml.etree.ElementTree as ET
 from rebotarm_simulation.urdf_to_mjcf import (
     authoritative_urdf_path,
     check_generated_model,
+    collision_config_path,
     generate_mjcf_bytes,
     main,
     stage_urdf,
     write_generated_model,
 )
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +66,19 @@ def test_generated_model_preserves_named_bodies_and_joint_interface() -> None:
     }
 
 
-def test_generated_model_separates_original_mesh_visuals_and_collisions() -> None:
+def test_collision_config_covers_every_body_and_uses_fixed_display_groups() -> None:
+    config = yaml.safe_load(collision_config_path(ROOT).read_text(encoding="utf-8"))
+
+    assert config["schema_version"] == 1
+    assert config["visual_group"] == 2
+    assert config["collision_group"] == 3
+    assert set(config["bodies"]) == {
+        "base_link", "link1", "link2", "link3", "link4", "link5", "link6",
+        "end_link", "left_finger_link", "right_finger_link",
+    }
+
+
+def test_generated_model_preserves_mesh_visuals_and_uses_hybrid_collisions() -> None:
     root = _generated_root()
     expected_meshes = {
         "base_link", "link1", "link2", "link3", "link4", "link5", "link6",
@@ -74,7 +88,13 @@ def test_generated_model_separates_original_mesh_visuals_and_collisions() -> Non
     collisions = root.findall('.//geom[@class="collision"]')
 
     assert {geom.attrib["mesh"] for geom in visuals} == expected_meshes
-    assert {geom.attrib["mesh"] for geom in collisions} == expected_meshes
+    assert {geom.attrib["mesh"] for geom in collisions if geom.attrib["type"] == "mesh"} == {
+        "left_finger", "right_finger",
+    }
+    assert {geom.attrib["type"] for geom in collisions} == {
+        "box", "capsule", "cylinder", "mesh",
+    }
+    assert len(collisions) == 10
     assert all(geom.attrib.get("contype") == "0" for geom in visuals)
     assert all(geom.attrib.get("conaffinity") == "0" for geom in visuals)
     assert all(geom.attrib.get("contype") == "1" for geom in collisions)

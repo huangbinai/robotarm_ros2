@@ -7,9 +7,12 @@ rebotarm_mujoco_node:
     publish_rate_hz: 30.0
     max_trajectory_points: 10000
     max_trajectory_duration_sec: 300.0
-    initial_joint_positions: [0.0, -0.1, -0.2, 0.2, 0.0, 0.0]
+    initial_joint_positions: [0.0, -0.8, -1.0, 0.3, 0.0, 0.0]
     # Node-wide settling policy; per-goal tolerance overrides are not accepted.
     goal_position_tolerance: 0.02
     goal_velocity_tolerance: 0.05
     goal_time_tolerance_sec: 5.0
     feedback_rate_hz: 20.0
+    diagnostic_rate_hz: 1.0
+    max_contact_force_n: 200.0
+    max_contact_penetration_m: 0.005

@@ -146,6 +146,20 @@ def test_benchmark_scene_reports_real_mujoco_steps_and_finite_state() -> None:
     assert measurement["peak_contacts"] >= 0
 
 
+def test_arm_collision_contract_avoids_high_triangle_mesh_geoms() -> None:
+    import xml.etree.ElementTree as ET
+
+    robot = ET.parse(ROBOT_PATH).getroot()
+    collisions = robot.findall('.//geom[@class="collision"]')
+    mesh_collisions = [geom for geom in collisions if geom.attrib.get("type") == "mesh"]
+
+    assert len(collisions) == 10
+    assert {geom.attrib["mesh"] for geom in mesh_collisions} == {
+        "left_finger", "right_finger",
+    }
+    assert all(geom.attrib.get("group") == "3" for geom in collisions)
+
+
 @pytest.mark.skipif(
     os.environ.get("REBOTARM_RUN_COLLISION_BENCHMARK") != "1",
     reason="set REBOTARM_RUN_COLLISION_BENCHMARK=1 to run the 10k collision benchmark",

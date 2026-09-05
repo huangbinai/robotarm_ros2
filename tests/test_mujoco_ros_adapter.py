@@ -17,11 +17,81 @@ from rebotarm_simulation.mujoco_ros_node import (
     GoalSettlingPolicy,
     MonotonicStamp,
     TrajectoryCommandGate,
+    SimulationControlApi,
+    normalize_ros_control_mode,
     seconds_to_stamp_parts,
     trajectory_to_sampler,
     terminal_disposition,
     validate_gripper_width,
+    validate_gripper_force,
 )
+
+
+class _LegacySimulation:
+    def __init__(self):
+        self.control_mode = "pos_vel"
+        self.control_targets = (0.0,) * 8
+        self.positions = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.03, -0.03)
+        self.events = []
+
+    def reset_home(self):
+        self.events.append(("reset_home",))
+
+    def set_control_mode(self, mode):
+        self.control_mode = mode
+        self.events.append(("mode", mode))
+        return mode
+
+    def set_joint_position_targets(self, values):
+        reached = tuple(values)
+        self.control_targets = reached + (0.03, -0.03)
+        self.control_mode = "pos_vel"
+        self.events.append(("positions", reached))
+        return reached
+
+    def set_gripper_width(self, width):
+        self.events.append(("gripper", width))
+        return width
+
+    def get_state(self):
+        return SimpleNamespace(joint_positions=self.positions)
+
+
+def test_ros_mode_surface_excludes_raw_torque():
+    assert normalize_ros_control_mode(" position ") == "position"
+    assert normalize_ros_control_mode("hold") == "hold"
+    assert normalize_ros_control_mode("gravity_comp") == "gravity_comp"
+    with pytest.raises(ValueError, match="raw_torque"):
+        normalize_ros_control_mode("raw_torque")
+
+
+def test_ros_control_api_starts_home_hold_and_tracks_positions_with_legacy_core():
+    simulation = _LegacySimulation()
+    control = SimulationControlApi(simulation)
+    control.reset_home_and_hold()
+    assert simulation.events[:2] == [("reset_home",), ("mode", "hold")]
+    assert control.command_joint_positions((1, 2, 3, 4, 5, 6)) == (1, 2, 3, 4, 5, 6)
+    assert simulation.events[-1] == ("mode", "pos_vel")
+    assert control.get_control_status()["mode"] == "position"
+
+
+def test_ros_control_api_hold_captures_current_position_and_gripper_is_width_based():
+    simulation = _LegacySimulation()
+    control = SimulationControlApi(simulation)
+    control.hold_current_position()
+    assert simulation.events[-2:] == [
+        ("positions", simulation.positions[:6]),
+        ("mode", "hold"),
+    ]
+    assert control.command_gripper_width(0.04) == pytest.approx(0.04)
+
+
+def test_gripper_effort_zero_means_default_and_positive_value_is_forwarded():
+    assert validate_gripper_force(0.0) is None
+    assert validate_gripper_force(12.5) == pytest.approx(12.5)
+    for invalid in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="max effort"):
+            validate_gripper_force(invalid)
 
 
 def _duration(seconds: float):
@@ -289,7 +359,12 @@ def test_ros_adapter_source_has_required_safe_interfaces_and_no_hardware_imports
     assert 'f"/{self._arm_namespace}/joint_states"' in source
     assert 'f"/{self._arm_namespace}/trajectory_stop"' in source
     assert 'f"/{self._arm_namespace}/gripper/set"' in source
+    assert 'f"/{self._arm_namespace}/sim/set_mode"' in source
     assert '"/clock"' in source
+    assert '"/diagnostics"' in source
+    assert "DiagnosticArray" in source
+    assert "SetMode" in source
+    assert "normalize_ros_control_mode" in source
     assert "RebotArmMujoco" in source
     assert "ReentrantCallbackGroup" in source
     assert "MutuallyExclusiveCallbackGroup" in source
@@ -309,3 +384,25 @@ def test_ros_adapter_source_has_required_safe_interfaces_and_no_hardware_imports
     assert "time.sleep(self._execute_wait_sec)" in source
     assert "time.sleep(0.001)" not in source
     assert "rebotarmcontroller" not in source.lower()
+
+
+def test_ros_adapter_configures_home_hold_and_bounded_diagnostics():
+    config = Path("src/rebotarm_simulation/config/mujoco_sim.yaml").read_text()
+    assert "initial_joint_positions: [0.0, -0.8, -1.0, 0.3, 0.0, 0.0]" in config
+    assert "diagnostic_rate_hz: 1.0" in config
+    assert "max_contact_force_n:" in config
+    assert "max_contact_penetration_m:" in config
+
+    manifest = Path("src/rebotarm_simulation/package.xml").read_text()
+    assert "<exec_depend>diagnostic_msgs</exec_depend>" in manifest
+
+
+def test_ros_adapter_trajectory_lifecycle_explicitly_enters_position_and_hold():
+    source = Path("src/rebotarm_simulation/rebotarm_simulation/mujoco_ros_node.py").read_text()
+    execute_body = source.split("def _execute_goal(self, goal_handle):", 1)[1].split(
+        "\n        def _timer_callback", 1
+    )[0]
+    assert "self._control.command_joint_positions(desired)" in execute_body
+    assert "lambda: (self._hold_current_position(), goal_handle.succeed())" in execute_body
+    assert "GOAL_TOLERANCE_VIOLATED" in execute_body
+    assert "self._command_gate.stop_and_hold(self._hold_current_position)" in execute_body

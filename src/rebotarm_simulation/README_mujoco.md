@@ -43,7 +43,7 @@ source install/setup.bash
 
 ```bash
 MUJOCO_GL=egl PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_health --renderer-timeout 30
-PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_cli --headless --duration 5
+PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_cli run --duration 5
 PYTHONPATH=src/rebotarm_simulation .venv-mujoco-ros/bin/python -m rebotarm_simulation.mujoco_viewer --duration 30
 ```
 
@@ -69,12 +69,19 @@ MUJOCO_GL=egl rebotarm_mujoco_health --renderer-timeout 30
 不依赖窗口的定时运行：
 
 ```bash
-rebotarm_mujoco_cli --headless --duration 5
+rebotarm_mujoco_cli run --duration 5
 ```
 
 输出同时含 `"requested_duration"` 和 `"achieved_duration"`；后者会按物理
-时间步向上取整。交互 CLI 还支持 `state`、`joint`、`joints`、`jog`、
-`gripper`、`step`、`contacts`、`reset`、`pause`、`resume` 和 `quit`。
+时间步向上取整。交互模式使用 `rebotarm_mujoco_cli shell`，支持 `state`、
+`control`、`joint`、`joints`、`jog`、`gripper`、`mode`、`step`、`contacts`、
+`reset`、`pause`、`resume` 和 `quit`。限时原始力矩诊断使用：
+
+```bash
+rebotarm_mujoco_cli torque --values 1 0 0 0 0 0 --timeout 0.1 --observe 0.2
+```
+
+Raw torque 只用于无实机诊断，按关节峰值限幅；看门狗超时后清零并进入 Hold。
 
 无界面 Reach 随机策略批量 rollout：
 
@@ -119,13 +126,19 @@ MoveIt 联动验收需要先按下文启动 MuJoCo 后端和 MoveIt，再单独�
 rebotarm_mujoco_viewer --duration 30
 ```
 
-按 `1`–`6` 选择关节，按住 `J/K` 连续正/反向移动当前关节，按住 `C/O`
-连续闭合/打开夹爪，`G` 进入重力补偿，`H` 保持当前位置，`P` 进入 POS_VEL
-位置目标控制，空格暂停，`.` 单步，`R` 回零位，`T` 回 home 姿态，`Q` 退出。
-终端状态栏会显示当前模式、选中关节、实际关节角、关节速度、目标关节角、
-夹爪实际/目标宽度、当前接触数量和最大接触力。MuJoCo 右侧
-`control` 面板显示的是底层 actuator 的 torque/force，不是关节位置；日常控制请用
-键盘 jog 或 ROS/API 发送目标。若从 SSH 启动，需正确配置 X11 转发，且
+按 `Z/X` 选择上一个/下一个关节，按住 `J/K` 连续正/反向移动当前关节，按住
+`C/O` 连续闭合/打开夹爪，`G` 进入重力补偿，`H` 保持当前位置，`P` 进入
+Position（内部仍为 POS_VEL→motor 力矩），`V` 显示/隐藏碰撞代理，空格暂停，
+`.` 单步，`R` 重置，`T` 回 Home，`Q` 退出。数字键和 `[/]` 保留给 MuJoCo
+原生几何组与相机快捷键，不再用于选关节。
+
+MuJoCo 原生还复用了 `T/H/P/Z/X/J/C/O/V` 等显示快捷键；项目 Viewer 会在每帧
+恢复固定的正常显示标志，防止机器人控制按键同时触发透明、凸包、纹理、灯光或接触
+调试效果。需要查看本项目碰撞代理时只使用 `V`，不依赖原生 Rendering 面板开关。
+
+窗口叠加层和终端都会显示模式、选中关节、实际角/速度、目标角、请求/施加力矩、
+饱和、Raw torque 看门狗、夹爪和接触状态。Viewer 默认隐藏右侧原始 Control 面板，
+因为它显示底层 actuator 力矩而不是位置目标。若从 SSH 启动，需正确配置 X11 转发，且
 `DISPLAY` 与 `XAUTHORITY` 必须指向当前桌面会话；否则请改用 headless CLI。
 
 Viewer 运行时也可以直接在启动它的终端输入目标命令，命令会排队到仿真主线程执行，
@@ -137,7 +150,7 @@ joint joint2 -0.6
 jog joint3 -0.1
 gripper 0.05
 mode hold
-mode pos_vel
+mode position
 home
 reset
 state
@@ -148,10 +161,9 @@ contacts
 实际关节角为基准加一个增量，`gripper` 设置夹爪目标开口宽度。若只想看 Viewer 而不
 读取终端命令，可加 `--no-command-input`。
 
-模型使用同一套原始 STL 作为 visual 与 collision。为避免两个完全重合的网格在
-Viewer 中互相闪烁或遮挡，collision 网格保留参与碰撞，但显示为半透明调试层；
-正常观察以 visual 网格为准。场景只 include `models/rebotarm/robot.xml`，没有再叠加
-旧的手写机械臂模型。
+模型始终使用完整原始 STL 作为 visual。机械臂主体和夹爪基座使用配置化稳定碰撞
+代理，左右手指保留精细凸 mesh 接触；碰撞层仅在按 `V` 调试时显示。场景只 include
+`models/rebotarm/robot.xml`，没有叠加旧的手写模型。
 
 ## ROS 2 适配层
 
@@ -161,13 +173,15 @@ Viewer 中互相闪烁或遮挡，collision 网格保留参与碰撞，但显示
 ros2 launch rebotarm_simulation mujoco_sim.launch.py
 ```
 
-节点提供五个 reBotArm 接口并额外发布仿真时钟：
+节点默认从 Home+Hold 启动，提供标准控制接口、仿真模式服务、诊断和仿真时钟：
 
 - Action：`/rebotarm/follow_joint_trajectory`
 - Topic：`/rebotarm/joint_states`
 - Service：`/rebotarm/gripper/set`
 - Topic：`/rebotarm/gripper/state`
 - Service：`/rebotarm/trajectory_stop`
+- Service：`/rebotarm/sim/set_mode`（只接受 `position/hold/gravity_comp`）
+- Topic：`/diagnostics`
 - Topic：`/clock`
 
 MuJoCo 物理步进定时器固定使用 steady clock，不依赖节点的 ROS 时钟；消费仿真状态的
@@ -243,8 +257,10 @@ from rebotarm_simulation.mujoco_sim import RebotArmMujoco
 with RebotArmMujoco() as sim:
     sim.reset(seed=7)
     scene = sim.randomize_scene(seed=7)
-    sim.set_joint_position_targets([0.1, -0.2, -0.2, 0.2, 0.0, 0.0])
-    sim.set_gripper_width(0.05)
+    sim.set_mode("position")
+    sim.command_joint_positions([0.1, -0.2, -0.2, 0.2, 0.0, 0.0])
+    sim.command_gripper_width(0.05, max_force_n=10.0)
+    control = sim.get_control_status()
     sim.set_object_pose("test_cube", [0.45, 0.0, 0.44], [0.0, 0.0, 0.0, 1.0])
     saved = sim.save_state()
     state = sim.step(10)
@@ -378,9 +394,10 @@ rebotarm_urdf_to_mjcf --repo-root .
 rebotarm_urdf_to_mjcf --repo-root . --check
 ```
 
-转换使用 MuJoCo 官方 URDF 解析器。原始 STL 同时保留为视觉网格和碰撞网格，不执行
-VHACD。执行器、双指联动、传感器、末端 site 和接触过滤由确定性后处理补入。不要手工
-修改 `robot.xml`；应修改 URDF 或生成器后重新生成。
+转换使用 MuJoCo 官方 URDF 解析器。完整原始 STL 保留为视觉网格；主体碰撞代理由
+`config/mujoco_collision.yaml` 明确定义，手指使用精细凸 mesh。执行器、
+双指联动、传感器、末端 site 和接触过滤由确定性后处理补入。不要手工修改
+`robot.xml`；应修改 URDF、碰撞配置或生成器后重新生成。
 
 Windows 与 Ubuntu VM 同步后，可分别检查受控文件哈希：
 

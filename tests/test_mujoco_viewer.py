@@ -26,7 +26,7 @@ class FakeSim:
         self.targets = [0.0] * 6
         self.width = 0.05
         self.time = 0.0
-        self.control_mode = "pos_vel"
+        self.control_mode = "hold"
         self.calls = []
         self.call_threads = []
         self.closed = False
@@ -71,6 +71,19 @@ class FakeSim:
         self.control_mode = mode
         return mode
 
+    set_mode = set_control_mode
+    command_joint_positions = set_joint_position_targets
+    command_gripper_width = set_gripper_width
+
+    def get_control_status(self):
+        return SimpleNamespace(
+            mode=self.control_mode,
+            requested_torques=(0.0,) * 6,
+            applied_torques=(0.0,) * 6,
+            saturated=(False,) * 6,
+            watchdog_remaining_s=0.0,
+        )
+
     def step(self):
         self.call_threads.append(threading.get_ident())
         self.calls.append(("step",))
@@ -102,6 +115,8 @@ class FakeViewer:
         self.keys = iter(keys)
         self.sync_count = 0
         self.closed = False
+        self.opt = SimpleNamespace(geomgroup=[1] * 6)
+        self.texts = None
 
     def is_running(self):
         try:
@@ -116,6 +131,9 @@ class FakeViewer:
     def close(self):
         self.closed = True
 
+    def set_texts(self, texts):
+        self.texts = texts
+
 
 def test_internal_viewer_handles_reject_closed_simulation():
     sim = RebotArmMujoco.__new__(RebotArmMujoco)
@@ -126,12 +144,31 @@ def test_internal_viewer_handles_reject_closed_simulation():
 
 def test_control_state_selects_six_arm_joints_with_wrapping():
     state = mujoco_viewer.ViewerControlState()
-    state = mujoco_viewer.reduce_key(state, "]")
+    state = mujoco_viewer.reduce_key(state, "x")
     assert state.selected_joint == 1
-    state = mujoco_viewer.reduce_key(state, "[")
-    state = mujoco_viewer.reduce_key(state, "[")
+    state = mujoco_viewer.reduce_key(state, "z")
+    state = mujoco_viewer.reduce_key(state, "z")
     assert state.selected_joint == 5
-    assert mujoco_viewer.reduce_key(state, "3").selected_joint == 2
+    assert mujoco_viewer.reduce_key(state, "3").selected_joint == 5
+
+
+def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
+    mujoco = pytest.importorskip("mujoco")
+    option = mujoco.MjvOption()
+    option.geomgroup[2] = 0
+    option.geomgroup[3] = 1
+    transparent = int(mujoco.mjtVisFlag.mjVIS_TRANSPARENT)
+    texture = int(mujoco.mjtVisFlag.mjVIS_TEXTURE)
+    option.flags[transparent] = 1
+    option.flags[texture] = 0
+    viewer = SimpleNamespace(opt=option)
+
+    mujoco_viewer.configure_viewer_rendering(viewer, collision_visible=False)
+
+    assert option.geomgroup[2] == 1
+    assert option.geomgroup[3] == 0
+    assert option.flags[transparent] == 0
+    assert option.flags[texture] == 1
 
 
 @pytest.mark.parametrize(
@@ -198,7 +235,7 @@ def test_drain_processes_finite_snapshot_when_producer_keeps_adding():
 def test_interleaved_jog_selection_jog_preserves_target_joint_order():
     sim = FakeSim()
     events = SimpleQueue()
-    for key in (ord("k"), ord("]"), ord("k")):
+    for key in (ord("k"), ord("x"), ord("k")):
         events.put(key)
     state = mujoco_viewer.process_key_events(
         sim, events, mujoco_viewer.ViewerControlState(), 0.05, 0.005
@@ -319,11 +356,16 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
         contact_count=2,
         paused=True,
         active_mode="gravity_comp",
+        requested_torques=(0.0, 0.0, 1.5, 0.0, 0.0, 0.0),
+        applied_torques=(0.0, 0.0, 1.2, 0.0, 0.0, 0.0),
+        saturated=(False, False, True, False, False, False),
+        collision_visible=True,
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
         "gravity_comp", "joint3", "0.200", "0.030", "0.250", "0.035", "0.040",
-        "contacts: 2", "2.50 N", "paused", "torque/force", "[ / ]", "hold J/K",
+        "contacts: 2", "2.50 N", "paused", "1.50/1.20", "SAT", "Z/X", "hold J/K",
+        "collision: shown",
     ):
         assert expected in text
 
@@ -428,8 +470,9 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     sim = FakeSim("scene.xml")
     holder = {}
 
-    def launch(model, data, *, key_callback):
+    def launch(model, data, *, key_callback, show_right_ui):
         assert (model, data) == (sim.viewer_model, sim.viewer_data)
+        assert show_right_ui is False
         holder["viewer"] = FakeViewer(key_callback, [ord("k"), ord(" "), ord("."), ord("q")])
         return holder["viewer"]
 
@@ -449,8 +492,11 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "dq", "target", "gripper", "contacts", "paused", "hold J/K", "torque/force"):
+    for expected in ("joint1", "dq", "target", "gripper", "contacts", "paused", "hold J/K", "Raw MuJoCo"):
         assert expected in output
+    assert holder["viewer"].opt.geomgroup[2] == 1
+    assert holder["viewer"].opt.geomgroup[3] == 0
+    assert holder["viewer"].texts is not None
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True
     assert sim.closed is True
@@ -476,7 +522,8 @@ def test_runtime_accepts_terminal_joint_commands_while_viewer_runs():
         def close(self):
             self.closed = True
 
-    def launch(model, data, *, key_callback):
+    def launch(model, data, *, key_callback, show_right_ui):
+        assert show_right_ui is False
         holder["viewer"] = ThreeCycleViewer(key_callback)
         return holder["viewer"]
 
@@ -577,7 +624,7 @@ def test_callback_from_other_thread_only_enqueues_until_main_loop_drains():
     assert mujoco_viewer.main(
         [],
         sim_factory=lambda _: sim,
-        launch_passive=lambda *_args, key_callback: ConcurrentViewer(key_callback),
+        launch_passive=lambda *_args, key_callback, show_right_ui: ConcurrentViewer(key_callback),
         sleep=lambda _: None,
         status_stream=io.StringIO(),
     ) == 0

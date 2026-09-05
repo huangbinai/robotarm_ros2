@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import importlib
 import json
@@ -16,8 +17,8 @@ from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 
 HELP = (
-    "[ / ] select | 1-6 select | hold J/K joint | hold C/O gripper | "
-    "G gravity | H hold | P pos | R zero | T home | Q quit | "
+    "Z/X select | hold J/K joint | hold C/O gripper | V collision | "
+    "G gravity | H hold | P position | R reset | T home | Q quit | "
     "type: joints J1..J6, joint NAME VALUE, gripper WIDTH"
 )
 _RETAINED_UNSAFE_VIEWERS = []
@@ -33,6 +34,11 @@ class ViewerControlState:
     gripper_actual_width: float = 0.09
     max_contact_force: float = 0.0
     contact_count: int = 0
+    requested_torques: tuple[float, ...] = (0.0,) * 6
+    applied_torques: tuple[float, ...] = (0.0,) * 6
+    saturated: tuple[bool, ...] = (False,) * 6
+    watchdog_remaining_s: float = 0.0
+    collision_visible: bool = False
     paused: bool = False
     joint_delta: int = 0
     gripper_delta: int = 0
@@ -43,18 +49,16 @@ class ViewerControlState:
     reset: bool = False
     home: bool = False
     mode: str | None = None
-    active_mode: str = "pos_vel"
+    active_mode: str = "hold"
     quit: bool = False
 
 
 def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     key = key.lower()
-    if key == "]":
+    if key == "x":
         return replace(state, selected_joint=(state.selected_joint + 1) % 6)
-    if key == "[":
+    if key == "z":
         return replace(state, selected_joint=(state.selected_joint - 1) % 6)
-    if key in "123456":
-        return replace(state, selected_joint=int(key) - 1)
     if key == "j":
         return replace(state, joint_delta=state.joint_delta - 1, joint_jog_direction=-1)
     if key == "k":
@@ -76,7 +80,9 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     if key == "h":
         return replace(state, mode="hold")
     if key == "p":
-        return replace(state, mode="pos_vel")
+        return replace(state, mode="position")
+    if key == "v":
+        return replace(state, collision_visible=not state.collision_visible)
     if key in ("q", "\x1b"):
         return replace(state, quit=True)
     return state
@@ -187,6 +193,7 @@ def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> Vi
     positions = tuple(float(value) for value in state.joint_positions[:6])
     velocities = tuple(float(value) for value in state.joint_velocities[:6])
     contacts = _contact_summary(sim)
+    control = _control_status(sim)
     return ViewerControlState(
         selected_joint=selected_joint,
         joint_targets=targets,
@@ -197,8 +204,27 @@ def _state_from_sim(sim, *, paused: bool = False, selected_joint: int = 0) -> Vi
         max_contact_force=contacts[0],
         contact_count=contacts[1],
         paused=paused,
-        active_mode=str(getattr(sim, "control_mode", "pos_vel")),
+        requested_torques=control[0],
+        applied_torques=control[1],
+        saturated=control[2],
+        watchdog_remaining_s=control[3],
+        active_mode=control[4],
     )
+
+
+def _control_status(sim) -> tuple[tuple[float, ...], tuple[float, ...], tuple[bool, ...], float, str]:
+    if hasattr(sim, "get_control_status"):
+        status = sim.get_control_status()
+        remaining = status.watchdog_remaining_s
+        return (
+            tuple(float(value) for value in status.requested_torques[:6]),
+            tuple(float(value) for value in status.applied_torques[:6]),
+            tuple(bool(value) for value in status.saturated[:6]),
+            0.0 if remaining is None else float(remaining),
+            str(status.mode),
+        )
+    mode = str(getattr(sim, "control_mode", "hold"))
+    return (0.0,) * 6, (0.0,) * 6, (False,) * 6, 0.0, mode
 
 
 def _contact_summary(sim) -> tuple[float, int]:
@@ -213,6 +239,7 @@ def _contact_summary(sim) -> tuple[float, int]:
 def _refresh_observed_state(sim, state: ViewerControlState) -> ViewerControlState:
     sim_state = sim.get_state()
     max_contact_force, contact_count = _contact_summary(sim)
+    control = _control_status(sim)
     return replace(
         state,
         joint_positions=tuple(float(value) for value in sim_state.joint_positions[:6]),
@@ -220,7 +247,29 @@ def _refresh_observed_state(sim, state: ViewerControlState) -> ViewerControlStat
         gripper_actual_width=float(sim_state.gripper_width),
         max_contact_force=max_contact_force,
         contact_count=contact_count,
+        requested_torques=control[0],
+        applied_torques=control[1],
+        saturated=control[2],
+        watchdog_remaining_s=control[3],
+        active_mode=control[4],
     )
+
+
+def _set_mode(sim, mode: str) -> str:
+    setter = getattr(sim, "set_mode", None) or getattr(sim, "set_control_mode")
+    return str(setter(mode))
+
+
+def _command_positions(sim, targets):
+    command = getattr(sim, "command_joint_positions", None) or getattr(
+        sim, "set_joint_position_targets"
+    )
+    return command(targets)
+
+
+def _command_gripper(sim, width: float) -> float:
+    command = getattr(sim, "command_gripper_width", None) or getattr(sim, "set_gripper_width")
+    return float(command(width))
 
 
 def apply_pending_commands(
@@ -239,8 +288,7 @@ def apply_pending_commands(
             sim.reset_home()
         else:
             sim.reset()
-        if hasattr(sim, "set_control_mode"):
-            sim.set_control_mode("gravity_comp")
+        _set_mode(sim, "hold")
         state = _state_from_sim(
             sim, paused=state.paused, selected_joint=state.selected_joint
         )
@@ -251,8 +299,8 @@ def apply_pending_commands(
             quit=quit_requested,
         )
 
-    if state.mode is not None and hasattr(sim, "set_control_mode"):
-        active_mode = sim.set_control_mode(state.mode)
+    if state.mode is not None:
+        active_mode = _set_mode(sim, state.mode)
     else:
         active_mode = getattr(sim, "control_mode", state.active_mode)
 
@@ -261,13 +309,13 @@ def apply_pending_commands(
     if state.joint_delta:
         name = ARM_JOINT_NAMES[state.selected_joint]
         requested = targets[state.selected_joint] + state.joint_delta * joint_step
-        targets = tuple(sim.set_joint_position_targets({name: requested}))
-        active_mode = getattr(sim, "control_mode", "pos_vel")
+        targets = tuple(_command_positions(sim, {name: requested}))
+        active_mode = getattr(sim, "control_mode", "position")
         jog_time_remaining = jog_hold_time
 
     width = state.gripper_width
     if state.gripper_delta:
-        width = float(sim.set_gripper_width(width + state.gripper_delta * gripper_step))
+        width = _command_gripper(sim, width + state.gripper_delta * gripper_step)
         jog_time_remaining = jog_hold_time
 
     state = replace(
@@ -300,11 +348,11 @@ def apply_continuous_jog(
     if state.joint_jog_direction:
         name = ARM_JOINT_NAMES[state.selected_joint]
         requested = targets[state.selected_joint] + state.joint_jog_direction * joint_rate * dt
-        targets = tuple(sim.set_joint_position_targets({name: requested}))
+        targets = tuple(_command_positions(sim, {name: requested}))
 
     width = state.gripper_width
     if state.gripper_jog_direction:
-        width = float(sim.set_gripper_width(width + state.gripper_jog_direction * gripper_rate * dt))
+        width = _command_gripper(sim, width + state.gripper_jog_direction * gripper_rate * dt)
 
     remaining = max(0.0, state.jog_time_remaining - dt)
     state = replace(
@@ -322,17 +370,49 @@ def apply_continuous_jog(
 def overlay_text(state: ViewerControlState) -> str:
     name = ARM_JOINT_NAMES[state.selected_joint]
     run_state = "paused" if state.paused else "running"
+    index = state.selected_joint
+    saturation = " SAT" if state.saturated[index] else ""
+    collision = "shown" if state.collision_visible else "hidden"
     return (
         f"mode: {state.active_mode}  selected: {name}  "
-        f"q: {state.joint_positions[state.selected_joint]:.3f} rad  "
-        f"dq: {state.joint_velocities[state.selected_joint]:.3f} rad/s  "
-        f"target: {state.joint_targets[state.selected_joint]:.3f} rad\n"
+        f"q: {state.joint_positions[index]:.3f} rad  "
+        f"dq: {state.joint_velocities[index]:.3f} rad/s  "
+        f"target: {state.joint_targets[index]:.3f} rad\n"
+        f"torque requested/applied: {state.requested_torques[index]:.2f}/"
+        f"{state.applied_torques[index]:.2f} N.m{saturation}  "
+        f"watchdog: {state.watchdog_remaining_s:.3f} s\n"
         f"gripper: {state.gripper_actual_width:.3f} m  target: {state.gripper_width:.3f} m  "
         f"contacts: {state.contact_count}  max contact: {state.max_contact_force:.2f} N  "
-        f"state: {run_state}\n"
-        "MuJoCo control panel shows torque/force, not joint position.\n"
+        f"state: {run_state}  collision: {collision}\n"
+        "Raw MuJoCo controls are hidden; use position commands or diagnostic torque CLI.\n"
         f"{HELP}"
     )
+
+
+def configure_viewer_rendering(viewer, *, collision_visible: bool) -> None:
+    option = getattr(viewer, "opt", None)
+    groups = getattr(option, "geomgroup", None)
+    if option is None or groups is None or len(groups) < 4:
+        return
+    lock = getattr(viewer, "lock", None)
+    with lock() if lock is not None else nullcontext():
+        groups[2] = 1
+        groups[3] = int(collision_visible)
+        # The stock Simulate UI handles the same key event after our callback.
+        # Restore its visualization flags so T/H/P/Z/X/J/C/O/V cannot make the
+        # robot transparent, hide textures/lights, or add debug overlays while
+        # those keys are being used as robot controls.
+        flags = getattr(option, "flags", None)
+        if flags is not None:
+            mujoco = importlib.import_module("mujoco")
+            for index, (_name, default, _shortcut) in enumerate(mujoco.mjVISSTRING):
+                flags[index] = int(default)
+
+
+def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
+    setter = getattr(viewer, "set_texts", None)
+    if setter is not None:
+        setter((None, None, "reBotArm MuJoCo", overlay_text(state)))
 
 
 def _positive_float(value: str) -> float:
@@ -442,9 +522,8 @@ def main(
     viewer = None
     model = data = None
     try:
-        sim.reset()
-        if hasattr(sim, "set_control_mode"):
-            sim.set_control_mode("gravity_comp")
+        sim.reset_home()
+        _set_mode(sim, "hold")
         if launch_passive is None:
             launch_passive = importlib.import_module("mujoco.viewer").launch_passive
 
@@ -478,7 +557,10 @@ def main(
             model,
             data,
             key_callback=on_key,
+            show_right_ui=False,
         )
+        configure_viewer_rendering(viewer, collision_visible=False)
+        update_viewer_overlay(viewer, state)
         try:
             while viewer.is_running():
                 state = process_command_events(sim, command_events, state, status_stream)
@@ -509,6 +591,10 @@ def main(
                 if current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)
                     previous_status = current_status
+                configure_viewer_rendering(
+                    viewer, collision_visible=state.collision_visible
+                )
+                update_viewer_overlay(viewer, state)
                 viewer.sync()
                 elapsed = float(sim.get_state().simulation_time) - start_simulation_time
                 if args.duration is not None and elapsed >= args.duration:

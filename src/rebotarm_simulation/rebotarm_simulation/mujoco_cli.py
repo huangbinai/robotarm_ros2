@@ -29,12 +29,33 @@ def _positive_int(value: str) -> int:
     return number
 
 
+def _positive_finite(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive finite number")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run or manually control reBotArm MuJoCo")
-    parser.add_argument("--model", help="path to an MJCF scene (defaults to packaged scene.xml)")
-    parser.add_argument("--headless", action="store_true", help="run without an interactive prompt")
-    parser.add_argument("--duration", type=_nonnegative_finite, help="simulation seconds to run")
-    parser.add_argument("--steps", type=_positive_int, help="number of physics steps to run")
+    parser = argparse.ArgumentParser(description="Run or diagnose the reBotArm MuJoCo backend")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run = subparsers.add_parser("run", help="run a headless simulation")
+    run.add_argument("--model", help="path to an MJCF scene (defaults to packaged scene.xml)")
+    run.add_argument("--duration", type=_nonnegative_finite, help="simulation seconds to run")
+    run.add_argument("--steps", type=_positive_int, help="number of physics steps to run")
+
+    shell = subparsers.add_parser("shell", help="read simulation commands from standard input")
+    shell.add_argument("--model", help="path to an MJCF scene (defaults to packaged scene.xml)")
+
+    torque = subparsers.add_parser("torque", help="apply a watchdog-limited diagnostic torque")
+    torque.add_argument("--model", help="path to an MJCF scene (defaults to packaged scene.xml)")
+    torque.add_argument("--values", nargs=6, type=float, required=True, metavar="NM")
+    torque.add_argument("--timeout", type=_positive_finite, default=0.1)
+    torque.add_argument(
+        "--observe", type=_nonnegative_finite, default=0.2,
+        help="simulation seconds to observe, including watchdog fallback",
+    )
     return parser
 
 
@@ -82,6 +103,24 @@ def _run_headless(sim, duration: float | None, steps: int | None):
     return state
 
 
+def _prepare_simulation(sim) -> None:
+    sim.reset_home()
+    sim.set_mode("hold")
+
+
+def _run_torque(sim, values, *, timeout: float, observe: float):
+    sim.command_joint_torques(values, timeout_s=timeout)
+    start = float(sim.get_state().simulation_time)
+    while float(sim.get_state().simulation_time) - start + 1e-15 < observe:
+        sim.step()
+    return {
+        "state": sim.get_state(),
+        "control": sim.get_control_status(),
+        "requested_timeout_s": timeout,
+        "observed_duration_s": float(sim.get_state().simulation_time) - start,
+    }
+
+
 def _interactive(sim, stdin, stdout) -> int:
     paused = False
     for line in stdin:
@@ -104,8 +143,17 @@ def main(argv=None, *, sim_factory=RebotArmMujoco, stdin=None, stdout=None, stde
     sim = None
     try:
         sim = sim_factory(args.model)
-        if args.headless:
+        _prepare_simulation(sim)
+        if args.command == "run":
             _emit(_run_headless(sim, args.duration, args.steps), stdout)
+            return 0
+        if args.command == "torque":
+            _emit(
+                _run_torque(
+                    sim, args.values, timeout=args.timeout, observe=args.observe
+                ),
+                stdout,
+            )
             return 0
         return _interactive(sim, stdin, stdout)
     except Exception as exc:

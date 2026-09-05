@@ -28,6 +28,8 @@ class FakeSim:
         self.time = 0.0
         self.calls = []
         self.closed = False
+        self.control_mode = "hold"
+        self.requested_torques = (0.0,) * 6
 
     def get_state(self):
         return SimpleNamespace(
@@ -52,6 +54,29 @@ class FakeSim:
         self.width = float(width)
         return self.width
 
+    command_joint_positions = set_joint_position_targets
+    command_gripper_width = set_gripper_width
+
+    def set_mode(self, mode):
+        self.calls.append(("mode", mode))
+        self.control_mode = str(mode)
+        return self.control_mode
+
+    def command_joint_torques(self, values, timeout_s=0.1):
+        self.calls.append(("torques", tuple(values), float(timeout_s)))
+        self.requested_torques = tuple(float(value) for value in values)
+        self.control_mode = "raw_torque"
+        return self.requested_torques
+
+    def get_control_status(self):
+        return SimpleNamespace(
+            mode=self.control_mode,
+            requested_torques=self.requested_torques,
+            applied_torques=self.requested_torques,
+            saturated=(False,) * 6,
+            watchdog_remaining_s=0.1 if self.control_mode == "raw_torque" else 0.0,
+        )
+
     def step(self, n_steps=1):
         self.calls.append(("step", n_steps))
         self.time += n_steps * self.timestep
@@ -63,6 +88,8 @@ class FakeSim:
         self.time = 0.0
         return self.get_state()
 
+    reset_home = reset
+
     def get_contacts(self):
         self.calls.append(("contacts",))
         return (SimpleNamespace(body1="finger", body2="cube", force=1.25),)
@@ -73,9 +100,9 @@ class FakeSim:
 
 def test_parser_accepts_headless_duration_steps_and_model():
     args = mujoco_cli.build_parser().parse_args(
-        ["--headless", "--duration", "1.5", "--steps", "3", "--model", "scene.xml"]
+        ["run", "--duration", "1.5", "--steps", "3", "--model", "scene.xml"]
     )
-    assert args.headless is True
+    assert args.command == "run"
     assert args.duration == 1.5
     assert args.steps == 3
     assert args.model == "scene.xml"
@@ -83,13 +110,13 @@ def test_parser_accepts_headless_duration_steps_and_model():
 
 def test_parser_rejects_unimplemented_real_time_option():
     with pytest.raises(SystemExit):
-        mujoco_cli.build_parser().parse_args(["--real-time"])
+        mujoco_cli.build_parser().parse_args(["run", "--real-time"])
 
 
 @pytest.mark.parametrize("value", ["-1", "nan", "inf"])
 def test_parser_rejects_invalid_duration(value):
     with pytest.raises(SystemExit):
-        mujoco_cli.build_parser().parse_args(["--duration", value])
+        mujoco_cli.build_parser().parse_args(["run", "--duration", value])
 
 
 def test_headless_duration_uses_simulation_time_and_closes():
@@ -101,7 +128,7 @@ def test_headless_duration_uses_simulation_time_and_closes():
 
     output = io.StringIO()
     code = mujoco_cli.main(
-        ["--headless", "--duration", "0.025"], sim_factory=factory, stdout=output
+        ["run", "--duration", "0.025"], sim_factory=factory, stdout=output
     )
     assert code == 0
     assert created[0].time == pytest.approx(0.03)
@@ -115,7 +142,7 @@ def test_headless_duration_uses_simulation_time_and_closes():
 def test_headless_steps_advance_exact_count():
     sim = FakeSim()
     assert mujoco_cli.main(
-        ["--headless", "--steps", "4"], sim_factory=lambda _: sim, stdout=io.StringIO()
+        ["run", "--steps", "4"], sim_factory=lambda _: sim, stdout=io.StringIO()
     ) == 0
     assert ("step", 4) in sim.calls
 
@@ -127,7 +154,7 @@ def test_interactive_commands_delegate_to_simulation():
         "gripper 0.04\nstep 2\ncontacts\nreset\npause\nresume\nquit\n"
     )
     output = io.StringIO()
-    code = mujoco_cli.main([], sim_factory=lambda _: sim, stdin=commands, stdout=output)
+    code = mujoco_cli.main(["shell"], sim_factory=lambda _: sim, stdin=commands, stdout=output)
     assert code == 0
     assert ("joints", {"joint2": 0.5}) in sim.calls
     assert ("joints", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) in sim.calls
@@ -142,7 +169,7 @@ def test_interactive_commands_delegate_to_simulation():
 def test_interactive_bad_command_is_reported_and_loop_continues():
     output = io.StringIO()
     code = mujoco_cli.main(
-        [], sim_factory=lambda _: FakeSim(), stdin=io.StringIO("step 0\nnope\nquit\n"), stdout=output
+        ["shell"], sim_factory=lambda _: FakeSim(), stdin=io.StringIO("step 0\nnope\nquit\n"), stdout=output
     )
     assert code == 0
     assert output.getvalue().count("error:") == 2
@@ -198,7 +225,7 @@ def test_cli_outputs_real_simulation_state_with_mappingproxy():
 
     output = io.StringIO()
     assert mujoco_cli.main(
-        ["--headless", "--steps", "1"], sim_factory=lambda _: RealStateSim(), stdout=output
+        ["run", "--steps", "1"], sim_factory=lambda _: RealStateSim(), stdout=output
     ) == 0
     assert json.loads(output.getvalue())["object_poses"]["cube"][-1] == 1.0
 
@@ -208,8 +235,24 @@ def test_cli_dependency_or_model_error_returns_nonzero():
         raise RuntimeError("MuJoCo is required")
 
     error = io.StringIO()
-    assert mujoco_cli.main(["--headless"], sim_factory=broken, stderr=error) != 0
+    assert mujoco_cli.main(["run"], sim_factory=broken, stderr=error) != 0
     assert "MuJoCo is required" in error.getvalue()
+
+
+def test_torque_subcommand_uses_watchdog_limited_api_and_reports_control():
+    sim = FakeSim()
+    output = io.StringIO()
+    assert mujoco_cli.main(
+        [
+            "torque", "--values", "1", "2", "3", "4", "5", "6",
+            "--timeout", "0.1", "--observe", "0.02",
+        ],
+        sim_factory=lambda _: sim,
+        stdout=output,
+    ) == 0
+    assert ("torques", (1.0, 2.0, 3.0, 4.0, 5.0, 6.0), 0.1) in sim.calls
+    payload = json.loads(output.getvalue())
+    assert payload["control"]["mode"] == "raw_torque"
 
 
 def test_collect_health_is_json_friendly_and_checks_expected_counts():

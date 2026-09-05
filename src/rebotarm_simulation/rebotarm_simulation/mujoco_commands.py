@@ -36,12 +36,16 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False) -> CommandResu
         if arguments:
             raise ValueError("usage: state")
         return CommandResult(paused, sim.get_state())
+    if command == "control":
+        if arguments:
+            raise ValueError("usage: control")
+        return CommandResult(paused, sim.get_control_status())
     if command == "joint":
         if len(arguments) != 2 or arguments[0] not in ARM_JOINT_NAMES:
             raise ValueError("usage: joint NAME VALUE")
         return CommandResult(
             paused,
-            sim.set_joint_position_targets({arguments[0]: float(arguments[1])}),
+            sim.command_joint_positions({arguments[0]: float(arguments[1])}),
             mutated=True,
         )
     if command == "joints":
@@ -50,7 +54,7 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False) -> CommandResu
         values = [float(value) for value in arguments]
         return CommandResult(
             paused,
-            sim.set_joint_position_targets(values),
+            sim.command_joint_positions(values),
             mutated=True,
         )
     if command == "jog":
@@ -61,7 +65,7 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False) -> CommandResu
         target = float(state.joint_positions[index]) + float(arguments[1])
         return CommandResult(
             paused,
-            sim.set_joint_position_targets({arguments[0]: target}),
+            sim.command_joint_positions({arguments[0]: target}),
             mutated=True,
         )
     if command == "gripper":
@@ -69,21 +73,23 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False) -> CommandResu
             raise ValueError("usage: gripper WIDTH")
         return CommandResult(
             paused,
-            sim.set_gripper_width(float(arguments[0])),
+            sim.command_gripper_width(float(arguments[0])),
             mutated=True,
         )
     if command == "mode":
-        if len(arguments) != 1 or not hasattr(sim, "set_control_mode"):
-            raise ValueError("usage: mode gravity_comp|hold|pos_vel")
+        if len(arguments) != 1 or arguments[0] not in {"gravity_comp", "hold", "position"}:
+            raise ValueError("usage: mode gravity_comp|hold|position")
         return CommandResult(
             paused,
-            sim.set_control_mode(arguments[0]),
+            sim.set_mode(arguments[0]),
             mutated=True,
         )
     if command == "home":
         if arguments or not hasattr(sim, "reset_home"):
             raise ValueError("usage: home")
-        return CommandResult(paused, sim.reset_home(), mutated=True)
+        state = sim.reset_home()
+        sim.set_mode("hold")
+        return CommandResult(paused, state, mutated=True)
     if command == "step":
         if len(arguments) > 1:
             raise ValueError("usage: step [N]")

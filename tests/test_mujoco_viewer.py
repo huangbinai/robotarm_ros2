@@ -765,6 +765,21 @@ def test_parser_enables_terminal_state_stream_only_on_request():
     assert args.verbose_status is True
 
 
+def test_viewer_refresh_budget_is_bounded_and_keeps_ten_seconds_of_telemetry():
+    assert mujoco_viewer.TELEMETRY_SAMPLE_HZ == pytest.approx(50.0)
+    assert mujoco_viewer.TELEMETRY_WINDOW_S == pytest.approx(10.0)
+    assert round(
+        mujoco_viewer.TELEMETRY_SAMPLE_HZ * mujoco_viewer.TELEMETRY_WINDOW_S
+    ) == 500
+    assert mujoco_viewer.VISUAL_UPDATE_HZ == pytest.approx(30.0)
+    assert mujoco_viewer.DASHBOARD_UPDATE_HZ == pytest.approx(10.0)
+    assert (
+        mujoco_viewer.DASHBOARD_UPDATE_HZ
+        < mujoco_viewer.VISUAL_UPDATE_HZ
+        < mujoco_viewer.TELEMETRY_SAMPLE_HZ
+    )
+
+
 def test_viewer_launch_hides_only_known_wayland_window_position_warning():
     def launch(*_args, **_kwargs):
         warnings.warn(

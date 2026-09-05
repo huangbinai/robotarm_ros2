@@ -38,6 +38,10 @@ JOG_SPEED_LEVELS = (
     ("FAST", 2.5),
     ("TURBO", 5.0),
 )
+TELEMETRY_SAMPLE_HZ = 50.0
+TELEMETRY_WINDOW_S = 10.0
+VISUAL_UPDATE_HZ = 30.0
+DASHBOARD_UPDATE_HZ = 10.0
 _RETAINED_UNSAFE_VIEWERS = []
 
 
@@ -1020,7 +1024,9 @@ def main(
         cartesian_controller = (
             MujocoCartesianController(sim) if isinstance(sim, RebotArmMujoco) else None
         )
-        telemetry = MujocoTelemetryHistory(capacity=500)
+        telemetry = MujocoTelemetryHistory(
+            capacity=round(TELEMETRY_SAMPLE_HZ * TELEMETRY_WINDOW_S)
+        )
         session = MujocoSession(sim)
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
@@ -1134,7 +1140,8 @@ def main(
                     simulation_time = float(sim.get_state().simulation_time)
                     telemetry_due = (
                         simulation_time < last_telemetry_sample_sim_time
-                        or simulation_time - last_telemetry_sample_sim_time >= 1.0 / 50.0
+                        or simulation_time - last_telemetry_sample_sim_time
+                        >= 1.0 / TELEMETRY_SAMPLE_HZ
                     )
                     if telemetry_due and hasattr(sim, "get_control_status"):
                         try:
@@ -1160,7 +1167,8 @@ def main(
                 simulation_time = float(sim.get_state().simulation_time)
                 visual_update_due = (
                     simulation_time < last_visual_update_sim_time
-                    or simulation_time - last_visual_update_sim_time >= 1.0 / 30.0
+                    or simulation_time - last_visual_update_sim_time
+                    >= 1.0 / VISUAL_UPDATE_HZ
                 )
                 if visual_update_due:
                     if state.interaction_mode != "joint":
@@ -1184,7 +1192,8 @@ def main(
                     plots_attached = False
                 dashboard_due = (
                     simulation_time < last_dashboard_update_sim_time
-                    or simulation_time - last_dashboard_update_sim_time >= 0.1
+                    or simulation_time - last_dashboard_update_sim_time
+                    >= 1.0 / DASHBOARD_UPDATE_HZ
                     or current_status != displayed_dashboard
                 )
                 if dashboard_due:

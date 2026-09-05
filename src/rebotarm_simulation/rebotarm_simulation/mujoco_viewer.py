@@ -774,6 +774,12 @@ def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
         )
 
 
+def update_ghost_overlay(ghost, viewer, joint_targets: Sequence[float]) -> bool:
+    lock = getattr(viewer, "lock", None)
+    with lock() if lock is not None else nullcontext():
+        return bool(ghost.update(viewer, joint_targets))
+
+
 def align_cartesian_target(model, data) -> tuple[int, tuple[float, ...], tuple[float, ...]]:
     """Place the draggable mocap target on the current end-effector pose."""
     mujoco = importlib.import_module("mujoco")
@@ -1029,7 +1035,10 @@ def main(
             target_pose = (target_position, target_quaternion)
         viewer = _launch_passive_viewer(launch_passive, model, data, on_key)
         configure_viewer_rendering(viewer, collision_visible=False)
+        update_ghost_overlay(ghost, viewer, state.joint_targets)
         update_viewer_overlay(viewer, state)
+        last_visual_update_sim_time = float("-inf")
+        plots_attached = False
         try:
             while viewer.is_running():
                 state = process_command_events(
@@ -1096,12 +1105,22 @@ def main(
                 configure_viewer_rendering(
                     viewer, collision_visible=state.collision_visible
                 )
-                ghost.update(viewer, state.joint_targets)
-                figures.update(telemetry.snapshot(), joint_index=state.selected_joint)
-                if state.plots_visible:
-                    figures.attach_all(viewer)
-                else:
+                simulation_time = float(sim.get_state().simulation_time)
+                visual_update_due = (
+                    simulation_time < last_visual_update_sim_time
+                    or simulation_time - last_visual_update_sim_time >= 1.0 / 30.0
+                )
+                if visual_update_due:
+                    update_ghost_overlay(ghost, viewer, state.joint_targets)
+                    if state.plots_visible:
+                        figures.update(
+                            telemetry.snapshot(), joint_index=state.selected_joint
+                        )
+                        plots_attached = figures.attach_all(viewer)
+                    last_visual_update_sim_time = simulation_time
+                if not state.plots_visible and plots_attached:
                     figures.clear(viewer)
+                    plots_attached = False
                 update_viewer_overlay(viewer, state)
                 viewer.sync()
                 elapsed = float(sim.get_state().simulation_time) - start_simulation_time

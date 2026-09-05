@@ -174,10 +174,10 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
 @pytest.mark.parametrize(
     ("key", "field", "value"),
     [
-        ("j", "joint_delta", -1),
-        ("k", "joint_delta", 1),
-        ("c", "gripper_delta", -1),
-        ("o", "gripper_delta", 1),
+        ("j", "joint_jog_direction", -1),
+        ("k", "joint_jog_direction", 1),
+        ("c", "gripper_jog_direction", -1),
+        ("o", "gripper_jog_direction", 1),
         (".", "single_step", True),
         ("r", "reset", True),
         ("q", "quit", True),
@@ -188,12 +188,23 @@ def test_key_reducer_maps_commands(key, field, value):
     assert getattr(result, field) == value
 
 
-def test_reducer_accumulates_repeated_jog_and_gripper_events():
+def test_reducer_uses_latched_single_axis_jog_commands():
     state = mujoco_viewer.ViewerControlState()
     for key in ("k", "k", "j", "o", "o", "c"):
         state = mujoco_viewer.reduce_key(state, key)
-    assert state.joint_delta == 1
-    assert state.gripper_delta == 1
+    assert state.joint_jog_direction == 0
+    assert state.gripper_jog_direction == -1
+
+
+def test_stop_key_cancels_all_jog_and_requests_hold():
+    state = mujoco_viewer.ViewerControlState(
+        joint_jog_direction=1,
+        gripper_jog_direction=-1,
+    )
+    state = mujoco_viewer.reduce_key(state, "s")
+    assert state.joint_jog_direction == 0
+    assert state.gripper_jog_direction == 0
+    assert state.stop_jog is True
 
 
 def test_drain_key_events_preserves_burst_order_and_counts():
@@ -201,8 +212,8 @@ def test_drain_key_events_preserves_burst_order_and_counts():
     for key in (ord("k"), ord("k"), ord("j"), ord("o"), ord(" "), ord(".")):
         events.put(key)
     state = mujoco_viewer.drain_key_events(events, mujoco_viewer.ViewerControlState())
-    assert state.joint_delta == 1
-    assert state.gripper_delta == 1
+    assert state.joint_jog_direction == 0
+    assert state.gripper_jog_direction == 1
     assert state.paused is True
     assert state.single_step is True
     assert events.empty()
@@ -227,12 +238,12 @@ def test_drain_processes_finite_snapshot_when_producer_keeps_adding():
 
     events = GrowingQueue()
     state = mujoco_viewer.drain_key_events(events, mujoco_viewer.ViewerControlState())
-    assert state.joint_delta == 1
+    assert state.joint_jog_direction == 1
     assert events.get_calls == 1
     assert events.items == [ord("k")]
 
 
-def test_interleaved_jog_selection_jog_preserves_target_joint_order():
+def test_interleaved_jog_selection_jog_selects_new_joint_without_target_jump():
     sim = FakeSim()
     events = SimpleQueue()
     for key in (ord("k"), ord("x"), ord("k")):
@@ -240,11 +251,12 @@ def test_interleaved_jog_selection_jog_preserves_target_joint_order():
     state = mujoco_viewer.process_key_events(
         sim, events, mujoco_viewer.ViewerControlState(), 0.05, 0.005
     )
-    assert sim.targets[:2] == pytest.approx([0.05, 0.05])
+    assert sim.targets[:2] == pytest.approx([0.0, 0.0])
     assert state.selected_joint == 1
+    assert state.joint_jog_direction == 1
 
 
-def test_interleaved_open_reset_close_uses_reset_width_before_close():
+def test_interleaved_open_reset_close_latches_close_after_reset():
     sim = FakeSim()
     events = SimpleQueue()
     for key in (ord("o"), ord("r"), ord("c")):
@@ -253,9 +265,8 @@ def test_interleaved_open_reset_close_uses_reset_width_before_close():
         sim, events, mujoco_viewer.ViewerControlState(gripper_width=0.05), 0.05, 0.005
     )
     assert ("reset",) in sim.calls
-    assert sim.calls[-1][0] == "gripper"
-    assert sim.calls[-1][1] == pytest.approx(0.085)
-    assert state.gripper_width == pytest.approx(0.085)
+    assert state.gripper_width == pytest.approx(0.09)
+    assert state.gripper_jog_direction == -1
 
 
 def test_pause_single_step_resume_executes_step_at_its_ordered_position():
@@ -363,11 +374,25 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
-        "gravity_comp", "joint3", "0.200", "0.030", "0.250", "0.035", "0.040",
-        "contacts: 2", "2.50 N", "paused", "1.50/1.20", "SAT", "Z/X", "hold J/K",
-        "collision: shown",
+        "GRAVITY_COMP", "joint3", "+0.200", "+0.030", "+0.250", "0.035", "0.040",
+        "CONTACTS", "2.50 N", "PAUSED", "+1.50/ +1.20", "!", "Z/X",
+        "J/K start joint jog", "SHOWN",
     ):
         assert expected in text
+
+
+def test_overlay_has_clear_sections_and_all_six_joints():
+    state = mujoco_viewer.ViewerControlState(selected_joint=4)
+    system = mujoco_viewer.system_panel_text(state)
+    joints = mujoco_viewer.joint_panel_text(state)
+    gripper = mujoco_viewer.gripper_panel_text(state)
+
+    assert "MODE" in system[0]
+    assert "holding the captured current pose" in system[1]
+    for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"):
+        assert name in joints[0]
+    assert "> joint5" in joints[0]
+    assert "ACTUAL WIDTH" in gripper[0]
 
 
 def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
@@ -416,7 +441,7 @@ def test_command_events_report_errors_and_keep_running():
     assert state.quit is False
 
 
-def test_continuous_jog_advances_target_until_hold_window_expires():
+def test_continuous_jog_advances_target_until_explicit_stop():
     sim = FakeSim()
     state = mujoco_viewer.ViewerControlState(
         joint_jog_direction=1,
@@ -440,8 +465,13 @@ def test_continuous_jog_advances_target_until_hold_window_expires():
         gripper_rate=0.03,
     )
     assert sim.targets[0] == pytest.approx(0.008)
-    assert state.joint_jog_direction == 0
+    assert state.joint_jog_direction == 1
     assert state.jog_time_remaining == pytest.approx(0.0)
+
+    state = mujoco_viewer.reduce_key(state, "s")
+    state = mujoco_viewer.apply_pending_commands(sim, state, 0.01, 0.001)
+    assert state.joint_jog_direction == 0
+    assert sim.control_mode == "hold"
 
 
 def test_parser_accepts_model_and_positive_steps():
@@ -455,9 +485,15 @@ def test_parser_accepts_model_and_positive_steps():
         "scene.xml", 0.2, 0.01, 1.5,
     )
     assert args.no_command_input is False
+    assert args.verbose_status is False
     for flag in ("--joint-step", "--gripper-step", "--duration"):
         with pytest.raises(SystemExit):
             mujoco_viewer.build_parser().parse_args([flag, "0"])
+
+
+def test_parser_enables_terminal_state_stream_only_on_request():
+    args = mujoco_viewer.build_parser().parse_args(["--verbose-status"])
+    assert args.verbose_status is True
 
 
 @pytest.mark.parametrize("value", ["-1", "nan", "inf"])
@@ -488,15 +524,15 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
         status_stream=status,
     )
     assert code == 0
-    assert ("joints", {"joint1": pytest.approx(0.01)}) in sim.calls
+    assert ("joints", {"joint1": pytest.approx(0.0008)}) in sim.calls
     assert sum(call == ("step",) for call in sim.calls) == 2
     assert holder["viewer"].sync_count >= 3
     output = status.getvalue()
-    for expected in ("joint1", "dq", "target", "gripper", "contacts", "paused", "hold J/K", "Raw MuJoCo"):
-        assert expected in output
+    assert "viewer ready" in output
+    assert "joint1" not in output
     assert holder["viewer"].opt.geomgroup[2] == 1
     assert holder["viewer"].opt.geomgroup[3] == 0
-    assert holder["viewer"].texts is not None
+    assert len(holder["viewer"].texts) == 4
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True
     assert sim.closed is True
@@ -628,7 +664,7 @@ def test_callback_from_other_thread_only_enqueues_until_main_loop_drains():
         sleep=lambda _: None,
         status_stream=io.StringIO(),
     ) == 0
-    assert sim.targets[0] > 0.02
+    assert sim.targets[0] == pytest.approx(0.0008)
     assert sim.call_threads and set(sim.call_threads) == {main_thread}
 
 
@@ -643,7 +679,7 @@ def test_runtime_closes_sim_when_viewer_launch_fails():
     assert sim.closed is True
 
 
-def test_runtime_prints_terminal_help_even_when_viewer_is_already_closed():
+def test_runtime_terminal_is_quiet_when_viewer_is_already_closed():
     sim = FakeSim()
     status = io.StringIO()
 
@@ -660,8 +696,9 @@ def test_runtime_prints_terminal_help_even_when_viewer_is_already_closed():
         launch_passive=lambda *_args, **_kwargs: ClosedViewer(),
         status_stream=status,
     ) == 0
-    assert "joint1" in status.getvalue()
-    assert "J/K" in status.getvalue()
+    assert status.getvalue().count("\n") == 1
+    assert "viewer ready" in status.getvalue()
+    assert "joint1" not in status.getvalue()
 
 
 def test_runtime_closes_sim_even_when_viewer_close_raises():

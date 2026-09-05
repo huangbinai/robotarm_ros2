@@ -17,10 +17,16 @@ from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 
 
 HELP = (
-    "Z/X select | hold J/K joint | hold C/O gripper | V collision | "
-    "G gravity | H hold | P position | R reset | T home | Q quit | "
-    "type: joints J1..J6, joint NAME VALUE, gripper WIDTH"
+    "Z/X select | J/K start joint jog | C/O start gripper jog | S stop + hold\n"
+    "G gravity | H capture + hold | P track target | V collision | T home | Q quit\n"
+    "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
 )
+MODE_DESCRIPTIONS = {
+    "position": "tracking commanded joint targets",
+    "hold": "holding the captured current pose",
+    "gravity_comp": "gravity compensation; position target is not tracked",
+    "raw_torque": "diagnostic torque command with watchdog",
+}
 _RETAINED_UNSAFE_VIEWERS = []
 
 
@@ -50,23 +56,42 @@ class ViewerControlState:
     home: bool = False
     mode: str | None = None
     active_mode: str = "hold"
+    stop_jog: bool = False
     quit: bool = False
 
 
 def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     key = key.lower()
     if key == "x":
-        return replace(state, selected_joint=(state.selected_joint + 1) % 6)
+        return replace(
+            state,
+            selected_joint=(state.selected_joint + 1) % 6,
+            joint_jog_direction=0,
+            stop_jog=bool(state.joint_jog_direction),
+        )
     if key == "z":
-        return replace(state, selected_joint=(state.selected_joint - 1) % 6)
+        return replace(
+            state,
+            selected_joint=(state.selected_joint - 1) % 6,
+            joint_jog_direction=0,
+            stop_jog=bool(state.joint_jog_direction),
+        )
     if key == "j":
-        return replace(state, joint_delta=state.joint_delta - 1, joint_jog_direction=-1)
+        return replace(state, joint_jog_direction=-1, gripper_jog_direction=0)
     if key == "k":
-        return replace(state, joint_delta=state.joint_delta + 1, joint_jog_direction=1)
+        return replace(state, joint_jog_direction=1, gripper_jog_direction=0)
     if key == "c":
-        return replace(state, gripper_delta=state.gripper_delta - 1, gripper_jog_direction=-1)
+        return replace(state, joint_jog_direction=0, gripper_jog_direction=-1)
     if key == "o":
-        return replace(state, gripper_delta=state.gripper_delta + 1, gripper_jog_direction=1)
+        return replace(state, joint_jog_direction=0, gripper_jog_direction=1)
+    if key == "s":
+        return replace(
+            state,
+            joint_jog_direction=0,
+            gripper_jog_direction=0,
+            jog_time_remaining=0.0,
+            stop_jog=True,
+        )
     if key == " ":
         return replace(state, paused=not state.paused, single_step=False)
     if key == "." and state.paused:
@@ -76,11 +101,17 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     if key == "t":
         return replace(state, home=True)
     if key == "g":
-        return replace(state, mode="gravity_comp")
+        return replace(
+            state, mode="gravity_comp", joint_jog_direction=0, gripper_jog_direction=0
+        )
     if key == "h":
-        return replace(state, mode="hold")
+        return replace(
+            state, mode="hold", joint_jog_direction=0, gripper_jog_direction=0
+        )
     if key == "p":
-        return replace(state, mode="position")
+        return replace(
+            state, mode="position", joint_jog_direction=0, gripper_jog_direction=0
+        )
     if key == "v":
         return replace(state, collision_visible=not state.collision_visible)
     if key in ("q", "\x1b"):
@@ -305,18 +336,18 @@ def apply_pending_commands(
         active_mode = getattr(sim, "control_mode", state.active_mode)
 
     targets = state.joint_targets
-    jog_time_remaining = state.jog_time_remaining
     if state.joint_delta:
         name = ARM_JOINT_NAMES[state.selected_joint]
         requested = targets[state.selected_joint] + state.joint_delta * joint_step
         targets = tuple(_command_positions(sim, {name: requested}))
         active_mode = getattr(sim, "control_mode", "position")
-        jog_time_remaining = jog_hold_time
 
     width = state.gripper_width
     if state.gripper_delta:
         width = _command_gripper(sim, width + state.gripper_delta * gripper_step)
-        jog_time_remaining = jog_hold_time
+
+    if state.stop_jog:
+        active_mode = _set_mode(sim, "hold")
 
     state = replace(
         state,
@@ -324,10 +355,11 @@ def apply_pending_commands(
         gripper_width=width,
         joint_delta=0,
         gripper_delta=0,
-        jog_time_remaining=jog_time_remaining,
+        jog_time_remaining=0.0,
         reset=False,
         home=False,
         mode=None,
+        stop_jog=False,
         active_mode=str(active_mode),
     )
     return _refresh_observed_state(sim, state)
@@ -341,8 +373,8 @@ def apply_continuous_jog(
     joint_rate: float,
     gripper_rate: float,
 ) -> ViewerControlState:
-    if state.jog_time_remaining <= 0.0:
-        return replace(state, joint_jog_direction=0, gripper_jog_direction=0)
+    if not state.joint_jog_direction and not state.gripper_jog_direction:
+        return state
 
     targets = state.joint_targets
     if state.joint_jog_direction:
@@ -354,38 +386,86 @@ def apply_continuous_jog(
     if state.gripper_jog_direction:
         width = _command_gripper(sim, width + state.gripper_jog_direction * gripper_rate * dt)
 
-    remaining = max(0.0, state.jog_time_remaining - dt)
     state = replace(
         state,
         joint_targets=targets,
         gripper_width=width,
-        jog_time_remaining=remaining,
-        joint_jog_direction=state.joint_jog_direction if remaining > 0.0 else 0,
-        gripper_jog_direction=state.gripper_jog_direction if remaining > 0.0 else 0,
+        jog_time_remaining=0.0,
         active_mode=str(getattr(sim, "control_mode", state.active_mode)),
     )
     return _refresh_observed_state(sim, state)
 
 
-def overlay_text(state: ViewerControlState) -> str:
-    name = ARM_JOINT_NAMES[state.selected_joint]
-    run_state = "paused" if state.paused else "running"
-    index = state.selected_joint
-    saturation = " SAT" if state.saturated[index] else ""
-    collision = "shown" if state.collision_visible else "hidden"
+def _run_state_text(state: ViewerControlState) -> str:
+    return "PAUSED" if state.paused else "RUNNING"
+
+
+def _jog_state_text(state: ViewerControlState) -> str:
+    if state.joint_jog_direction:
+        sign = "+" if state.joint_jog_direction > 0 else "-"
+        return f"{ARM_JOINT_NAMES[state.selected_joint]} {sign} (S to stop)"
+    if state.gripper_jog_direction:
+        action = "opening" if state.gripper_jog_direction > 0 else "closing"
+        return f"gripper {action} (S to stop)"
+    return "stopped"
+
+
+def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
+    mode = state.active_mode
+    description = MODE_DESCRIPTIONS.get(mode, "unknown control mode")
+    saturation_count = sum(state.saturated)
+    left = "SYSTEM\nMODE\nBEHAVIOR\nMOTION\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
+    right = (
+        f"{_run_state_text(state)}\n{mode.upper()}\n{description}\n"
+        f"{_jog_state_text(state)}\n"
+        f"{'SHOWN' if state.collision_visible else 'HIDDEN'}\n"
+        f"{state.contact_count}\n{state.max_contact_force:.2f} N\n"
+        f"{saturation_count}/6"
+    )
+    if mode == "raw_torque":
+        left += "\nWATCHDOG"
+        right += f"\n{state.watchdog_remaining_s:.3f} s"
+    return left, right
+
+
+def joint_panel_text(state: ViewerControlState) -> tuple[str, str]:
+    header = "    JOINT   ACTUAL(rad) TARGET(rad) ERROR(rad) VEL(rad/s)"
+    torque_header = " TORQUE REQ/APPLIED (N.m)"
+    rows = []
+    torque_rows = []
+    for index, name in enumerate(ARM_JOINT_NAMES):
+        marker = ">" if index == state.selected_joint else " "
+        actual = state.joint_positions[index]
+        target = state.joint_targets[index]
+        error = target - actual
+        rows.append(
+            f"{marker} {name:<7} {actual:+8.3f} {target:+8.3f} "
+            f"{error:+8.3f} {state.joint_velocities[index]:+8.3f}"
+        )
+        saturation = " !" if state.saturated[index] else ""
+        torque_rows.append(
+            f"{state.requested_torques[index]:+6.2f}/"
+            f"{state.applied_torques[index]:+6.2f}{saturation}"
+        )
+    return "\n".join((header, *rows)), "\n".join((torque_header, *torque_rows))
+
+
+def gripper_panel_text(state: ViewerControlState) -> tuple[str, str]:
     return (
-        f"mode: {state.active_mode}  selected: {name}  "
-        f"q: {state.joint_positions[index]:.3f} rad  "
-        f"dq: {state.joint_velocities[index]:.3f} rad/s  "
-        f"target: {state.joint_targets[index]:.3f} rad\n"
-        f"torque requested/applied: {state.requested_torques[index]:.2f}/"
-        f"{state.applied_torques[index]:.2f} N.m{saturation}  "
-        f"watchdog: {state.watchdog_remaining_s:.3f} s\n"
-        f"gripper: {state.gripper_actual_width:.3f} m  target: {state.gripper_width:.3f} m  "
-        f"contacts: {state.contact_count}  max contact: {state.max_contact_force:.2f} N  "
-        f"state: {run_state}  collision: {collision}\n"
-        "Raw MuJoCo controls are hidden; use position commands or diagnostic torque CLI.\n"
-        f"{HELP}"
+        "GRIPPER\nACTUAL WIDTH\nTARGET WIDTH",
+        f"\n{state.gripper_actual_width:.3f} m\n{state.gripper_width:.3f} m",
+    )
+
+
+def overlay_text(state: ViewerControlState) -> str:
+    """Return a plain-text snapshot for diagnostics and backwards compatibility."""
+    system_left, system_right = system_panel_text(state)
+    joint_left, joint_right = joint_panel_text(state)
+    gripper_left, gripper_right = gripper_panel_text(state)
+    return (
+        f"{system_left}\n{system_right}\n\n"
+        f"{joint_left}\n{joint_right}\n\n"
+        f"{gripper_left}\n{gripper_right}\n\n{HELP}"
     )
 
 
@@ -412,7 +492,32 @@ def configure_viewer_rendering(viewer, *, collision_visible: bool) -> None:
 def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
     setter = getattr(viewer, "set_texts", None)
     if setter is not None:
-        setter((None, None, "reBotArm MuJoCo", overlay_text(state)))
+        mujoco = importlib.import_module("mujoco")
+        setter(
+            [
+                (
+                    mujoco.mjtFontScale.mjFONTSCALE_100,
+                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                    *system_panel_text(state),
+                ),
+                (
+                    mujoco.mjtFontScale.mjFONTSCALE_100,
+                    mujoco.mjtGridPos.mjGRID_TOPRIGHT,
+                    *joint_panel_text(state),
+                ),
+                (
+                    mujoco.mjtFontScale.mjFONTSCALE_100,
+                    mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+                    *gripper_panel_text(state),
+                ),
+                (
+                    mujoco.mjtFontScale.mjFONTSCALE_100,
+                    mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
+                    "CONTROLS",
+                    HELP,
+                ),
+            ]
+        )
 
 
 def _positive_float(value: str) -> float:
@@ -445,6 +550,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-command-input",
         action="store_true",
         help="disable terminal line commands while the viewer is running",
+    )
+    parser.add_argument(
+        "--verbose-status",
+        action="store_true",
+        help="also print changing real-time state to the terminal (off by default)",
     )
     return parser
 
@@ -547,7 +657,12 @@ def main(
             ):
                 command_thread.join(timeout=0.05)
         previous_status = overlay_text(state)
-        print(previous_status, file=status_stream, flush=True)
+        print(
+            "reBotArm MuJoCo viewer ready: Home + Hold. "
+            "Real-time state is shown in the viewer; press Q to quit.",
+            file=status_stream,
+            flush=True,
+        )
 
         def on_key(keycode: int) -> None:
             events.put(keycode)
@@ -588,7 +703,7 @@ def main(
                     sim.step()
                     state = _refresh_observed_state(sim, replace(state, single_step=False))
                 current_status = overlay_text(state)
-                if current_status != previous_status:
+                if args.verbose_status and current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)
                     previous_status = current_status
                 configure_viewer_rendering(

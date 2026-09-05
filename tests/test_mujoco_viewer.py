@@ -164,7 +164,10 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
     texture = int(mujoco.mjtVisFlag.mjVIS_TEXTURE)
     option.flags[transparent] = 1
     option.flags[texture] = 0
-    viewer = SimpleNamespace(opt=option)
+    option.frame = mujoco.mjtFrame.mjFRAME_BODY
+    option.label = mujoco.mjtLabel.mjLABEL_JOINT
+    simulate = SimpleNamespace(ui0_enable=True, ui1_enable=True)
+    viewer = SimpleNamespace(opt=option, _get_sim=lambda: simulate)
 
     mujoco_viewer.configure_viewer_rendering(viewer, collision_visible=False)
 
@@ -173,6 +176,10 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
     assert option.geomgroup[3] == 0
     assert option.flags[transparent] == 0
     assert option.flags[texture] == 1
+    assert option.frame == mujoco.mjtFrame.mjFRAME_NONE
+    assert option.label == mujoco.mjtLabel.mjLABEL_NONE
+    assert simulate.ui0_enable is False
+    assert simulate.ui1_enable is False
 
     mujoco_viewer.configure_viewer_rendering(
         viewer, collision_visible=True, target_visible=True

@@ -711,6 +711,21 @@ def overlay_text(state: ViewerControlState) -> str:
 def configure_viewer_rendering(
     viewer, *, collision_visible: bool, target_visible: bool = False
 ) -> None:
+    # ``show_left_ui=False`` and ``show_right_ui=False`` only set the initial
+    # state.  Simulate still handles Tab/F1 after our callback and can reopen
+    # its native panels.  Keep those panels disabled so project controls never
+    # change the dashboard layout.  This is isolated behind a compatibility
+    # guard because MuJoCo currently exposes the switches on the passive
+    # viewer's underlying Simulate object rather than on Handle itself.
+    get_sim = getattr(viewer, "_get_sim", None)
+    simulate = get_sim() if callable(get_sim) else None
+    if simulate is not None:
+        try:
+            simulate.ui0_enable = False
+            simulate.ui1_enable = False
+        except (AttributeError, TypeError):
+            pass
+
     option = getattr(viewer, "opt", None)
     groups = getattr(option, "geomgroup", None)
     if option is None or groups is None or len(groups) < 4:
@@ -729,6 +744,12 @@ def configure_viewer_rendering(
             mujoco = importlib.import_module("mujoco")
             for index, (_name, default, _shortcut) in enumerate(mujoco.mjVISSTRING):
                 flags[index] = int(default)
+            # Some stock shortcuts select labels or RGB coordinate frames via
+            # fields outside ``flags``.  Reset those too; otherwise controls
+            # such as Tab/F1/V can leave large debug axes over the robot even
+            # when the dashboard says the collision layer is hidden.
+            option.frame = mujoco.mjtFrame.mjFRAME_NONE
+            option.label = mujoco.mjtLabel.mjLABEL_NONE
 
 
 def update_viewer_overlay(viewer, state: ViewerControlState) -> None:

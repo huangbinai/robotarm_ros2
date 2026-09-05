@@ -100,12 +100,16 @@ def test_figures_fill_bounded_interleaved_lines_and_ranges() -> None:
 
     tracking = figures.figures["tracking"]
     torque = figures.figures["torque"]
-    assert tuple(tracking.linepnt[:3]) == (3, 3, 3)
-    assert tuple(torque.linepnt[:2]) == (3, 3)
+    assert tuple(tracking.linepnt[:4]) == (3, 3, 3, 3)
+    assert tuple(torque.linepnt[:3]) == (3, 3, 3)
     assert tuple(tracking.linedata[0, :6:2]) == pytest.approx((0.2, 0.3, 0.4))
     assert tuple(tracking.linedata[0, 1:6:2]) == pytest.approx((2.0, 3.0, 4.0))
     assert float(tracking.range[0, 0]) < float(tracking.range[0, 1])
     assert float(tracking.range[1, 0]) < float(tracking.range[1, 1])
+    assert "rad/s" in tracking.title
+    assert "N.m" in torque.title
+    assert bytes(tracking.linename[0]).decode() == "actual [rad]"
+    assert bytes(torque.linename[2]).decode() == "max contact [N]"
 
 
 def test_figures_switch_and_best_effort_attach() -> None:
@@ -154,14 +158,3 @@ def test_figures_use_viewer_viewport_and_degrade_if_it_is_missing() -> None:
     assert (rectangle.left, rectangle.bottom, rectangle.width, rectangle.height) == (
         590, 10, 400, 245,
     )
-
-
-def test_figures_can_attach_tracking_and_torque_together() -> None:
-    pytest.importorskip("mujoco")
-    figures = TelemetryFigures()
-    viewer = FigureViewer()
-    assert figures.attach_all(viewer, viewport=(1000, 700))
-    assert len(viewer.figures) == 2
-    assert viewer.figures[0][1] is figures.figures["tracking"]
-    assert viewer.figures[1][1] is figures.figures["torque"]
-    assert viewer.figures[0][0].bottom > viewer.figures[1][0].bottom

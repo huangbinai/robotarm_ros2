@@ -116,6 +116,8 @@ class IkResult:
     target_position_m: tuple[float, float, float]
     reached_position_m: tuple[float, float, float]
     hit_joint_limits: tuple[bool, bool, bool, bool, bool, bool]
+    target_rpy_rad: tuple[float, float, float]
+    reached_rpy_rad: tuple[float, float, float]
 
 
 class _Simulation(Protocol):
@@ -230,7 +232,7 @@ class MujocoCartesianController:
                 return self._result(
                     True, "converged", "IK converged", iteration,
                     position_error_norm, orientation_error_norm,
-                    target_position, position, hit_limits,
+                    target_position, position, target_rotation, rotation, hit_limits,
                 )
             if iteration == options.max_iterations:
                 break
@@ -279,7 +281,7 @@ class MujocoCartesianController:
                 message = "IK stagnated; target is unreachable from the current pose and limits"
                 break
 
-        reached_position, _rotation = self._site_pose()
+        reached_position, reached_rotation = self._site_pose()
         if status == "max_iterations" and np.any(hit_limits):
             status = "unreachable"
             message = "IK reached joint limits before reaching the target"
@@ -292,7 +294,7 @@ class MujocoCartesianController:
         return self._result(
             False, status, message, min(iteration, options.max_iterations),
             position_error_norm, orientation_error_norm,
-            target_position, reached_position, hit_limits,
+            target_position, reached_position, target_rotation, reached_rotation, hit_limits,
         )
 
     def _result(
@@ -305,6 +307,8 @@ class MujocoCartesianController:
         orientation_error: float,
         target_position: np.ndarray,
         reached_position: np.ndarray,
+        target_rotation: np.ndarray,
+        reached_rotation: np.ndarray,
         hit_limits: np.ndarray,
     ) -> IkResult:
         return IkResult(
@@ -318,6 +322,8 @@ class MujocoCartesianController:
             target_position_m=tuple(float(v) for v in target_position),  # type: ignore[arg-type]
             reached_position_m=tuple(float(v) for v in reached_position),  # type: ignore[arg-type]
             hit_joint_limits=tuple(bool(v) for v in hit_limits),  # type: ignore[arg-type]
+            target_rpy_rad=_rpy_from_rotation(target_rotation),
+            reached_rpy_rad=_rpy_from_rotation(reached_rotation),
         )
 
     def _copy_live_kinematics(self, live_data) -> None:
@@ -357,6 +363,17 @@ def _rotation_from_rpy(rpy: Sequence[float]) -> np.ndarray:
     ry = np.asarray(((cp, 0, sp), (0, 1, 0), (-sp, 0, cp)), dtype=float)
     rz = np.asarray(((cy, -sy, 0), (sy, cy, 0), (0, 0, 1)), dtype=float)
     return rz @ ry @ rx
+
+
+def _rpy_from_rotation(rotation: np.ndarray) -> tuple[float, float, float]:
+    pitch = math.asin(float(np.clip(-rotation[2, 0], -1.0, 1.0)))
+    if abs(math.cos(pitch)) > 1e-7:
+        roll = math.atan2(float(rotation[2, 1]), float(rotation[2, 2]))
+        yaw = math.atan2(float(rotation[1, 0]), float(rotation[0, 0]))
+    else:
+        roll = math.atan2(float(-rotation[1, 2]), float(rotation[1, 1]))
+        yaw = 0.0
+    return roll, pitch, yaw
 
 
 def _rotation_from_quaternion_wxyz(quaternion: Sequence[float]) -> np.ndarray:

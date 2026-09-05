@@ -281,6 +281,14 @@ def test_scene_defines_world_fixture_free_cube_camera_and_simulation_options() -
     assert target_handle.attrib["contype"] == "0"
     assert target_handle.attrib["conaffinity"] == "0"
     assert target_handle.attrib["group"] == "1"
+    for axis, color_index in (("x", 0), ("y", 1), ("z", 2)):
+        marker = target.find(f'geom[@name="ee_target_axis_{axis}"]')
+        assert marker is not None
+        assert marker.attrib["group"] == "1"
+        assert marker.attrib["contype"] == "0"
+        assert marker.attrib["conaffinity"] == "0"
+        rgba = _numbers(marker.attrib["rgba"])
+        assert rgba[color_index] == max(rgba[:3])
     assert target.find('site[@name="ee_target_frame"]') is not None
     camera = world.find('camera[@name="fixed_camera"]')
     assert camera is not None

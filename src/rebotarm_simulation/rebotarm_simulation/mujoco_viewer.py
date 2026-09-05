@@ -15,6 +15,11 @@ import warnings
 
 from .mujoco_cartesian import CartesianDelta, MujocoCartesianController
 from .mujoco_commands import dispatch_sim_command
+from .mujoco_dashboard import (
+    DASHBOARD_PAGES,
+    PLOT_PAGES,
+    compose_dashboard,
+)
 from .mujoco_session import MujocoSession
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 from .mujoco_telemetry import MujocoTelemetryHistory
@@ -24,7 +29,7 @@ from .mujoco_visualization import GhostArmOverlay, TelemetryFigures
 HELP = (
     "Tab JOINT/XYZ/RPY | Z/X select | J/K start jog | C/O gripper | S stop\n"
     "-/+ speed | F1 world/tool | G gravity | H hold | P position | V collision | F2 plots\n"
-    "F3 record | F4 replay/pause | F5 clear | T home | Q quit\n"
+    "F3 record | F4 replay/pause | F5 clear | F6 page | F7 help | T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
 )
 JOG_SPEED_LEVELS = (
@@ -33,12 +38,6 @@ JOG_SPEED_LEVELS = (
     ("FAST", 2.5),
     ("TURBO", 5.0),
 )
-MODE_DESCRIPTIONS = {
-    "position": "tracks saved target",
-    "hold": "captures and holds pose",
-    "gravity_comp": "gravity only; no target tracking",
-    "raw_torque": "diagnostic torque + watchdog",
-}
 _RETAINED_UNSAFE_VIEWERS = []
 
 
@@ -78,13 +77,21 @@ class ViewerControlState:
     cartesian_accumulator_s: float = 0.0
     ik_status: str = "idle"
     ik_error: float = 0.0
-    plots_visible: bool = False
+    dashboard_page: str = "overview"
+    plot_page: str = "off"
+    help_visible: bool = False
     recording: bool = False
     playback_state: str = "idle"
     playback_progress: float = 0.0
     replay_tracking_rmse_rad: float = 0.0
     replay_repeatability_rmse_rad: float = 0.0
     replay_passed: bool | None = None
+    trajectory_frame_count: int = 0
+    trajectory_duration_s: float = 0.0
+    ee_position: tuple[float, ...] = (0.0, 0.0, 0.0)
+    ee_rpy: tuple[float, ...] = (0.0, 0.0, 0.0)
+    target_position: tuple[float, ...] = (0.0, 0.0, 0.0)
+    target_rpy: tuple[float, ...] = (0.0, 0.0, 0.0)
     record_toggle: bool = False
     replay_toggle: bool = False
     trajectory_clear: bool = False
@@ -178,7 +185,8 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     if key == "v":
         return replace(state, collision_visible=not state.collision_visible)
     if key == "f2":
-        return replace(state, plots_visible=not state.plots_visible)
+        page = PLOT_PAGES[(PLOT_PAGES.index(state.plot_page) + 1) % len(PLOT_PAGES)]
+        return replace(state, plot_page=page, help_visible=False)
     if key == "f1":
         return replace(
             state,
@@ -191,6 +199,13 @@ def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
         return replace(state, replay_toggle=True)
     if key == "f5":
         return replace(state, trajectory_clear=True)
+    if key == "f6":
+        page = DASHBOARD_PAGES[
+            (DASHBOARD_PAGES.index(state.dashboard_page) + 1) % len(DASHBOARD_PAGES)
+        ]
+        return replace(state, dashboard_page=page, help_visible=False)
+    if key == "f7":
+        return replace(state, help_visible=not state.help_visible, plot_page="off")
     if key in ("q", "\x1b"):
         return replace(state, quit=True)
     return state
@@ -332,6 +347,12 @@ def _state_from_sim(
     targets = tuple(float(value) for value in sim.control_targets[:6])
     positions = tuple(float(value) for value in state.joint_positions[:6])
     velocities = tuple(float(value) for value in state.joint_velocities[:6])
+    ee_position = tuple(
+        float(value) for value in getattr(state, "end_effector_position", (0.0, 0.0, 0.0))
+    )
+    ee_rpy = _quaternion_xyzw_to_rpy(
+        getattr(state, "end_effector_orientation", (0.0, 0.0, 0.0, 1.0))
+    )
     contacts = _contact_summary(sim)
     control = _control_status(sim)
     return ViewerControlState(
@@ -356,7 +377,9 @@ def _state_from_sim(
         interaction_mode="joint" if previous is None else previous.interaction_mode,
         selected_cartesian_axis=0 if previous is None else previous.selected_cartesian_axis,
         cartesian_frame="world" if previous is None else previous.cartesian_frame,
-        plots_visible=False if previous is None else previous.plots_visible,
+        dashboard_page="overview" if previous is None else previous.dashboard_page,
+        plot_page="off" if previous is None else previous.plot_page,
+        help_visible=False if previous is None else previous.help_visible,
         recording=False if previous is None else previous.recording,
         playback_state="idle" if previous is None else previous.playback_state,
         playback_progress=0.0 if previous is None else previous.playback_progress,
@@ -367,7 +390,27 @@ def _state_from_sim(
             0.0 if previous is None else previous.replay_repeatability_rmse_rad
         ),
         replay_passed=None if previous is None else previous.replay_passed,
+        trajectory_frame_count=0 if previous is None else previous.trajectory_frame_count,
+        trajectory_duration_s=0.0 if previous is None else previous.trajectory_duration_s,
+        ee_position=ee_position,
+        ee_rpy=ee_rpy,
+        target_position=ee_position if previous is None else previous.target_position,
+        target_rpy=ee_rpy if previous is None else previous.target_rpy,
     )
+
+
+def _quaternion_xyzw_to_rpy(quaternion: Sequence[float]) -> tuple[float, float, float]:
+    x, y, z, w = (float(value) for value in quaternion)
+    roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    pitch_term = max(-1.0, min(1.0, 2.0 * (w * y - z * x)))
+    pitch = math.asin(pitch_term)
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
+def _quaternion_wxyz_to_rpy(quaternion: Sequence[float]) -> tuple[float, float, float]:
+    w, x, y, z = (float(value) for value in quaternion)
+    return _quaternion_xyzw_to_rpy((x, y, z, w))
 
 
 def _control_status(sim) -> tuple[tuple[float, ...], tuple[float, ...], tuple[bool, ...], float, str]:
@@ -410,6 +453,17 @@ def _refresh_observed_state(sim, state: ViewerControlState) -> ViewerControlStat
         saturated=control[2],
         watchdog_remaining_s=control[3],
         active_mode=control[4],
+        ee_position=tuple(
+            float(value)
+            for value in getattr(
+                sim_state, "end_effector_position", state.ee_position
+            )
+        ),
+        ee_rpy=(
+            _quaternion_xyzw_to_rpy(sim_state.end_effector_orientation)
+            if hasattr(sim_state, "end_effector_orientation")
+            else state.ee_rpy
+        ),
     )
 
 
@@ -459,6 +513,9 @@ def apply_pending_commands(
             gripper_delta=pending_gripper_delta,
             quit=quit_requested,
             cartesian_target_reset=True,
+            dashboard_page="overview",
+            plot_page="off",
+            help_visible=False,
         )
 
     if state.mode is not None:
@@ -521,6 +578,8 @@ def apply_continuous_jog(
     cartesian_accumulator = state.cartesian_accumulator_s
     ik_status = state.ik_status
     ik_error = state.ik_error
+    target_position = state.target_position
+    target_rpy = state.target_rpy
     if state.joint_jog_direction and state.interaction_mode == "joint":
         name = ARM_JOINT_NAMES[state.selected_joint]
         requested = (
@@ -546,7 +605,22 @@ def apply_continuous_jog(
             ik_error = max(result.position_error_m, result.orientation_error_rad)
             if result.success:
                 targets = tuple(result.joint_positions)
+                target_position = tuple(
+                    getattr(result, "target_position_m", state.target_position)
+                )
+                target_rpy = tuple(
+                    getattr(result, "target_rpy_rad", state.target_rpy)
+                )
+            else:
+                target_position = state.target_position
+                target_rpy = state.target_rpy
             cartesian_accumulator = 0.0
+        else:
+            target_position = state.target_position
+            target_rpy = state.target_rpy
+    else:
+        target_position = state.target_position
+        target_rpy = state.target_rpy
 
     width = state.gripper_width
     if state.gripper_jog_direction:
@@ -563,6 +637,8 @@ def apply_continuous_jog(
         cartesian_accumulator_s=cartesian_accumulator,
         ik_status=ik_status,
         ik_error=ik_error,
+        target_position=target_position,
+        target_rpy=target_rpy,
     )
     return _refresh_observed_state(sim, state)
 
@@ -584,6 +660,8 @@ def _state_from_session(state: ViewerControlState, session) -> ViewerControlStat
             else float(comparison["overall_repeatability_rmse_rad"])
         ),
         replay_passed=(None if comparison is None else bool(comparison["passed"])),
+        trajectory_frame_count=int(values.get("frame_count", 0)),
+        trajectory_duration_s=float(values.get("duration_s", 0.0)),
     )
 
 
@@ -615,122 +693,31 @@ def apply_session_commands(session, state: ViewerControlState) -> ViewerControlS
     )
 
 
-def _run_state_text(state: ViewerControlState) -> str:
-    return "PAUSED" if state.paused else "RUNNING"
-
-
-def _jog_state_text(state: ViewerControlState) -> str:
-    if state.joint_jog_direction:
-        sign = "+" if state.joint_jog_direction > 0 else "-"
-        if state.interaction_mode != "joint":
-            axis = ("X", "Y", "Z")[state.selected_cartesian_axis]
-            if state.interaction_mode == "rpy":
-                axis = ("ROLL", "PITCH", "YAW")[state.selected_cartesian_axis]
-            return f"{state.interaction_mode.upper()} {axis} {sign} (S to stop)"
-        return f"{ARM_JOINT_NAMES[state.selected_joint]} {sign} (S to stop)"
-    if state.gripper_jog_direction:
-        action = "opening" if state.gripper_jog_direction > 0 else "closing"
-        return f"gripper {action} (S to stop)"
-    return "stopped"
-
-
-def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
-    mode = state.active_mode
-    description = MODE_DESCRIPTIONS.get(mode, "unknown control mode")
-    saturation_count = sum(state.saturated)
-    speed_name, speed_scale = JOG_SPEED_LEVELS[state.jog_speed_index]
-    left = "SYSTEM\nMODE\nBEHAVIOR\nINPUT\nMOTION\nSPEED\nCOLLISION\nCONTACTS\nMAX FORCE\nSATURATION"
-    right = (
-        f"{_run_state_text(state)}\n{mode.upper()}\n{description}\n"
-        f"{state.interaction_mode.upper()} / {state.cartesian_frame.upper()}\n"
-        f"{_jog_state_text(state)}\n"
-        f"{speed_name} J:{state.joint_jog_rate * speed_scale:.2f} "
-        f"G:{state.gripper_jog_rate * speed_scale:.3f}\n"
-        f"{'SHOWN' if state.collision_visible else 'HIDDEN'}\n"
-        f"{state.contact_count}\n{state.max_contact_force:.2f} N\n"
-        f"{saturation_count}/6"
-    )
-    if mode == "raw_torque":
-        left += "\nWATCHDOG"
-        right += f"\n{state.watchdog_remaining_s:.3f} s"
-    if state.ik_status != "idle":
-        left += "\nIK"
-        right += f"\n{state.ik_status} ({state.ik_error:.4f})"
-    left += "\nRECORD\nREPLAY"
-    right += (
-        f"\n{'ON' if state.recording else 'OFF'}"
-        f"\n{state.playback_state} {state.playback_progress:.0%}"
-    )
-    if state.replay_passed is not None:
-        left += "\nTRACK RMSE\nREPEAT RMSE\nRESULT"
-        right += (
-            f"\n{state.replay_tracking_rmse_rad:.4f} rad"
-            f"\n{state.replay_repeatability_rmse_rad:.4f} rad"
-            f"\n{'PASS' if state.replay_passed else 'INCOMPLETE/FAIL'}"
-        )
-    return left, right
-
-
-def joint_panel_text(state: ViewerControlState) -> tuple[str, str]:
-    header = "    J      Q       Q*      ERR      DQ"
-    torque_header = " TAU REQ/OUT"
-    rows = []
-    torque_rows = []
-    for index, name in enumerate(ARM_JOINT_NAMES):
-        marker = ">" if index == state.selected_joint else " "
-        actual = state.joint_positions[index]
-        target = state.joint_targets[index]
-        error = target - actual
-        rows.append(
-            f"{marker} J{index + 1} {actual:+7.3f} {target:+7.3f} "
-            f"{error:+7.3f} {state.joint_velocities[index]:+7.3f}"
-        )
-        saturation = " !" if state.saturated[index] else ""
-        torque_rows.append(
-            f"{state.requested_torques[index]:+6.2f}/"
-            f"{state.applied_torques[index]:+6.2f}{saturation}"
-        )
-    return "\n".join((header, *rows)), "\n".join((torque_header, *torque_rows))
-
-
-def gripper_panel_text(state: ViewerControlState) -> tuple[str, str]:
-    return (
-        "GRIPPER\nACTUAL WIDTH\nTARGET WIDTH",
-        f"\n{state.gripper_actual_width:.3f} m\n{state.gripper_width:.3f} m",
-    )
-
-
-def controls_panel_text() -> tuple[str, str]:
-    return (
-        "Tab / F1\nZ / X\nJ / K\nC / O\n- / +\nS\nG / H / P\nV / F2\nF3 / F4 / F5\nT / R\nQ",
-        "joint/xyz/rpy; world/tool\nselect joint or axis\nstart - / +\nclose / open gripper\nspeed down / up\nSTOP + hold\n"
-        "gravity / hold / position\ncollision / plots\nrecord / replay / clear\n"
-        "home / reset\nquit",
-    )
-
-
 def overlay_text(state: ViewerControlState) -> str:
-    """Return a plain-text snapshot for diagnostics and backwards compatibility."""
-    system_left, system_right = system_panel_text(state)
-    joint_left, joint_right = joint_panel_text(state)
-    gripper_left, gripper_right = gripper_panel_text(state)
-    controls_left, controls_right = controls_panel_text()
-    return (
-        f"{system_left}\n{system_right}\n\n"
-        f"{joint_left}\n{joint_right}\n\n"
-        f"{gripper_left}\n{gripper_right}\n\n"
-        f"{controls_left}\n{controls_right}\n\n{HELP}"
-    )
+    """Return the currently visible dashboard content for terminal diagnostics."""
+    panels = compose_dashboard(state)
+    blocks = []
+    for panel in (
+        panels.top_left,
+        panels.top_right,
+        panels.bottom_left,
+        panels.bottom_right,
+    ):
+        if panel is not None:
+            blocks.append(f"{panel.left}\n{panel.right}")
+    return "\n\n".join(blocks)
 
 
-def configure_viewer_rendering(viewer, *, collision_visible: bool) -> None:
+def configure_viewer_rendering(
+    viewer, *, collision_visible: bool, target_visible: bool = False
+) -> None:
     option = getattr(viewer, "opt", None)
     groups = getattr(option, "geomgroup", None)
     if option is None or groups is None or len(groups) < 4:
         return
     lock = getattr(viewer, "lock", None)
     with lock() if lock is not None else nullcontext():
-        groups[1] = 1
+        groups[1] = int(target_visible)
         groups[2] = 1
         groups[3] = int(collision_visible)
         # The stock Simulate UI handles the same key event after our callback.
@@ -748,28 +735,31 @@ def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
     setter = getattr(viewer, "set_texts", None)
     if setter is not None:
         mujoco = importlib.import_module("mujoco")
+        viewport = getattr(viewer, "viewport", None)
+        compact = bool(
+            viewport is not None
+            and (
+                int(getattr(viewport, "width", 1280)) < 1100
+                or int(getattr(viewport, "height", 720)) < 700
+            )
+        )
+        panels = compose_dashboard(state, compact=compact)
+        positions = (
+            (mujoco.mjtGridPos.mjGRID_TOPLEFT, panels.top_left),
+            (mujoco.mjtGridPos.mjGRID_TOPRIGHT, panels.top_right),
+            (mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, panels.bottom_left),
+            (mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT, panels.bottom_right),
+        )
         setter(
             [
                 (
                     mujoco.mjtFontScale.mjFONTSCALE_100,
-                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                    *system_panel_text(state),
-                ),
-                (
-                    mujoco.mjtFontScale.mjFONTSCALE_100,
-                    mujoco.mjtGridPos.mjGRID_TOPRIGHT,
-                    *joint_panel_text(state),
-                ),
-                (
-                    mujoco.mjtFontScale.mjFONTSCALE_100,
-                    mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
-                    *gripper_panel_text(state),
-                ),
-                (
-                    mujoco.mjtFontScale.mjFONTSCALE_100,
-                    mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
-                    *controls_panel_text(),
-                ),
+                    position,
+                    panel.left,
+                    panel.right,
+                )
+                for position, panel in positions
+                if panel is not None
             ]
         )
 
@@ -778,6 +768,12 @@ def update_ghost_overlay(ghost, viewer, joint_targets: Sequence[float]) -> bool:
     lock = getattr(viewer, "lock", None)
     with lock() if lock is not None else nullcontext():
         return bool(ghost.update(viewer, joint_targets))
+
+
+def clear_ghost_overlay(ghost, viewer) -> bool:
+    lock = getattr(viewer, "lock", None)
+    with lock() if lock is not None else nullcontext():
+        return bool(ghost.clear(viewer))
 
 
 def align_cartesian_target(model, data) -> tuple[int, tuple[float, ...], tuple[float, ...]]:
@@ -830,6 +826,8 @@ def process_cartesian_target(
         gripper_jog_direction=0,
         ik_status=result.status,
         ik_error=max(result.position_error_m, result.orientation_error_rad),
+        target_position=position,
+        target_rpy=_quaternion_wxyz_to_rpy(quaternion),
     )
 
 
@@ -889,7 +887,16 @@ def _decode_key(keycode: int) -> str:
         return "-"
     if keycode == 334:  # GLFW_KEY_KP_ADD
         return "+"
-    special = {258: "tab", 290: "f1", 291: "f2", 292: "f3", 293: "f4", 294: "f5"}
+    special = {
+        258: "tab",
+        290: "f1",
+        291: "f2",
+        292: "f3",
+        293: "f4",
+        294: "f5",
+        295: "f6",
+        296: "f7",
+    }
     if keycode in special:
         return special[keycode]
     try:
@@ -992,7 +999,7 @@ def main(
         cartesian_controller = (
             MujocoCartesianController(sim) if isinstance(sim, RebotArmMujoco) else None
         )
-        telemetry = MujocoTelemetryHistory(capacity=1000)
+        telemetry = MujocoTelemetryHistory(capacity=500)
         session = MujocoSession(sim)
         start_simulation_time = float(sim.get_state().simulation_time)
         events = SimpleQueue()
@@ -1033,12 +1040,22 @@ def main(
                 model, data
             )
             target_pose = (target_position, target_quaternion)
+            state = replace(
+                state,
+                target_position=target_position,
+                target_rpy=_quaternion_wxyz_to_rpy(target_quaternion),
+            )
         viewer = _launch_passive_viewer(launch_passive, model, data, on_key)
-        configure_viewer_rendering(viewer, collision_visible=False)
-        update_ghost_overlay(ghost, viewer, state.joint_targets)
+        configure_viewer_rendering(
+            viewer, collision_visible=False, target_visible=False
+        )
         update_viewer_overlay(viewer, state)
+        displayed_dashboard = overlay_text(state)
         last_visual_update_sim_time = float("-inf")
+        last_telemetry_sample_sim_time = float("-inf")
+        last_dashboard_update_sim_time = float("-inf")
         plots_attached = False
+        ghost_visible = False
         try:
             while viewer.is_running():
                 state = process_command_events(
@@ -1063,7 +1080,13 @@ def main(
                         model, data
                     )
                     target_pose = (target_position, target_quaternion)
-                    state = replace(state, cartesian_target_reset=False, ik_status="idle")
+                    state = replace(
+                        state,
+                        cartesian_target_reset=False,
+                        ik_status="idle",
+                        target_position=target_position,
+                        target_rpy=_quaternion_wxyz_to_rpy(target_quaternion),
+                    )
                 if cartesian_controller is not None and target_pose is not None:
                     target_pose, state = process_cartesian_target(
                         cartesian_controller,
@@ -1087,7 +1110,12 @@ def main(
                     session.step()
                     state = _refresh_observed_state(sim, replace(state, single_step=False))
                     state = _state_from_session(state, session)
-                    if hasattr(sim, "get_control_status"):
+                    simulation_time = float(sim.get_state().simulation_time)
+                    telemetry_due = (
+                        simulation_time < last_telemetry_sample_sim_time
+                        or simulation_time - last_telemetry_sample_sim_time >= 1.0 / 50.0
+                    )
+                    if telemetry_due and hasattr(sim, "get_control_status"):
                         try:
                             telemetry.append(
                                 float(sim.get_state().simulation_time),
@@ -1098,12 +1126,15 @@ def main(
                             # Test doubles and third-party adapters may expose only
                             # the older, smaller status record.
                             pass
+                        last_telemetry_sample_sim_time = simulation_time
                 current_status = overlay_text(state)
                 if args.verbose_status and current_status != previous_status:
                     print(current_status, file=status_stream, flush=True)
                     previous_status = current_status
                 configure_viewer_rendering(
-                    viewer, collision_visible=state.collision_visible
+                    viewer,
+                    collision_visible=state.collision_visible,
+                    target_visible=state.interaction_mode != "joint",
                 )
                 simulation_time = float(sim.get_state().simulation_time)
                 visual_update_due = (
@@ -1111,17 +1142,34 @@ def main(
                     or simulation_time - last_visual_update_sim_time >= 1.0 / 30.0
                 )
                 if visual_update_due:
-                    update_ghost_overlay(ghost, viewer, state.joint_targets)
-                    if state.plots_visible:
+                    if state.interaction_mode != "joint":
+                        ghost_visible = update_ghost_overlay(
+                            ghost, viewer, state.joint_targets
+                        )
+                    elif ghost_visible:
+                        clear_ghost_overlay(ghost, viewer)
+                        ghost_visible = False
+                    if state.plot_page != "off":
+                        figures.select(
+                            "tracking" if state.plot_page == "tracking" else "torque"
+                        )
                         figures.update(
                             telemetry.snapshot(), joint_index=state.selected_joint
                         )
-                        plots_attached = figures.attach_all(viewer)
+                        plots_attached = figures.attach_active(viewer)
                     last_visual_update_sim_time = simulation_time
-                if not state.plots_visible and plots_attached:
+                if state.plot_page == "off" and plots_attached:
                     figures.clear(viewer)
                     plots_attached = False
-                update_viewer_overlay(viewer, state)
+                dashboard_due = (
+                    simulation_time < last_dashboard_update_sim_time
+                    or simulation_time - last_dashboard_update_sim_time >= 0.1
+                    or current_status != displayed_dashboard
+                )
+                if dashboard_due:
+                    update_viewer_overlay(viewer, state)
+                    displayed_dashboard = current_status
+                    last_dashboard_update_sim_time = simulation_time
                 viewer.sync()
                 elapsed = float(sim.get_state().simulation_time) - start_simulation_time
                 if args.duration is not None and elapsed >= args.duration:

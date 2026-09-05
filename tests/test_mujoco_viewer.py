@@ -11,6 +11,7 @@ import warnings
 import pytest
 
 from rebotarm_simulation import mujoco_viewer
+from rebotarm_simulation.mujoco_dashboard import compose_dashboard
 from rebotarm_simulation.mujoco_sim import RebotArmMujoco
 
 
@@ -167,10 +168,17 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
 
     mujoco_viewer.configure_viewer_rendering(viewer, collision_visible=False)
 
+    assert option.geomgroup[1] == 0
     assert option.geomgroup[2] == 1
     assert option.geomgroup[3] == 0
     assert option.flags[transparent] == 0
     assert option.flags[texture] == 1
+
+    mujoco_viewer.configure_viewer_rendering(
+        viewer, collision_visible=True, target_visible=True
+    )
+    assert option.geomgroup[1] == 1
+    assert option.geomgroup[3] == 1
 
 
 @pytest.mark.parametrize(
@@ -369,6 +377,9 @@ def test_reset_preserves_pause_and_resynchronizes_targets():
     assert state.paused is True
     assert state.reset is False
     assert state.gripper_width == 0.09
+    assert state.dashboard_page == "overview"
+    assert state.plot_page == "off"
+    assert state.help_visible is False
 
 
 def test_reset_then_jog_in_same_event_batch_applies_jog_after_reset():
@@ -381,7 +392,7 @@ def test_reset_then_jog_in_same_event_batch_applies_jog_after_reset():
     assert state.joint_targets[0] == pytest.approx(0.2)
 
 
-def test_overlay_contains_selected_target_gripper_pause_and_help():
+def test_default_overlay_is_compact_and_contains_only_operational_overview():
     state = mujoco_viewer.ViewerControlState(
         selected_joint=2,
         joint_targets=(0.0, 0.0, 0.25, 0.0, 0.0, 0.0),
@@ -400,42 +411,44 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
-        "GRAVITY_COMP", "J3", "+0.200", "+0.030", "+0.250", "0.035", "0.040",
-        "CONTACTS", "2.50 N", "PAUSED", "+1.50/ +1.20", "!", "Z/X",
-        "J/K start jog", "SHOWN",
+        "GRAVITY_COMP", "J3", "+0.200", "+0.250", "+0.050", "0.035/0.040",
+        "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "Tab / F1",
+        "F2  F6  F7  Q",
     ):
         assert expected in text
+    for hidden_detail in ("TAU REQ/OUT", "+1.50/ +1.20", "TRAJECTORY\nRECORD"):
+        assert hidden_detail not in text
 
 
-def test_overlay_has_clear_sections_and_all_six_joints():
+def test_f6_pages_separate_overview_joints_and_trajectory_content():
     state = mujoco_viewer.ViewerControlState(selected_joint=4)
-    system = mujoco_viewer.system_panel_text(state)
-    joints = mujoco_viewer.joint_panel_text(state)
-    gripper = mujoco_viewer.gripper_panel_text(state)
-
-    assert "MODE" in system[0]
-    assert "captures and holds pose" in system[1]
+    overview = compose_dashboard(state)
+    assert "OVERVIEW" in overview.top_right.left
+    assert "J1" not in overview.top_right.left
+    state = mujoco_viewer.reduce_key(state, "f6")
+    joints = compose_dashboard(state).top_right
     for name in ("J1", "J2", "J3", "J4", "J5", "J6"):
-        assert name in joints[0]
-    assert "> J5" in joints[0]
-    assert "ACTUAL WIDTH" in gripper[0]
-    controls = mujoco_viewer.controls_panel_text()
-    assert "S" in controls[0]
-    assert "STOP + hold" in controls[1]
+        assert name in joints.left
+    assert "> J5" in joints.left
+    state = mujoco_viewer.reduce_key(state, "f6")
+    trajectory = compose_dashboard(state).top_right
+    assert "TRAJECTORY" in trajectory.left
+    assert "TRACK RMSE" in trajectory.left
+    state = mujoco_viewer.reduce_key(state, "f6")
+    assert state.dashboard_page == "overview"
 
 
 def test_overlay_panels_remain_compact_for_small_vm_windows():
-    state = mujoco_viewer.ViewerControlState()
-
-    for left, right in (
-        mujoco_viewer.system_panel_text(state),
-        mujoco_viewer.joint_panel_text(state),
-        mujoco_viewer.gripper_panel_text(state),
-        mujoco_viewer.controls_panel_text(),
-    ):
-        left_width = max(map(len, left.splitlines()))
-        right_width = max(map(len, right.splitlines()))
-        assert left_width + right_width <= 55
+    for page in ("overview", "joints", "trajectory"):
+        panels = compose_dashboard(
+            mujoco_viewer.ViewerControlState(dashboard_page=page), compact=True
+        )
+        for panel in (panels.top_left, panels.top_right, panels.bottom_right):
+            if panel is None:
+                continue
+            left_width = max(map(len, panel.left.splitlines()))
+            right_width = max(map(len, panel.right.splitlines()))
+            assert left_width + right_width <= 56
 
 
 def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
@@ -566,10 +579,45 @@ def test_tab_cycles_joint_xyz_rpy_and_axis_selection_is_independent():
 
 def test_special_keys_toggle_plots_record_replay_and_clear():
     state = mujoco_viewer.ViewerControlState()
-    for keycode, field in ((291, "plots_visible"), (292, "record_toggle"),
-                           (293, "replay_toggle"), (294, "trajectory_clear")):
+    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(291))
+    assert state.plot_page == "tracking"
+    state = mujoco_viewer.reduce_key(state, "f2")
+    assert state.plot_page == "effort"
+    state = mujoco_viewer.reduce_key(state, "f2")
+    assert state.plot_page == "off"
+    for keycode, field in ((292, "record_toggle"), (293, "replay_toggle"),
+                           (294, "trajectory_clear")):
         state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode))
         assert getattr(state, field) is True
+
+
+def test_f7_help_hides_plot_and_restores_page_when_closed():
+    state = mujoco_viewer.ViewerControlState(plot_page="tracking")
+    state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(296))
+    assert state.help_visible is True
+    assert state.plot_page == "off"
+    assert "CONTROLS" in compose_dashboard(state).top_right.left
+    state = mujoco_viewer.reduce_key(state, "f7")
+    assert state.help_visible is False
+    assert "OVERVIEW" in compose_dashboard(state).top_right.left
+
+
+def test_plot_hides_right_text_panels_and_alerts_only_appear_on_faults():
+    normal = mujoco_viewer.ViewerControlState(plot_page="tracking")
+    panels = compose_dashboard(normal)
+    assert panels.top_right is None
+    assert panels.bottom_right is None
+    assert panels.bottom_left is None
+
+    fault = replace(normal, saturated=(False, True, False, False, False, False))
+    alert = compose_dashboard(fault).bottom_left
+    assert alert is not None
+    assert "TORQUE SATURATION: J2" in alert.right
+
+
+def test_cartesian_input_marks_target_layer_visible_in_status_panel():
+    state = mujoco_viewer.ViewerControlState(interaction_mode="xyz")
+    assert "TARGET ON / COLL OFF" in mujoco_viewer.overlay_text(state)
 
 
 def test_viewer_state_exposes_completed_replay_error_summary():
@@ -590,7 +638,8 @@ def test_viewer_state_exposes_completed_replay_error_summary():
     )
     assert state.replay_passed is True
     assert state.replay_tracking_rmse_rad == pytest.approx(0.012)
-    text = mujoco_viewer.system_panel_text(state)[1]
+    state = replace(state, dashboard_page="trajectory")
+    text = mujoco_viewer.overlay_text(state)
     assert "0.0120 rad" in text
     assert "0.0080 rad" in text
     assert "PASS" in text
@@ -627,6 +676,21 @@ def test_cartesian_jog_is_rate_limited_and_uses_selected_axis():
     )
     assert controller.calls[0].xyz_m == pytest.approx((0.0, 0.0004, 0.0))
     assert state.ik_status == "converged"
+
+
+def test_refresh_updates_live_cartesian_actual_values():
+    class CartesianSim(FakeSim):
+        def get_state(self):
+            state = super().get_state()
+            state.end_effector_position = (0.1, 0.2, 0.3)
+            state.end_effector_orientation = (0.0, 0.0, 0.0, 1.0)
+            return state
+
+    state = mujoco_viewer._refresh_observed_state(
+        CartesianSim(), mujoco_viewer.ViewerControlState()
+    )
+    assert state.ee_position == pytest.approx((0.1, 0.2, 0.3))
+    assert state.ee_rpy == pytest.approx((0.0, 0.0, 0.0))
 
 
 def test_draggable_target_aligns_with_end_effector_and_submits_changed_pose():
@@ -744,7 +808,7 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     assert "joint1" not in output
     assert holder["viewer"].opt.geomgroup[2] == 1
     assert holder["viewer"].opt.geomgroup[3] == 0
-    assert len(holder["viewer"].texts) == 4
+    assert len(holder["viewer"].texts) == 3
     assert sleeps == pytest.approx([0.008, 0.008, 0.008])
     assert holder["viewer"].closed is True
     assert sim.closed is True

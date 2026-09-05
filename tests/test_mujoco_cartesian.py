@@ -197,3 +197,15 @@ def test_result_records_are_immutable(simulation) -> None:
     result = MujocoCartesianController(simulation).solve_delta(CartesianDelta())
     with pytest.raises(FrozenInstanceError):
         result.success = False
+
+
+def test_result_exposes_finite_target_and_reached_rpy(simulation) -> None:
+    from rebotarm_simulation.mujoco_cartesian import CartesianDelta, MujocoCartesianController
+
+    result = MujocoCartesianController(simulation).solve_delta(
+        CartesianDelta(rpy_rad=(0.01, -0.01, 0.005), frame="world")
+    )
+    assert len(result.target_rpy_rad) == 3
+    assert len(result.reached_rpy_rad) == 3
+    assert all(np.isfinite(result.target_rpy_rad))
+    assert all(np.isfinite(result.reached_rpy_rad))

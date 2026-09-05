@@ -161,10 +161,12 @@ class TelemetryFigures:
         if self._mj is not None and hasattr(self._mj, "MjvFigure"):
             self._figures = {
                 "tracking": self._new_figure(
-                    "Joint tracking", ("actual", "target", "error", "velocity")
+                    "Joint tracking [rad, rad/s]",
+                    ("actual [rad]", "target [rad]", "error [rad]", "velocity [rad/s]"),
                 ),
                 "torque": self._new_figure(
-                    "Joint torque / contact", ("requested", "applied", "max contact N")
+                    "Effort [N.m, N]",
+                    ("requested [N.m]", "applied [N.m]", "max contact [N]"),
                 ),
             }
 
@@ -202,6 +204,14 @@ class TelemetryFigures:
         figure.flg_extend = 0
         for index, name in enumerate(lines):
             figure.linename[index] = name
+        colors = (
+            (0.90, 0.90, 0.90),
+            (0.10, 0.75, 1.00),
+            (1.00, 0.35, 0.15),
+            (0.95, 0.80, 0.15),
+        )
+        for index in range(len(lines)):
+            figure.linergb[index] = colors[index]
         return figure
 
     @staticmethod
@@ -299,30 +309,6 @@ class TelemetryFigures:
             min(figure_height, height),
         )
         set_figures([(rectangle, figure)])
-        return True
-
-    def attach_all(self, viewer, *, viewport=None) -> bool:
-        """Attach tracking and torque plots as a compact right-side stack."""
-        set_figures = getattr(viewer, "set_figures", None)
-        if not self.available or not callable(set_figures) or not hasattr(self._mj, "MjrRect"):
-            return False
-        try:
-            width, height = self._viewport_size(
-                viewport if viewport is not None else getattr(viewer, "viewport", None)
-            )
-        except ValueError:
-            return False
-        margin = min(10, width - 1, height - 1)
-        figure_width = max(1, min(480, round(width * 0.40)))
-        figure_height = max(1, min(260, round(height * 0.28)))
-        left = max(0, width - figure_width - margin)
-        lower = self._mj.MjrRect(left, margin, min(figure_width, width), figure_height)
-        upper_bottom = min(height - 1, margin * 2 + figure_height)
-        upper_height = max(1, min(figure_height, height - upper_bottom))
-        upper = self._mj.MjrRect(left, upper_bottom, min(figure_width, width), upper_height)
-        set_figures(
-            [(upper, self._figures["tracking"]), (lower, self._figures["torque"])]
-        )
         return True
 
     def clear(self, viewer) -> bool:

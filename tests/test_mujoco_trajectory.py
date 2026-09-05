@@ -10,6 +10,8 @@ from rebotarm_simulation.mujoco_trajectory import (
     MujocoTrajectory,
     MujocoTrajectoryPlayback,
     MujocoTrajectoryRecorder,
+    PlaybackErrorAccumulator,
+    PlaybackErrorThresholds,
     SCHEMA,
     SCHEMA_VERSION,
     TrajectoryFrame,
@@ -114,6 +116,8 @@ def test_playback_interpolates_targets_not_observations_and_finishes_with_hold()
     middle = playback.update(101.0)
     assert middle.joint_targets_rad == pytest.approx((0.5,) * 6)
     assert middle.gripper_target_width_m == pytest.approx(0.05)
+    assert middle.reference_joint_positions_rad == pytest.approx((0.0,) * 6)
+    assert middle.reference_gripper_width_m == pytest.approx(0.07)
     assert middle.progress == pytest.approx(0.5)
     assert not middle.hold_requested
     final = playback.update(102.0)
@@ -165,3 +169,35 @@ def test_playback_rejects_time_reversal_and_invalid_transitions():
         playback.update(4)
     with pytest.raises(RuntimeError, match="paused"):
         playback.resume(5)
+
+
+def test_playback_error_report_compares_tracking_and_recorded_actuals():
+    output = MujocoTrajectoryPlayback(_trajectory()).start(0.0)
+    errors = PlaybackErrorAccumulator(
+        PlaybackErrorThresholds(
+            joint_rmse_rad=0.2,
+            joint_max_abs_rad=0.3,
+            gripper_rmse_m=0.02,
+            gripper_max_abs_m=0.03,
+        )
+    )
+    errors.append(output, (0.1,) * 6, 0.06)
+    report = errors.report(completed=True)
+    assert report.sample_count == 1
+    assert report.overall_tracking_rmse_rad == pytest.approx(0.1)
+    assert report.overall_tracking_max_abs_rad == pytest.approx(0.1)
+    assert report.overall_repeatability_rmse_rad == pytest.approx(0.1)
+    assert report.gripper_tracking_rmse_m == pytest.approx(0.02)
+    assert report.gripper_repeatability_rmse_m == pytest.approx(0.01)
+    assert report.passed
+    assert report.to_dict()["joint_tracking_rmse_rad"] == pytest.approx([0.1] * 6)
+
+
+def test_playback_error_report_requires_completion_and_respects_limits():
+    output = MujocoTrajectoryPlayback(_trajectory()).start(0.0)
+    errors = PlaybackErrorAccumulator()
+    errors.append(output, (0.2,) * 6, 0.08)
+    assert errors.report(completed=False).passed is False
+    assert errors.report(completed=True).passed is False
+    with pytest.raises(ValueError, match="non-negative"):
+        PlaybackErrorThresholds(joint_rmse_rad=-1)

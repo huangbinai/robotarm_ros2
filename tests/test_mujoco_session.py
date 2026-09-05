@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 import io
 import json
+import math
 
 import pytest
 
 from rebotarm_simulation.mujoco_commands import dispatch_sim_command
 from rebotarm_simulation import mujoco_cli
 from rebotarm_simulation.mujoco_session import MujocoSession
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCENE = ROOT / "src/rebotarm_simulation/models/rebotarm/scene.xml"
 
 
 class FakeSimulation:
@@ -187,3 +193,63 @@ def test_cli_reports_invalid_session_transition_and_continues():
     ) == 0
     assert "error: no trajectory is available" in stdout.getvalue()
     assert '"replay_state": "idle"' in stdout.getvalue()
+
+
+def test_completed_replay_produces_and_saves_error_comparison(tmp_path):
+    sim = FakeSimulation()
+    session = MujocoSession(sim)
+    session.record_start()
+    session.step()
+    session.record_stop()
+    sim.time = 2.0
+    session.replay_start()
+    session.step()
+
+    report = dispatch_sim_command(sim, "trajectory compare", session=session).value
+    assert report["completed"] is True
+    assert report["passed"] is True
+    assert report["sample_count"] == 2
+    assert report["overall_tracking_rmse_rad"] == pytest.approx(0.0)
+    assert report["overall_repeatability_rmse_rad"] == pytest.approx(0.0)
+
+    path = tmp_path / "replay report.json"
+    result = dispatch_sim_command(
+        sim, f'trajectory report "{path}"', session=session
+    ).value
+    assert result["path"] == str(path)
+    assert json.loads(path.read_text(encoding="utf-8")) == report
+
+
+def test_comparison_is_unavailable_before_replay():
+    session = MujocoSession(FakeSimulation())
+    with pytest.raises(RuntimeError, match="no replay comparison"):
+        session.comparison()
+
+
+def test_real_mujoco_record_replay_generates_finite_repeatability_report():
+    pytest.importorskip("mujoco")
+    from rebotarm_simulation.mujoco_sim import RebotArmMujoco
+
+    with RebotArmMujoco(SCENE) as sim:
+        sim.reset_home()
+        session = MujocoSession(sim)
+        session.record_start()
+        home = tuple(sim.control_targets[:6])
+        for step_index in range(1, 101):
+            target = list(home)
+            target[0] += 0.05 * step_index / 100.0
+            sim.command_joint_positions(target)
+            session.step()
+        session.record_stop()
+
+        sim.reset_home()
+        session.replay_start()
+        while session.playback.state == "playing":
+            session.step()
+        report = session.comparison()
+
+    assert report["completed"] is True
+    assert report["sample_count"] >= 100
+    assert math.isfinite(report["overall_tracking_rmse_rad"])
+    assert math.isfinite(report["overall_repeatability_rmse_rad"])
+    assert report["overall_tracking_max_abs_rad"] < 0.08

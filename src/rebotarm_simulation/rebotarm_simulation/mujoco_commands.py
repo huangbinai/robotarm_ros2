@@ -44,10 +44,16 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False, session=None) 
             return CommandResult(paused, method(), mutated=True)
         if arguments == ["state"]:
             return CommandResult(paused, session.state())
+        if arguments == ["compare"]:
+            return CommandResult(paused, session.comparison())
         if len(arguments) == 2 and arguments[0] in {"save", "load"}:
             method = session.save if arguments[0] == "save" else session.load
             return CommandResult(paused, method(arguments[1]), mutated=arguments[0] == "load")
-        raise ValueError("usage: trajectory state|save PATH|load PATH")
+        if len(arguments) == 2 and arguments[0] == "report":
+            return CommandResult(paused, session.save_comparison(arguments[1]))
+        raise ValueError(
+            "usage: trajectory state|compare|save PATH|load PATH|report PATH"
+        )
     if command in ("quit", "q"):
         if arguments:
             raise ValueError("usage: quit")

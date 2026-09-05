@@ -572,6 +572,30 @@ def test_special_keys_toggle_plots_record_replay_and_clear():
         assert getattr(state, field) is True
 
 
+def test_viewer_state_exposes_completed_replay_error_summary():
+    session = SimpleNamespace(
+        state=lambda: {
+            "recording": False,
+            "replay_state": "finished",
+            "replay_progress": 1.0,
+            "comparison": {
+                "overall_tracking_rmse_rad": 0.012,
+                "overall_repeatability_rmse_rad": 0.008,
+                "passed": True,
+            },
+        }
+    )
+    state = mujoco_viewer._state_from_session(
+        mujoco_viewer.ViewerControlState(), session
+    )
+    assert state.replay_passed is True
+    assert state.replay_tracking_rmse_rad == pytest.approx(0.012)
+    text = mujoco_viewer.system_panel_text(state)[1]
+    assert "0.0120 rad" in text
+    assert "0.0080 rad" in text
+    assert "PASS" in text
+
+
 def test_cartesian_jog_is_rate_limited_and_uses_selected_axis():
     sim = FakeSim()
 

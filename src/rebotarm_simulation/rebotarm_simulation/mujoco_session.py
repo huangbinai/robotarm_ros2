@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from .mujoco_trajectory import (
     MujocoTrajectory,
     MujocoTrajectoryPlayback,
     MujocoTrajectoryRecorder,
+    PlaybackErrorAccumulator,
+    PlaybackErrorThresholds,
     PlaybackOutput,
 )
 
@@ -16,11 +19,17 @@ from .mujoco_trajectory import (
 class MujocoSession:
     """Own trajectory lifecycle without exposing mutable MuJoCo internals."""
 
-    def __init__(self, simulation: Any) -> None:
+    def __init__(
+        self,
+        simulation: Any,
+        *,
+        error_thresholds: PlaybackErrorThresholds | None = None,
+    ) -> None:
         self.simulation = simulation
         self.recorder = MujocoTrajectoryRecorder()
         self.trajectory: MujocoTrajectory | None = None
         self.playback: MujocoTrajectoryPlayback | None = None
+        self.errors = PlaybackErrorAccumulator(error_thresholds)
 
     def record_start(self) -> dict[str, Any]:
         if self.playback is not None and self.playback.state in ("playing", "paused"):
@@ -39,6 +48,7 @@ class MujocoSession:
         self.recorder.clear()
         self.trajectory = None
         self.playback = None
+        self.errors.clear()
         return self.state()
 
     def save(self, path: str | Path) -> dict[str, Any]:
@@ -55,6 +65,7 @@ class MujocoSession:
             raise RuntimeError("stop replay before loading a trajectory")
         self.trajectory = MujocoTrajectory.load_json(path)
         self.playback = None
+        self.errors.clear()
         result = self.state()
         result["path"] = str(Path(path))
         return result
@@ -63,8 +74,10 @@ class MujocoSession:
         if self.recorder.is_recording:
             raise RuntimeError("stop recording before replay")
         self.playback = MujocoTrajectoryPlayback(self._available_trajectory())
+        self.errors.clear()
         output = self.playback.start(self._simulation_time())
         self._apply(output)
+        self._measure(output)
         return self.state()
 
     def replay_pause(self) -> dict[str, Any]:
@@ -77,8 +90,32 @@ class MujocoSession:
 
     def replay_stop(self) -> dict[str, Any]:
         output = self._require_playback().stop()
+        self._measure(output)
         self._apply(output)
         return self.state()
+
+    def comparison(self) -> dict[str, Any]:
+        report = self._comparison_report()
+        if report is None:
+            raise RuntimeError("no replay comparison is available")
+        return report
+
+    def save_comparison(self, path: str | Path) -> dict[str, Any]:
+        report = self.comparison()
+        destination = Path(path)
+        destination.write_text(
+            json.dumps(
+                report,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return {"path": str(destination), "comparison": report}
 
     def step(self, count: int = 1):
         """Advance physics while servicing playback and recorder each step."""
@@ -98,6 +135,7 @@ class MujocoSession:
         output = None
         if self.playback is not None and self.playback.state == "playing":
             output = self.playback.update(self._simulation_time())
+            self._measure(output)
             self._apply(output)
         if self.recorder.is_recording:
             self._capture()
@@ -121,7 +159,13 @@ class MujocoSession:
             "trajectory_loaded": trajectory is not None,
             "replay_state": "idle" if self.playback is None else self.playback.state,
             "replay_progress": 0.0 if self.playback is None else self.playback.progress,
+            "comparison": self._comparison_report(),
         }
+
+    def _comparison_report(self) -> dict[str, Any] | None:
+        playback_state = "idle" if self.playback is None else self.playback.state
+        report = self.errors.report(completed=playback_state == "finished")
+        return None if report.sample_count == 0 else report.to_dict()
 
     def _available_trajectory(self) -> MujocoTrajectory:
         if self.trajectory is not None:
@@ -159,3 +203,7 @@ class MujocoSession:
         self.simulation.command_gripper_width(output.gripper_target_width_m)
         if output.hold_requested:
             self.simulation.set_mode("hold")
+
+    def _measure(self, output: PlaybackOutput) -> None:
+        state = self.simulation.get_state()
+        self.errors.append(output, state.joint_positions[:6], state.gripper_width)

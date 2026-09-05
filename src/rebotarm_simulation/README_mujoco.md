@@ -165,11 +165,18 @@ replay start
 replay pause
 replay resume
 replay stop
+trajectory compare
+trajectory report "logs/demo report.json"
 record clear
 ```
 
 轨迹 JSON 保存仿真时间、六轴目标/实际角和夹爪目标/实际宽度。回放结束或停止后自动
 进入 Hold；人工关节、末端或夹爪命令会停止正在进行的回放，防止两个输入源同时改目标。
+回放期间会同时计算：实际位置相对命令目标的跟踪误差，以及本次实际位置相对原始录制
+实际位置的重复性误差。报告包含六轴 RMSE/最大绝对误差、整机 RMSE/最大误差、夹爪
+跟踪/重复性误差和阈值通过结果；完成后窗口左上角会显示整机 Tracking RMSE、
+Repeatability RMSE 和 PASS/FAIL。默认通过阈值是关节 RMSE `0.03 rad`、最大误差
+`0.08 rad`、夹爪 RMSE `0.005 m`、最大误差 `0.012 m`。
 
 `G` 进入重力补偿，`H` 捕获并保持当前位置，`P` 进入
 Position（内部仍为 POS_VEL→motor 力矩），`V` 显示/隐藏碰撞代理，空格暂停，

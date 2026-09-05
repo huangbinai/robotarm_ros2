@@ -82,6 +82,9 @@ class ViewerControlState:
     recording: bool = False
     playback_state: str = "idle"
     playback_progress: float = 0.0
+    replay_tracking_rmse_rad: float = 0.0
+    replay_repeatability_rmse_rad: float = 0.0
+    replay_passed: bool | None = None
     record_toggle: bool = False
     replay_toggle: bool = False
     trajectory_clear: bool = False
@@ -357,6 +360,13 @@ def _state_from_sim(
         recording=False if previous is None else previous.recording,
         playback_state="idle" if previous is None else previous.playback_state,
         playback_progress=0.0 if previous is None else previous.playback_progress,
+        replay_tracking_rmse_rad=(
+            0.0 if previous is None else previous.replay_tracking_rmse_rad
+        ),
+        replay_repeatability_rmse_rad=(
+            0.0 if previous is None else previous.replay_repeatability_rmse_rad
+        ),
+        replay_passed=None if previous is None else previous.replay_passed,
     )
 
 
@@ -559,11 +569,21 @@ def apply_continuous_jog(
 
 def _state_from_session(state: ViewerControlState, session) -> ViewerControlState:
     values = session.state()
+    comparison = values.get("comparison")
     return replace(
         state,
         recording=bool(values["recording"]),
         playback_state=str(values["replay_state"]),
         playback_progress=float(values["replay_progress"]),
+        replay_tracking_rmse_rad=(
+            0.0 if comparison is None else float(comparison["overall_tracking_rmse_rad"])
+        ),
+        replay_repeatability_rmse_rad=(
+            0.0
+            if comparison is None
+            else float(comparison["overall_repeatability_rmse_rad"])
+        ),
+        replay_passed=(None if comparison is None else bool(comparison["passed"])),
     )
 
 
@@ -641,6 +661,13 @@ def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
         f"\n{'ON' if state.recording else 'OFF'}"
         f"\n{state.playback_state} {state.playback_progress:.0%}"
     )
+    if state.replay_passed is not None:
+        left += "\nTRACK RMSE\nREPEAT RMSE\nRESULT"
+        right += (
+            f"\n{state.replay_tracking_rmse_rad:.4f} rad"
+            f"\n{state.replay_repeatability_rmse_rad:.4f} rad"
+            f"\n{'PASS' if state.replay_passed else 'INCOMPLETE/FAIL'}"
+        )
     return left, right
 
 

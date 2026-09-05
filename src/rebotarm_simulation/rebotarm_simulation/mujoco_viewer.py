@@ -22,10 +22,10 @@ HELP = (
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
 )
 MODE_DESCRIPTIONS = {
-    "position": "tracking commanded joint targets",
-    "hold": "holding the captured current pose",
-    "gravity_comp": "gravity compensation; position target is not tracked",
-    "raw_torque": "diagnostic torque command with watchdog",
+    "position": "tracks saved target",
+    "hold": "captures and holds pose",
+    "gravity_comp": "gravity only; no target tracking",
+    "raw_torque": "diagnostic torque + watchdog",
 }
 _RETAINED_UNSAFE_VIEWERS = []
 
@@ -429,8 +429,8 @@ def system_panel_text(state: ViewerControlState) -> tuple[str, str]:
 
 
 def joint_panel_text(state: ViewerControlState) -> tuple[str, str]:
-    header = "    JOINT   ACTUAL(rad) TARGET(rad) ERROR(rad) VEL(rad/s)"
-    torque_header = " TORQUE REQ/APPLIED (N.m)"
+    header = "    J      Q       Q*      ERR      DQ"
+    torque_header = " TAU REQ/OUT"
     rows = []
     torque_rows = []
     for index, name in enumerate(ARM_JOINT_NAMES):
@@ -439,8 +439,8 @@ def joint_panel_text(state: ViewerControlState) -> tuple[str, str]:
         target = state.joint_targets[index]
         error = target - actual
         rows.append(
-            f"{marker} {name:<7} {actual:+8.3f} {target:+8.3f} "
-            f"{error:+8.3f} {state.joint_velocities[index]:+8.3f}"
+            f"{marker} J{index + 1} {actual:+7.3f} {target:+7.3f} "
+            f"{error:+7.3f} {state.joint_velocities[index]:+7.3f}"
         )
         saturation = " !" if state.saturated[index] else ""
         torque_rows.append(
@@ -457,15 +457,26 @@ def gripper_panel_text(state: ViewerControlState) -> tuple[str, str]:
     )
 
 
+def controls_panel_text() -> tuple[str, str]:
+    return (
+        "Z / X\nJ / K\nC / O\nS\nG\nH\nP\nV\nT / R\nQ",
+        "select joint\nstart joint - / +\nclose / open gripper\nSTOP + hold\n"
+        "gravity only\ncapture + hold\ntrack saved target\ncollision view\n"
+        "home / reset\nquit",
+    )
+
+
 def overlay_text(state: ViewerControlState) -> str:
     """Return a plain-text snapshot for diagnostics and backwards compatibility."""
     system_left, system_right = system_panel_text(state)
     joint_left, joint_right = joint_panel_text(state)
     gripper_left, gripper_right = gripper_panel_text(state)
+    controls_left, controls_right = controls_panel_text()
     return (
         f"{system_left}\n{system_right}\n\n"
         f"{joint_left}\n{joint_right}\n\n"
-        f"{gripper_left}\n{gripper_right}\n\n{HELP}"
+        f"{gripper_left}\n{gripper_right}\n\n"
+        f"{controls_left}\n{controls_right}\n\n{HELP}"
     )
 
 
@@ -513,8 +524,7 @@ def update_viewer_overlay(viewer, state: ViewerControlState) -> None:
                 (
                     mujoco.mjtFontScale.mjFONTSCALE_100,
                     mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
-                    "CONTROLS",
-                    HELP,
+                    *controls_panel_text(),
                 ),
             ]
         )
@@ -672,6 +682,7 @@ def main(
             model,
             data,
             key_callback=on_key,
+            show_left_ui=False,
             show_right_ui=False,
         )
         configure_viewer_rendering(viewer, collision_visible=False)

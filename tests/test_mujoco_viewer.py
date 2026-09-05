@@ -374,7 +374,7 @@ def test_overlay_contains_selected_target_gripper_pause_and_help():
     )
     text = mujoco_viewer.overlay_text(state)
     for expected in (
-        "GRAVITY_COMP", "joint3", "+0.200", "+0.030", "+0.250", "0.035", "0.040",
+        "GRAVITY_COMP", "J3", "+0.200", "+0.030", "+0.250", "0.035", "0.040",
         "CONTACTS", "2.50 N", "PAUSED", "+1.50/ +1.20", "!", "Z/X",
         "J/K start joint jog", "SHOWN",
     ):
@@ -388,11 +388,28 @@ def test_overlay_has_clear_sections_and_all_six_joints():
     gripper = mujoco_viewer.gripper_panel_text(state)
 
     assert "MODE" in system[0]
-    assert "holding the captured current pose" in system[1]
-    for name in ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6"):
+    assert "captures and holds pose" in system[1]
+    for name in ("J1", "J2", "J3", "J4", "J5", "J6"):
         assert name in joints[0]
-    assert "> joint5" in joints[0]
+    assert "> J5" in joints[0]
     assert "ACTUAL WIDTH" in gripper[0]
+    controls = mujoco_viewer.controls_panel_text()
+    assert "S" in controls[0]
+    assert "STOP + hold" in controls[1]
+
+
+def test_overlay_panels_remain_compact_for_small_vm_windows():
+    state = mujoco_viewer.ViewerControlState()
+
+    for left, right in (
+        mujoco_viewer.system_panel_text(state),
+        mujoco_viewer.joint_panel_text(state),
+        mujoco_viewer.gripper_panel_text(state),
+        mujoco_viewer.controls_panel_text(),
+    ):
+        left_width = max(map(len, left.splitlines()))
+        right_width = max(map(len, right.splitlines()))
+        assert left_width + right_width <= 55
 
 
 def test_command_events_set_joint_targets_gripper_and_mode_on_sim_thread():
@@ -506,8 +523,9 @@ def test_runtime_launches_passively_steps_syncs_sleeps_and_always_closes():
     sim = FakeSim("scene.xml")
     holder = {}
 
-    def launch(model, data, *, key_callback, show_right_ui):
+    def launch(model, data, *, key_callback, show_left_ui, show_right_ui):
         assert (model, data) == (sim.viewer_model, sim.viewer_data)
+        assert show_left_ui is False
         assert show_right_ui is False
         holder["viewer"] = FakeViewer(key_callback, [ord("k"), ord(" "), ord("."), ord("q")])
         return holder["viewer"]
@@ -558,7 +576,8 @@ def test_runtime_accepts_terminal_joint_commands_while_viewer_runs():
         def close(self):
             self.closed = True
 
-    def launch(model, data, *, key_callback, show_right_ui):
+    def launch(model, data, *, key_callback, show_left_ui, show_right_ui):
+        assert show_left_ui is False
         assert show_right_ui is False
         holder["viewer"] = ThreeCycleViewer(key_callback)
         return holder["viewer"]
@@ -660,7 +679,7 @@ def test_callback_from_other_thread_only_enqueues_until_main_loop_drains():
     assert mujoco_viewer.main(
         [],
         sim_factory=lambda _: sim,
-        launch_passive=lambda *_args, key_callback, show_right_ui: ConcurrentViewer(key_callback),
+        launch_passive=lambda *_args, key_callback, show_left_ui, show_right_ui: ConcurrentViewer(key_callback),
         sleep=lambda _: None,
         status_stream=io.StringIO(),
     ) == 0

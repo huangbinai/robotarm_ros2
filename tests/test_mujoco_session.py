@@ -89,7 +89,7 @@ def test_session_save_clear_load_and_quoted_command_path(tmp_path):
     dispatch_sim_command(sim, "record start", session=session)
     session.step()
     dispatch_sim_command(sim, "record stop", session=session)
-    path = tmp_path / "trajectory with spaces.json"
+    path = tmp_path / "missing parent" / "trajectory with spaces.json"
     dispatch_sim_command(sim, f'trajectory save "{path}"', session=session)
     dispatch_sim_command(sim, "record clear", session=session)
     assert session.state()["frame_count"] == 0

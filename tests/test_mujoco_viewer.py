@@ -516,6 +516,28 @@ def test_command_events_report_errors_and_keep_running():
     assert state.quit is False
 
 
+def test_command_events_report_filesystem_errors_and_keep_running(monkeypatch):
+    sim = FakeSim()
+    events = SimpleQueue()
+    events.put('trajectory save "/unwritable/demo.json"')
+    status = io.StringIO()
+
+    def fail_command(*_args, **_kwargs):
+        raise PermissionError("read-only destination")
+
+    monkeypatch.setattr(mujoco_viewer, "dispatch_sim_command", fail_command)
+    state = mujoco_viewer.process_command_events(
+        sim,
+        events,
+        mujoco_viewer.ViewerControlState(),
+        status,
+        session=SimpleNamespace(playback=None, recorder=SimpleNamespace(is_recording=False)),
+    )
+
+    assert "command error: read-only destination" in status.getvalue()
+    assert state.quit is False
+
+
 def test_continuous_jog_advances_target_until_explicit_stop():
     sim = FakeSim()
     state = mujoco_viewer.ViewerControlState(

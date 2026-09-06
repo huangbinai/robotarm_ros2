@@ -80,6 +80,15 @@ def test_json_is_deterministic_versioned_and_round_trips(tmp_path):
     assert MujocoTrajectory.load_json(first) == trajectory
 
 
+def test_save_json_creates_missing_parent_directories(tmp_path):
+    destination = tmp_path / "logs" / "mujoco_teach" / "demo_01.json"
+
+    _trajectory().save_json(destination)
+
+    assert destination.is_file()
+    assert MujocoTrajectory.load_json(destination) == _trajectory()
+
+
 @pytest.mark.parametrize(
     "change, match",
     [

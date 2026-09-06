@@ -269,7 +269,7 @@ def process_command_events(
             ):
                 session.record_stop()
             result = dispatch_sim_command(sim, line, paused=state.paused, session=session)
-        except (RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             print(f"command error: {exc}", file=status_stream, flush=True)
             continue
         state = replace(state, paused=result.paused, quit=state.quit or result.should_quit)

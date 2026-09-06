@@ -126,7 +126,9 @@ class MujocoTrajectory:
         text = json.dumps(
             self.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
         ) + "\n"
-        Path(path).write_text(text, encoding="utf-8", newline="\n")
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8", newline="\n")
 
     @classmethod
     def from_dict(cls, payload: Any) -> "MujocoTrajectory":

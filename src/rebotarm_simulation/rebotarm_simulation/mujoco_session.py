@@ -103,6 +103,7 @@ class MujocoSession:
     def save_comparison(self, path: str | Path) -> dict[str, Any]:
         report = self.comparison()
         destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
             json.dumps(
                 report,

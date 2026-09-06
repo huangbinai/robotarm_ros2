@@ -15,7 +15,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH_PATH = ROOT / "patches" / "rebotarm_control_py" / "0001-feedback-and-safe-home-safety.patch"
-PATCH_SHA256 = "b24ed757f63d436d206323e4c47b024fda44d0266f8e0f589fb0543ec67eadc2"
+PATCH_SHA256 = "d01176ebea31ba2c0481c8908568b584630604f6aeed7b956a05d5a5a3891a8e"
 PINNED_COMMIT = "6a49302804f25e624995e771acb6d61896d1856d"
 PATCHED_PATHS = (
     "config/arm.yaml",

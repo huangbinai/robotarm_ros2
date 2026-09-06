@@ -537,7 +537,10 @@ class TeachReplayNode(Node):
                 return False
             future = self._trajectory_stop_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
-            return bool(future.done())
+            if not future.done():
+                return False
+            response = future.result()
+            return bool(response is not None and response.success)
         except Exception:
             return False
 

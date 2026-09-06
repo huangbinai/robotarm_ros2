@@ -9,5 +9,6 @@ __pycache__/
 info
 third_party/
 .superpowers/
+.codex_tmp/
 teleop_records/
 large_test_v2.jsonl

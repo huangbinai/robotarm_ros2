@@ -22,7 +22,7 @@ def test_open_gripper_routes_to_gripper_set_service():
     assert result.target == "/rebotarm/gripper/set"
     assert result.mode == "service"
     assert result.dry_run is True
-    assert result.params["position"] == 0.09
+    assert result.params["position"] == 0.085
 
 
 def test_camera_pose_routes_to_move_to_pose_action():

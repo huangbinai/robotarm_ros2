@@ -41,6 +41,7 @@ from rebotarm_teleop.teleop_core import validate_web_keyboard_command
 from rebotarm_teach.teach_record_client import TeachRecordClient
 from rebotarm_teach.teach_replay_coordinator import TeachReplayCoordinator, TeachReplayLimits
 from rebotarm_teach.teach_replay_client import TeachReplayClient
+from rebotarm_teach.teach_replay_workflow import TeachReplayWorkflow
 from rebotarm_teach.teach_recording import (
     ReplayStartBand,
     inspect_teach_record,
@@ -49,9 +50,7 @@ from rebotarm_teach.teach_recording import (
     prepare_teach_replay_samples,
     prepared_teach_replay_to_dict,
     teach_record_info_to_dict,
-    teach_trajectory_preview_to_dict,
     validate_teach_dry_run_request,
-    write_prepared_teach_record,
 )
 from rebotarm_teach.teach_replay_settings import TeachReplaySettingsProvider
 from rebotarm_motion.teach_replay_start_align_precheck import (
@@ -349,6 +348,7 @@ class TeleopStatusPanelNode(Node):
         )
         self._teach_replay_client = TeachReplayClient()
         self._teach_replay_coordinator = TeachReplayCoordinator()
+        self._teach_replay_workflow = TeachReplayWorkflow()
         self._teach_replay_trajectory_builder = TeachReplayTrajectoryBuilder(
             trajectory_factory=JointTrajectory,
             trajectory_point_factory=JointTrajectoryPoint,
@@ -740,7 +740,13 @@ class TeleopStatusPanelNode(Node):
     def _teach_trajectory(self, record_path: str | None = None, max_points: int = 500) -> dict:
         path = record_path or str(self._teach_record_info(None).get("path", self.get_parameter("record_path").value))
         try:
-            samples = load_teach_samples(path)
+            return self._teach_replay_workflow.build_preview(
+                path,
+                max_points=max_points,
+                prepare_samples=self._prepare_teach_replay_samples,
+                collision_precheck=self._collision_precheck,
+                record_info=lambda value: self._teach_record_info(value),
+            )
         except Exception as exc:
             return {
                 "accepted": False,
@@ -748,19 +754,6 @@ class TeleopStatusPanelNode(Node):
                 "path": str(path),
                 "points": [],
             }
-        prepared = self._prepare_teach_replay_samples(samples)
-        prepared_path = write_prepared_teach_record(path, prepared)
-        preview_samples = load_teach_samples(prepared_path)
-        payload = teach_trajectory_preview_to_dict(preview_samples, max_points=max_points)
-        payload["prepared_replay"] = prepared_teach_replay_to_dict(prepared)
-        payload["collision_precheck"] = self._collision_precheck(preview_samples)
-        payload["accepted"] = True
-        payload["curve_source"] = "prepared"
-        payload["path"] = str(prepared_path)
-        payload["raw_record_path"] = str(path)
-        payload["prepared_record_path"] = str(prepared_path)
-        payload["info"] = self._teach_record_info(str(path))
-        return payload
 
     def _teach_records(self) -> dict:
         record_path = Path(str(self.get_parameter("record_path").value))
@@ -787,10 +780,13 @@ class TeleopStatusPanelNode(Node):
         samples_for_precheck = []
         trajectory_points = 0
         try:
-            samples_for_precheck = load_teach_samples(str(info_payload.get("path", "")))
-            prepared = self._prepare_teach_replay_samples(samples_for_precheck, settings)
-            prepared_record_path = str(write_prepared_teach_record(str(info_payload.get("path", "")), prepared))
-            prepared_payload = prepared_teach_replay_to_dict(prepared)
+            record = self._teach_replay_workflow.prepare_record(
+                str(info_payload.get("path", "")),
+                prepare_samples=lambda samples: self._prepare_teach_replay_samples(samples, settings),
+            )
+            samples_for_precheck = record.source_samples
+            prepared_record_path = record.prepared_path
+            prepared_payload = record.payload
             moveit_align = self._moveit_align_summary(info_payload, samples_for_precheck, plan=decision.accepted)
             if decision.accepted and str(moveit_align.get("state", "")).lower() not in ("failed", "unavailable", "unknown"):
                 trajectory = self._build_teach_replay_trajectory(
@@ -844,10 +840,13 @@ class TeleopStatusPanelNode(Node):
         moveit_align = self._moveit_align_summary(info_payload)
         trajectory = None
         try:
-            source_samples = load_teach_samples(str(info_payload.get("path", "")))
-            prepared = self._prepare_teach_replay_samples(source_samples, settings)
-            prepared_record_path = str(write_prepared_teach_record(str(info_payload.get("path", "")), prepared))
-            prepared_payload = prepared_teach_replay_to_dict(prepared)
+            record = self._teach_replay_workflow.prepare_record(
+                str(info_payload.get("path", "")),
+                prepare_samples=lambda samples: self._prepare_teach_replay_samples(samples, settings),
+            )
+            source_samples = record.source_samples
+            prepared_record_path = record.prepared_path
+            prepared_payload = record.payload
             prepared_quality = prepared_payload.get("after_quality") if isinstance(prepared_payload.get("after_quality"), dict) else {}
             moveit_align = self._moveit_align_summary(info_payload, source_samples, plan=False)
         except Exception as exc:

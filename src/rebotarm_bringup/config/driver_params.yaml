@@ -1,7 +1,14 @@
 reBotArmController:
   ros__parameters:
     arm_namespace: rebotarm
-    joint_state_rate: 200.0
+    joint_state_rate: 100.0
+    hardware_feedback_rate_hz: 50.0
+    feedback_stale_timeout_sec: 0.15
+    gripper_position_torque_cap_nm: 1.0
+    gripper_position_max_speed_rad_s: 1.5
+    gripper_position_timeout_margin_sec: 1.5
+    grasp_hold_timeout_sec: 30.0
+    gripper_contact_torque_min_nm: 0.0
     cmd_arbitration: reject # reject的意思是当收到一个新的命令时，如果当前正在执行一个命令，则拒绝新的命令，直到当前命令完成。
     channel: ""
     frame_id: base_link

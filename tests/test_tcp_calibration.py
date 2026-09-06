@@ -8,6 +8,9 @@ import pytest
 
 ROS2_ROOT = Path(__file__).resolve().parents[1]
 VISION_PATH = str(ROS2_ROOT / "src" / "rebotarm_vision")
+CALIBRATION_PATH = str(ROS2_ROOT / "src" / "rebotarm_calibration")
+if CALIBRATION_PATH not in sys.path:
+    sys.path.insert(0, CALIBRATION_PATH)
 if VISION_PATH not in sys.path:
     sys.path.insert(0, VISION_PATH)
 
@@ -90,6 +93,23 @@ def test_average_offset_rejects_empty_samples():
 
     with pytest.raises(ValueError, match="at least one"):
         average_offsets([])
+
+
+def test_calibration_rejects_non_finite_and_zero_quaternion():
+    from rebotarm_calibration.tcp_calibration import estimate_sample_offset
+
+    with pytest.raises(ValueError, match="finite"):
+        estimate_sample_offset(
+            end_link_position=(0.0, float("nan"), 0.0),
+            end_link_orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+            tcp_reference_position=(0.0, 0.0, 0.0),
+        )
+    with pytest.raises(ValueError, match="non-zero"):
+        estimate_sample_offset(
+            end_link_position=(0.0, 0.0, 0.0),
+            end_link_orientation_xyzw=(0.0, 0.0, 0.0, 0.0),
+            tcp_reference_position=(0.0, 0.0, 0.0),
+        )
 
 
 def test_average_offset_formats_camera_yaml_snippet():

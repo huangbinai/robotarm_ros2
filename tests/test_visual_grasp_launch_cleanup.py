@@ -51,8 +51,23 @@ def test_vision_launch_does_not_wrap_static_tf_in_ros2_run():
 def test_vision_launch_configures_opencv_qt_font_environment():
     text = (ROOT / "src" / "rebotarm_vision" / "launch" / "vision.launch.py").read_text(encoding="utf-8")
 
-    assert "export QT_QPA_PLATFORM=xcb" in text
-    assert "export QT_QPA_FONTDIR=/usr/share/fonts/truetype/dejavu" in text
+    assert '"QT_QPA_PLATFORM": "xcb"' in text
+    assert '"QT_QPA_FONTDIR": "/usr/share/fonts/truetype/dejavu"' in text
+    assert "additional_env=common_environment" in text
+
+
+def test_vision_launch_has_no_developer_specific_absolute_paths():
+    text = (ROOT / "src" / "rebotarm_vision" / "launch" / "vision.launch.py").read_text(
+        encoding="utf-8"
+    )
+    camera = (ROOT / "src" / "rebotarm_vision" / "config" / "camera.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/home/u24/" not in text
+    assert "/home/u24/" not in camera
+    assert "REBOTARM_VISION_PYTHON" in text
+    assert 'DeclareLaunchArgument("yolo_model_path", default_value="")' in text
 
 
 def test_interactive_launch_removes_legacy_start_interaction_nodes_flag():

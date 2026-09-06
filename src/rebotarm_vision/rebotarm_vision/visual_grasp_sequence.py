@@ -15,7 +15,7 @@ class PoseTarget:
 @dataclass(frozen=True)
 class VisualGraspSequenceConfig:
     open_before_approach: bool = False
-    open_position_m: float = 0.09
+    open_position_m: float = 0.085
     close_position_m: float = 0.025
     close_max_effort: float = 0.4
     lift_z_m: float = 0.08
@@ -25,7 +25,7 @@ class VisualGraspSequenceConfig:
     open_clearance_m: float = 0.0
     close_margin_m: float = 0.012
     min_open_position_m: float = 0.035
-    max_open_position_m: float = 0.09
+    max_open_position_m: float = 0.085
     min_close_position_m: float = 0.006
     max_close_position_m: float = 0.08
     gripper_command: GripperCommand | None = None

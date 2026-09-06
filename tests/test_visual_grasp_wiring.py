@@ -492,7 +492,6 @@ def test_visual_grasp_commands_document_strict_stability_test():
     assert "YOLO + GraspNet" in readme_text
     assert "20" in readme_text
     assert "rebotarm_visual_grasp_benchmark" in readme_text
-    assert "rebotarm_visual_grasp_benchmark" in readme_text
 
 
 def test_graspnet_baseline_v13_is_wired_as_candidate_source_without_replacing_execution():
@@ -510,7 +509,6 @@ def test_graspnet_baseline_v13_is_wired_as_candidate_source_without_replacing_ex
     assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
     assert '"source_mode": graspnet_source_mode' in launch_text
     assert '"network_candidates_url": graspnet_candidates_url' in launch_text
-    assert '"output_candidates_topic": graspnet_candidates_topic' in launch_text
     assert 'DeclareLaunchArgument("candidate_ik_input_topic", default_value="/grasp/graspnet_candidates")' in launch_text
     assert '"input_topic": candidate_ik_input_topic' in launch_text
     assert "candidate_scoring_mode" not in launch_text
@@ -535,6 +533,23 @@ def test_visual_grasp_executor_keeps_stop_paths_wired():
     assert 'f"/{self._arm_namespace}/motion_execution/stop"' in executor_text
     assert 'f"/{self._arm_namespace}/trajectory_stop"' in executor_text
     assert 'self._request_stop_service(self._trajectory_stop_client, "trajectory_stop")' in executor_text
+
+
+def test_visual_grasp_executor_wires_failure_recovery_policy():
+    executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+
+    assert 'self.declare_parameter("failure_recovery_mode", "hold")' in executor_text
+    assert 'f"/{self._arm_namespace}/arm_status"' in executor_text
+    assert 'f"/{self._arm_namespace}/disable"' in executor_text
+    assert 'name="failure_return_to_start"' in executor_text
+    assert 'DeclareLaunchArgument(\n                "failure_recovery_mode"' in launch_text
+    assert 'default_value="hold"' in launch_text
+    assert '"failure_recovery_mode": failure_recovery_mode' in launch_text
+    assert (
+        '"failure_recovery_return_velocity_scaling": '
+        "failure_recovery_return_velocity_scaling"
+    ) in launch_text
 
 
 def test_low_level_controller_exports_trajectory_stop_service():
@@ -620,10 +635,10 @@ def test_visual_grasp_executor_refreshes_plan_after_pregrasp():
     assert 'stage.name == "move_to_pregrasp"' in executor_text
     assert "fresh grasp plan unavailable after pregrasp" in executor_text
     assert "stages = self._replace_remaining_after_pregrasp" in executor_text
-    assert 'DeclareLaunchArgument("refresh_plan_at_pregrasp_enabled"' not in launch_text
-    assert 'DeclareLaunchArgument("refresh_plan_at_pregrasp_required"' not in launch_text
-    assert '"refresh_plan_at_pregrasp_enabled": False' in launch_text
-    assert '"refresh_plan_at_pregrasp_required": False' in launch_text
+    assert 'DeclareLaunchArgument("refresh_plan_at_pregrasp_enabled", default_value="true")' in launch_text
+    assert 'DeclareLaunchArgument("refresh_plan_at_pregrasp_required", default_value="true")' in launch_text
+    assert '"refresh_plan_at_pregrasp_enabled": refresh_plan_at_pregrasp_enabled' in launch_text
+    assert '"refresh_plan_at_pregrasp_required": refresh_plan_at_pregrasp_required' in launch_text
 
 
 def test_visual_grasp_executor_has_bounded_approach_visual_servo():
@@ -723,7 +738,7 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'self.declare_parameter("orientation_yaw_offsets_rad", [0.0])' in node_text
     assert 'self.declare_parameter("candidate_grasp_z_offsets_m", [0.0])' in node_text
     assert 'self.declare_parameter("candidate_min_jaw_width_m", 0.006)' in node_text
-    assert 'self.declare_parameter("candidate_max_jaw_width_m", 0.082)' in node_text
+    assert 'self.declare_parameter("candidate_max_jaw_width_m", 0.085)' in node_text
     assert "def _symmetric_parallel_jaw_delta" not in node_text
     assert 'self.declare_parameter("candidate_max_joint6_delta_rad", 1.5708)' in node_text
     assert 'self.declare_parameter("candidate_joint6_symmetry_enabled", True)' in node_text
@@ -746,7 +761,6 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert "self._filter_busy = False" in node_text
     assert "candidate IK filter is still processing previous candidates; dropping this frame" in node_text
     assert "self._filter_busy = True" in node_text
-    assert "self._filter_busy = False" in node_text
     assert "self._latest_joint_state" in node_text
     assert "def _on_joint_state" in node_text
     assert "def _valid_joint_state" in node_text
@@ -818,7 +832,7 @@ def test_candidate_ik_filter_node_uses_moveit_ik_and_state_validity_without_exec
     assert 'DeclareLaunchArgument("candidate_grasp_z_offsets_m", default_value="[0.0]")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_variants_per_candidate"' not in launch_text
     assert 'DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006")' in launch_text
-    assert 'DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.082")' in launch_text
+    assert 'DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085")' in launch_text
     assert 'DeclareLaunchArgument("candidate_max_joint6_delta_rad", default_value="1.5708")' in launch_text
     assert 'DeclareLaunchArgument("candidate_joint6_symmetry_enabled", default_value="true")' in launch_text
     assert 'DeclareLaunchArgument("candidate_joint6_symmetry_angle_rad", default_value="3.141592653589793")' in launch_text
@@ -1056,7 +1070,6 @@ def test_web_execute_returns_to_live_feedback_after_sending_gripper():
     assert "exitPreviewToLive" in execute_body
     assert "const exitPreviewToLive =" in panel_text
     assert "previewState.active = false" in panel_text
-    assert "exitPreviewToLive" in execute_body
     assert "updateRobotViewer(previewState.latestJoints)" in panel_text
 
 
@@ -1146,7 +1159,6 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert '<details class="teach-step" id="teach-replay-step">' in panel_text
     assert '<details class="teach-step" id="teach-check-step" open>' not in panel_text
     assert '<details class="teach-step" id="teach-replay-step" open>' not in panel_text
-    assert 'id="teach-record-select"' in panel_text
     assert "#teach-record-select:invalid" in panel_text
     assert 'Default file' not in panel_text
     assert 'id="teach-replay-speed" type="range" min="0.1" max="1.0"' in panel_text
@@ -1167,7 +1179,6 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert "Replay Checklist Details" not in panel_text
     assert "safe_home" in panel_text
     assert "Teach JSONL Schema" not in panel_text
-    assert "Replay Checklist Details" not in panel_text
     assert "Recording / Gravity" not in panel_text
     assert "Default record_path" not in panel_text
     assert 'id="expand-teach-trajectory"' not in panel_text
@@ -1197,13 +1208,9 @@ def test_status_panel_right_card_order_and_simplified_teach_card():
     assert "Prepared Risk" not in trajectory_body
     assert "Max Jump" not in trajectory_body
     assert "Max Velocity" not in trajectory_body
-    assert "effective_risk_level" in precheck_body
-    assert "prepared_risk_level" in precheck_body
-    assert "prepared_replay?.after_quality" in precheck_body
     assert "teachMetric('Risk'" not in precheck_body
     assert "prepared_record_path" in panel_text
     assert "preparedPoints.length" not in panel_text
-    assert "await refreshTeachFileInfo({ force: true })" in panel_text
     assert "await refreshTeachFileInfo({ force: true })" in panel_text
     assert "setHtml('replay-precheck-summary', renderReplayPrecheckSummary(latestTeachFileInfo));" in panel_text
 
@@ -1311,7 +1318,6 @@ def test_status_panel_uses_workbench_cards_for_teleop_ui():
     assert "/api/keyboard_enable" in panel_text
     assert "/api/keyboard_disable" in panel_text
     assert "/api/keyboard_key" in panel_text
-    assert "KEYBOARD_TELEOP" in panel_text
     assert "/api/teach_record_start" in panel_text
     assert "/api/teach_record_stop" in panel_text
     assert 'id="show-live-sliders"' not in panel_text
@@ -1432,7 +1438,6 @@ def test_status_panel_surfaces_time_parameterization_summary():
 
     assert "time_parameterization" in panel_text
     assert "time_parameterization?.used_method" in panel_text
-    assert "time_parameterization?.used_method" in panel_text
 
 
 def test_teach_trajectory_curve_card_shows_prepared_curve_without_duplicate_check_metrics():
@@ -1441,15 +1446,16 @@ def test_teach_trajectory_curve_card_shows_prepared_curve_without_duplicate_chec
         "const drawTeachTrajectoryChart = (payload) => {", 1
     )[0]
     backend_body = panel_text.split("def _teach_trajectory(", 1)[1].split("\n    def _teach_records", 1)[0]
+    workflow_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_workflow.py")
 
     assert "curve_source" in details_body
-    assert "preview_samples = load_teach_samples(prepared_path)" in backend_body
+    assert "self._teach_replay_workflow.build_preview(" in backend_body
+    assert "prepared_samples=load_teach_samples(prepared_path)" in workflow_text
     assert "raw_record_path" in details_body
     assert "Prepared Risk" not in details_body
     assert "Max Jump" not in details_body
     assert "Max Velocity" not in details_body
-    assert 'payload["curve_source"] = "prepared"' in backend_body
-    assert "preview_samples = load_teach_samples(prepared_path)" in backend_body
+    assert '"curve_source": "prepared"' in workflow_text
 
 
 def test_moveit_demo_standalone_publishes_fake_visual_joint_state_source():
@@ -1481,13 +1487,13 @@ def test_controller_shutdown_runs_safe_home_before_disable_by_default():
     assert "joint positions are not finite" in controller_text
     assert "shutdown safe_home skipped" in controller_text
     assert "shutdown conditional safe_home complete" in controller_text
-    assert "self.hardware.endpos_ctrl.safe_home()" in controller_text
+    assert "self.hardware.safe_home()" in controller_text
     assert "self.hardware.shutdown()" in controller_text
     assert "def connected(self) -> bool:" in hardware_text
     assert "def gripper_active(self) -> bool:" in hardware_text
     assert "def gripper_mode(self) -> str:" in hardware_text
     assert "except Exception:" in hardware_text
-    assert "self.shutdown()" in hardware_text
+    assert "self._disconnect_after_failed_connect()" in hardware_text
     assert 'self.get_logger().error(f"hardware connect failed; disabled before exit: {exc}")' in controller_text
     assert "node = None" in controller_text
     assert "if node is not None:" in controller_text

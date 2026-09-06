@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
@@ -23,6 +24,34 @@ class ModeTransitionConfig:
     max_position_jump_rad: float = 0.02
     feedback_timeout_sec: float = 0.10
     transition_timeout_sec: float = 2.0
+
+    def __post_init__(self) -> None:
+        non_negative = (
+            "enter_ramp_duration_sec",
+            "exit_damping_duration_sec",
+            "exit_blend_duration_sec",
+            "gravity_kp",
+            "gravity_kd",
+            "hold_kp",
+            "hold_kd",
+            "pos_vel_settle_duration_sec",
+        )
+        positive = (
+            "enter_max_velocity_rad_s",
+            "exit_max_lock_velocity_rad_s",
+            "exit_velocity_wait_timeout_sec",
+            "max_position_jump_rad",
+            "feedback_timeout_sec",
+            "transition_timeout_sec",
+        )
+        for name in non_negative:
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        for name in positive:
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
 
 
 @dataclass(frozen=True)

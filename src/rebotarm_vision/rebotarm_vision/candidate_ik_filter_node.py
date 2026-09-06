@@ -66,7 +66,7 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
         self.declare_parameter("candidate_min_jaw_width_m", 0.006)
-        self.declare_parameter("candidate_max_jaw_width_m", 0.082)
+        self.declare_parameter("candidate_max_jaw_width_m", 0.085)
         self.declare_parameter("candidate_min_grasp_z_m", 0.0)
         self.declare_parameter("candidate_safe_lift_min_z_m", 0.120)
         self.declare_parameter("candidate_workspace_gate_enabled", False)

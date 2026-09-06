@@ -1,0 +1,147 @@
+diff --git a/config/arm.yaml b/config/arm.yaml
+index e62aa9b..e2a1210 100644
+--- a/config/arm.yaml
++++ b/config/arm.yaml
+@@ -4,7 +4,7 @@
+ channel: /dev/ttyACM0
+
+ # 控制循环频率 (Hz)
+-rate: 500
++rate: 100
+
+ joints:
+   # joint1:
+diff --git a/reBotArm_control_py/actuator/arm.py b/reBotArm_control_py/actuator/arm.py
+index fa69f4b..79353c4 100644
+--- a/reBotArm_control_py/actuator/arm.py
++++ b/reBotArm_control_py/actuator/arm.py
+@@ -488,18 +488,24 @@ class RobotArm:
+             m.setdefault(ctrl, []).append(mot)
+         return m
+
+-    def _request_and_poll(self) -> None:
++    def _request_and_poll(self) -> bool:
+         """主动请求并轮询所有控制器的反馈（用于非控制循环场景）。"""
++        ok = True
+         for ctrl, motors in self._ctrl_to_motors().items():
+             for mot in motors:
+                 try:
+                     mot.request_feedback()
+                 except Exception:
+-                    pass
++                    ok = False
+             try:
+                 ctrl.poll_feedback_once()
+             except Exception:
+-                pass
++                ok = False
++        return ok and all(motor.get_state() is not None for motor in self._motor_map.values())
++
++    def fresh(self) -> bool:
++        """Request one complete feedback cycle and report whether every joint replied."""
++        return self._request_and_poll()
+
+     def get_state(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+         """读取当前所有关节的状态（位置、速度、力矩）。
+@@ -509,18 +515,17 @@ class RobotArm:
+         """
+         self._poll_all()
+         pos, vel, torq = [], [], []
++        missing = []
+         for jc in self._joints:
+-            # 如果某一帧没有读到状态，就补 0 保持数组长度稳定，
+-            # 避免上层算法因为维度不一致直接报错。
+             st = self._motor_map[jc.name].get_state()
+             if st is not None:
+                 pos.append(st.pos)
+                 vel.append(st.vel)
+                 torq.append(st.torq)
+             else:
+-                pos.append(0.0)
+-                vel.append(0.0)
+-                torq.append(0.0)
++                missing.append(jc.name)
++        if missing:
++            raise RuntimeError(f"joint feedback unavailable: {', '.join(missing)}")
+         return (
+             np.array(pos, dtype=np.float64),
+             np.array(vel, dtype=np.float64),
+diff --git a/reBotArm_control_py/controllers/arm_endpos_controller.py b/reBotArm_control_py/controllers/arm_endpos_controller.py
+index 08d2518..c3abefc 100644
+--- a/reBotArm_control_py/controllers/arm_endpos_controller.py
++++ b/reBotArm_control_py/controllers/arm_endpos_controller.py
+@@ -31,6 +31,7 @@ from __future__ import annotations
+
+ import threading
+ import time
++from typing import Callable
+
+ import numpy as np
+
+@@ -127,34 +128,42 @@ class ArmEndPos:
+
+     # ── 公共 API ───────────────────────────────────────────────────────────
+
+-    def safe_home(self, vlim: float | None = None) -> None:
++    def safe_home(
++        self,
++        vlim: float | None = None,
++        state_reader: Callable[[], tuple[np.ndarray, np.ndarray, np.ndarray]] | None = None,
++    ) -> bool:
+         """驱动机械臂以安全速度返回零位。"""
+         if not self._running:
+-            return
++            return False
+         v = self._home_vel if vlim is None else float(vlim)
+         self._vlim_override = np.full(self._n, v, dtype=np.float64)  # safe_home 期间生效，施加统一的速度限制，确保机械臂缓慢回零，避免高速运动可能导致的碰撞或损伤。
+-        self._q_target[:] = 0.0
+-        self._stop_send.set()
+-        # 等待发送线程结束：如果_send_thread 不为 None，说明当前有一个轨迹正在发送，此时调用 safe_home 需要先停止那个轨迹发送线程，确保机械臂不再接收旧轨迹的目标位置指令，安全地回零。
+-        if self._send_thread is not None:
+-            self._send_thread.join()
+-
+-        # 设置回零超时时间，防止无限等待
+-        deadline = time.monotonic() + 30.0
+-        while True:
+-            # 读取当前关节位置
+-            q, _, _ = self.arm.get_state()
+-            # 若所有关节接近零位则退出
+-            if np.max(np.abs(q)) < 0.01:
+-                break
+-            # 超时则退出并提示
+-            if time.monotonic() > deadline:
+-                print("[ArmEndPos] safe_home 超时")
+-                break
+-            # 以控制周期等待，降低 CPU 占用
+-            time.sleep(self._dt)
+-        # 退出回零流程后清除速度限制覆盖
+-        self._vlim_override = None
++        try:
++            self._q_target[:] = 0.0
++            self._stop_send.set()
++            # 等待发送线程结束：如果_send_thread 不为 None，说明当前有一个轨迹正在发送，此时调用 safe_home 需要先停止那个轨迹发送线程，确保机械臂不再接收旧轨迹的目标位置指令，安全地回零。
++            if self._send_thread is not None:
++                self._send_thread.join()
++
++            # 设置回零超时时间，防止无限等待
++            deadline = time.monotonic() + 30.0
++            read_state = self.arm.get_state if state_reader is None else state_reader
++            while True:
++                # 读取当前关节位置
++                q, _, _ = read_state()
++                # 若所有关节接近零位则退出
++                if np.max(np.abs(q)) < 0.01:
++                    return True
++                # 超时则保持当前反馈位置并报告失败。
++                if time.monotonic() > deadline:
++                    print("[ArmEndPos] safe_home 超时")
++                    self._q_target[:] = q
++                    return False
++                # 以控制周期等待，降低 CPU 占用
++                time.sleep(self._dt)
++        finally:
++            # 无论成功、超时还是反馈异常，都不能把回零限速泄漏给后续命令。
++            self._vlim_override = None
+
+     def move_to_ik(
+         self,

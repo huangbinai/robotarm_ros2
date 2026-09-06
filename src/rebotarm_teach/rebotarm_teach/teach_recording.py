@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from rebotarm_motion.trajectory_time_parameterization import parameterize_teach_samples
+from rebotarm_motion.teach_sample_processing import (
+    RetimedTeachPoint,
+    lowpass_filter_teach_samples,
+    resample_teach_samples,
+    retime_teach_samples,
+    smooth_teach_samples,
+)
 
 
 @dataclass(frozen=True)
@@ -51,14 +57,6 @@ class TeachTrajectoryQuality:
     acceleration_limit_rad_s2: float
     max_jerk_rad_s3: float = 0.0
     jerk_limit_rad_s3: float = 999.0
-
-
-@dataclass(frozen=True)
-class RetimedTeachPoint:
-    time_from_start: float
-    positions: tuple[float, ...]
-    source_sample: int
-    velocities: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -634,278 +632,6 @@ def teach_trajectory_quality_to_dict(quality: TeachTrajectoryQuality) -> dict:
         "max_jerk_rad_s3": quality.max_jerk_rad_s3,
         "jerk_limit_rad_s3": quality.jerk_limit_rad_s3,
     }
-
-
-def retime_teach_samples(
-    samples: list[TeachSample],
-    *,
-    replay_speed: float,
-    max_velocity_rad_s: float,
-    max_acceleration_rad_s2: float = 999.0,
-    max_jerk_rad_s3: float = 999.0,
-    initial_delay_sec: float = 0.2,
-    boundary_zero_velocity: bool = True,
-) -> list[RetimedTeachPoint]:
-    if not samples:
-        return []
-    expected_joints = samples[0].joint_names
-    expected_len = len(expected_joints)
-    for index, sample in enumerate(samples):
-        if sample.joint_names != expected_joints:
-            raise ValueError(f"joint_names mismatch at sample {index}")
-        if len(sample.positions) != expected_len:
-            raise ValueError(f"positions length mismatch at sample {index}")
-    speed = max(float(replay_speed), 0.01)
-    velocity_limits = _velocity_limits_for_joints(max_velocity_rad_s, expected_joints)
-    acceleration_limit = max(float(max_acceleration_rad_s2), 0.01)
-    jerk_limit = max(float(max_jerk_rad_s3), 0.01)
-    zero_velocity = tuple(0.0 for _ in samples[0].positions)
-    retimed = [
-        RetimedTeachPoint(
-            time_from_start=max(float(initial_delay_sec), 0.0),
-            positions=tuple(float(v) for v in samples[0].positions),
-            source_sample=0,
-            velocities=zero_velocity,
-        )
-    ]
-    previous = samples[0]
-    previous_velocity = zero_velocity
-    previous_acceleration = zero_velocity
-    elapsed = retimed[0].time_from_start
-    for index, sample in enumerate(samples[1:], start=1):
-        recorded_dt = max(0.0, float(sample.stamp) - float(previous.stamp)) / speed
-        min_velocity_dt = max(
-            (
-                abs(float(current) - float(last)) / velocity_limit
-                for current, last, velocity_limit in zip(sample.positions, previous.positions, velocity_limits)
-            ),
-            default=0.0,
-        )
-        dt = max(recorded_dt, min_velocity_dt, 0.001)
-        delta = tuple(
-            float(current) - float(last)
-            for current, last in zip(sample.positions, previous.positions)
-        )
-        for _ in range(24):
-            velocity = tuple(value / dt for value in delta)
-            acceleration = tuple(
-                (float(current) - float(last)) / dt
-                for current, last in zip(velocity, previous_velocity)
-            )
-            max_acceleration = max((abs(value) for value in acceleration), default=0.0)
-            max_jerk = max(
-                (
-                    abs(float(current) - float(last)) / dt
-                    for current, last in zip(acceleration, previous_acceleration)
-                ),
-                default=0.0,
-            )
-            if (
-                max_acceleration <= acceleration_limit + 1e-12
-                and max_jerk <= jerk_limit + 1e-12
-            ):
-                break
-            dt *= 1.25
-        velocity = tuple(value / dt for value in delta)
-        acceleration = tuple(
-            (float(current) - float(last)) / dt
-            for current, last in zip(velocity, previous_velocity)
-        )
-        elapsed += dt
-        retimed.append(
-            RetimedTeachPoint(
-                time_from_start=elapsed,
-                positions=tuple(float(v) for v in sample.positions),
-                source_sample=index,
-                velocities=velocity,
-            )
-        )
-        previous = sample
-        previous_velocity = velocity
-        previous_acceleration = acceleration
-    if boundary_zero_velocity and retimed:
-        retimed[0] = RetimedTeachPoint(
-            time_from_start=retimed[0].time_from_start,
-            positions=retimed[0].positions,
-            source_sample=retimed[0].source_sample,
-            velocities=zero_velocity,
-        )
-        if len(retimed) > 1:
-            previous_point = retimed[-2]
-            last_point = retimed[-1]
-            prior_acceleration = zero_velocity
-            if len(retimed) > 2:
-                before_previous = retimed[-3]
-                prior_dt = max(previous_point.time_from_start - before_previous.time_from_start, 1e-9)
-                prior_acceleration = tuple(
-                    (float(current) - float(last)) / prior_dt
-                    for current, last in zip(previous_point.velocities, before_previous.velocities)
-                )
-            current_dt = last_point.time_from_start - previous_point.time_from_start
-            adjusted_dt = max(current_dt, 0.001)
-            for _ in range(24):
-                final_acceleration = tuple(
-                    (0.0 - float(value)) / adjusted_dt
-                    for value in previous_point.velocities
-                )
-                max_acceleration = max((abs(value) for value in final_acceleration), default=0.0)
-                max_jerk = max(
-                    (
-                        abs(float(current) - float(last)) / adjusted_dt
-                        for current, last in zip(final_acceleration, prior_acceleration)
-                    ),
-                    default=0.0,
-                )
-                if (
-                    max_acceleration <= acceleration_limit + 1e-12
-                    and max_jerk <= jerk_limit + 1e-12
-                ):
-                    break
-                adjusted_dt *= 1.25
-            adjusted_time = previous_point.time_from_start + adjusted_dt
-            retimed[-1] = RetimedTeachPoint(
-                time_from_start=adjusted_time,
-                positions=last_point.positions,
-                source_sample=last_point.source_sample,
-                velocities=tuple(0.0 for _ in last_point.positions),
-            )
-    return retimed
-
-
-def lowpass_filter_teach_samples(
-    samples: list[TeachSample],
-    *,
-    sample_rate_hz: float,
-    cutoff_hz: float,
-    preserve_start_end: bool = True,
-) -> list[TeachSample]:
-    if len(samples) <= 2:
-        return list(samples)
-    rate = max(float(sample_rate_hz), 1.0)
-    cutoff = max(float(cutoff_hz), 0.01)
-    dt = 1.0 / rate
-    rc = 1.0 / (2.0 * math.pi * cutoff)
-    alpha = dt / (rc + dt)
-    filtered_positions: list[tuple[float, ...]] = [tuple(float(v) for v in samples[0].positions)]
-    for sample in samples[1:]:
-        previous = filtered_positions[-1]
-        filtered_positions.append(
-            tuple(
-                float(last) + alpha * (float(current) - float(last))
-                for current, last in zip(sample.positions, previous)
-            )
-        )
-    backward = [filtered_positions[-1]]
-    for positions in reversed(filtered_positions[:-1]):
-        previous = backward[-1]
-        backward.append(
-            tuple(
-                float(last) + alpha * (float(current) - float(last))
-                for current, last in zip(positions, previous)
-            )
-        )
-    filtered_positions = list(reversed(backward))
-    if preserve_start_end:
-        filtered_positions[0] = samples[0].positions
-        filtered_positions[-1] = samples[-1].positions
-    result: list[TeachSample] = []
-    for sample, positions in zip(samples, filtered_positions):
-        result.append(
-            TeachSample(
-                stamp=sample.stamp,
-                joint_names=sample.joint_names,
-                positions=tuple(float(v) for v in positions),
-                velocities=sample.velocities,
-                efforts=sample.efforts,
-                motor_status=dict(sample.motor_status),
-                arm_state=sample.arm_state,
-            )
-        )
-    return result
-
-
-def smooth_teach_samples(
-    samples: list[TeachSample],
-    *,
-    window: int = 5,
-    preserve_start_end: bool = True,
-) -> list[TeachSample]:
-    if len(samples) <= 2:
-        return list(samples)
-    width = max(int(window), 1)
-    if width % 2 == 0:
-        width += 1
-    radius = width // 2
-    smoothed: list[TeachSample] = []
-    for index, sample in enumerate(samples):
-        if preserve_start_end and index in (0, len(samples) - 1):
-            smoothed.append(sample)
-            continue
-        start = max(0, index - radius)
-        end = min(len(samples), index + radius + 1)
-        segment = samples[start:end]
-        positions = tuple(
-            sum(float(item.positions[joint_index]) for item in segment) / float(len(segment))
-            for joint_index in range(len(sample.positions))
-        )
-        smoothed.append(
-            TeachSample(
-                stamp=sample.stamp,
-                joint_names=sample.joint_names,
-                positions=positions,
-                velocities=sample.velocities,
-                efforts=sample.efforts,
-                motor_status=dict(sample.motor_status),
-                arm_state=sample.arm_state,
-            )
-        )
-    return smoothed
-
-
-def resample_teach_samples(
-    samples: list[TeachSample],
-    *,
-    rate_hz: float = 50.0,
-) -> list[TeachSample]:
-    if len(samples) <= 1:
-        return list(samples)
-    rate = max(float(rate_hz), 1.0)
-    period = 1.0 / rate
-    start_stamp = float(samples[0].stamp)
-    end_stamp = float(samples[-1].stamp)
-    duration = max(0.0, end_stamp - start_stamp)
-    if duration <= 0.0:
-        return list(samples)
-    result: list[TeachSample] = []
-    source_index = 0
-    count = max(int(round(duration / period)), 1)
-    for output_index in range(count + 1):
-        stamp = start_stamp + min(float(output_index) * period, duration)
-        while source_index + 1 < len(samples) and float(samples[source_index + 1].stamp) < stamp:
-            source_index += 1
-        previous = samples[source_index]
-        following = samples[min(source_index + 1, len(samples) - 1)]
-        span = max(float(following.stamp) - float(previous.stamp), 1e-9)
-        alpha = 0.0 if following is previous else (stamp - float(previous.stamp)) / span
-        alpha = min(max(alpha, 0.0), 1.0)
-        positions = tuple(
-            float(a) + (float(b) - float(a)) * alpha
-            for a, b in zip(previous.positions, following.positions)
-        )
-        result.append(
-            TeachSample(
-                stamp=stamp,
-                joint_names=previous.joint_names,
-                positions=positions,
-                velocities=(),
-                efforts=(),
-                motor_status=dict(previous.motor_status),
-                arm_state=previous.arm_state,
-            )
-        )
-    result[0] = samples[0]
-    result[-1] = samples[-1]
-    return result
 
 
 def _has_structural_teach_anomaly(quality: TeachTrajectoryQuality) -> bool:

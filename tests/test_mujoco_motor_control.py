@@ -30,7 +30,7 @@ def test_parameters_come_from_existing_motor_yaml_and_urdf() -> None:
     assert parameters.arm.vel_kp == pytest.approx((0.0125, 0.0125, 0.0125, 0.0008, 0.0008, 0.0008))
     assert parameters.arm.vel_ki == pytest.approx((0.004, 0.004, 0.004, 0.002, 0.002, 0.002))
     assert parameters.arm.velocity_limit == pytest.approx((5, 5, 5, 3, 3, 3))
-    assert parameters.arm.effort_limit == pytest.approx((27, 27, 27, 12.5, 12.5, 12.5))
+    assert parameters.arm.effort_limit == pytest.approx((27, 27, 27, 7, 7, 7))
     assert parameters.arm.rated_torque == pytest.approx((9, 9, 9, 3.5, 3.5, 3.5))
     assert parameters.arm.firmware_to_torque_scale == pytest.approx((200, 200, 200, 500, 500, 500))
     assert parameters.arm.torque_rate_limit_nm_s == pytest.approx((180, 180, 180, 90, 90, 90))

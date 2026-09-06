@@ -37,7 +37,7 @@ class MockLLMProvider(BaseLLMProvider):
         if any(key in normalized for key in ("回到初始位置", "回零", "复位", "回家")):
             return {"tool": "move_home", "arguments": {}, "call_id": "mock_move_home"}
         if "打开夹爪" in normalized or "张开夹爪" in normalized:
-            return {"tool": "open_gripper", "arguments": {"width": 0.09}, "call_id": "mock_open"}
+            return {"tool": "open_gripper", "arguments": {"width": 0.085}, "call_id": "mock_open"}
         if "关闭夹爪" in normalized or "夹紧" in normalized:
             return {"tool": "close_gripper", "arguments": {"max_effort": 0.5}, "call_id": "mock_close"}
         if "停止" in normalized or "急停" in normalized:

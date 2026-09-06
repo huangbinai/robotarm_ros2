@@ -75,6 +75,7 @@ class GravityCompensationCoreTests(unittest.TestCase):
 
     def test_start_gravity_compensation_delegates_to_transition_coordinator(self) -> None:
         manager = HardwareManager.__new__(HardwareManager)
+        manager._connected = True
         manager._enabled = True
         manager._gravity_comp_active = False
         manager._mode_transition = _FakeTransitionCoordinator()
@@ -94,6 +95,7 @@ class GravityCompensationCoreTests(unittest.TestCase):
 
     def test_transition_failure_is_returned_as_runtime_error(self) -> None:
         manager = HardwareManager.__new__(HardwareManager)
+        manager._connected = True
         manager._enabled = True
         manager._gravity_comp_active = False
         manager._mode_transition = _FakeTransitionCoordinator(enter_success=False)

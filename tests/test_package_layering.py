@@ -11,11 +11,23 @@ def test_motion_package_exports_core_modules() -> None:
     import rebotarm_motion.replay_runtime_monitor as replay_runtime_monitor
     import rebotarm_motion.trajectory_safety_monitor as trajectory_safety_monitor
     import rebotarm_motion.trajectory_time_parameterization as trajectory_time_parameterization
+    import rebotarm_motion.teach_sample_processing as teach_sample_processing
 
     assert hasattr(collision_precheck, "CollisionPrechecker")
     assert hasattr(replay_runtime_monitor, "ReplayRuntimeMonitor")
     assert hasattr(trajectory_safety_monitor, "evaluate_replay_tracking")
     assert hasattr(trajectory_time_parameterization, "parameterize_teach_samples")
+    assert hasattr(teach_sample_processing, "retime_teach_samples")
+
+
+def test_calibration_package_owns_calibration_algorithms() -> None:
+    import rebotarm_calibration.handeye_config as handeye_config
+    import rebotarm_calibration.tcp_calibration as tcp_calibration
+    import rebotarm_vision.handeye_config as legacy_handeye_config
+    import rebotarm_vision.tcp_calibration as legacy_tcp_calibration
+
+    assert legacy_handeye_config.HandeyeConfig is handeye_config.HandeyeConfig
+    assert legacy_tcp_calibration.estimate_sample_offset is tcp_calibration.estimate_sample_offset
 
 
 def test_interactive_control_keeps_motion_compatibility_imports() -> None:
@@ -91,6 +103,7 @@ def test_layered_packages_do_not_depend_on_interactive_control_package() -> None
         ROOT / "src/rebotarm_motion/rebotarm_motion",
         ROOT / "src/rebotarm_teach/rebotarm_teach",
         ROOT / "src/rebotarm_teleop/rebotarm_teleop",
+        ROOT / "src/rebotarm_calibration/rebotarm_calibration",
     ]
     sources = [
         source

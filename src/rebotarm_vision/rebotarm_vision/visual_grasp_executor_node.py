@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
+import threading
 import time
 
 import rclpy
@@ -11,8 +13,9 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
-from rebotarm_msgs.msg import GraspCandidateArray, GraspPlan
+from rebotarm_msgs.msg import ArmStatus, GraspCandidateArray, GraspPlan
 from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
+from rebotarm_motion.real_failure_recovery import healthy_enabled_hold
 
 from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices
 from .grasp_preview_sender_node import (
@@ -22,6 +25,7 @@ from .grasp_preview_sender_node import (
 )
 from .gripper_quality import close_contact_success
 from .gripper_policy import GripperPolicyConfig, resolve_gripper_command
+from .freshness import FreshnessTracker
 from .place_task_policy import PlaceTaskConfig, build_place_stages
 from .retreat_policy import RetreatPolicyConfig
 from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage
@@ -66,11 +70,13 @@ class VisualGraspExecutorNode(Node):
     def __init__(self) -> None:
         super().__init__("rebotarm_visual_grasp_executor")
         self._callback_group = ReentrantCallbackGroup()
+        self._execution_lock = threading.Lock()
 
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("input_topic", "/grasp/filtered_plan")
         self.declare_parameter("candidates_topic", "/grasp/filtered_candidates")
         self.declare_parameter("target_frame", "base_link")
+        self.declare_parameter("ee_frame_id", "end_link")
         self.declare_parameter("tcp_offset_xyz", [-0.04, 0.0, 0.0])
         self.declare_parameter("target_base_offset_xyz", [0.0, 0.0, 0.0])
         self.declare_parameter("grasp_base_z_offset_m", 0.0)
@@ -81,20 +87,20 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("min_grasp_z_m", 0.0)
         self.declare_parameter("lift_z_m", 0.04)
         self.declare_parameter("open_before_approach", False)
-        self.declare_parameter("open_position_m", 0.09)
+        self.declare_parameter("open_position_m", 0.085)
         self.declare_parameter("close_position_m", 0.025)
         self.declare_parameter("close_max_effort", 0.4)
         self.declare_parameter("auto_gripper_width", True)
         self.declare_parameter("open_clearance_m", 0.0)
         self.declare_parameter("close_margin_m", 0.012)
         self.declare_parameter("min_open_position_m", 0.035)
-        self.declare_parameter("max_open_position_m", 0.09)
+        self.declare_parameter("max_open_position_m", 0.085)
         self.declare_parameter("min_close_position_m", 0.006)
         self.declare_parameter("max_close_position_m", 0.08)
         self.declare_parameter("auto_gripper_effort", True)
         self.declare_parameter("min_gripper_effort", 0.22)
         self.declare_parameter("max_gripper_effort", 0.60)
-        self.declare_parameter("max_allowed_grasp_width_m", 0.082)
+        self.declare_parameter("max_allowed_grasp_width_m", 0.085)
         self.declare_parameter("close_contact_success_enabled", True)
         self.declare_parameter("close_contact_margin_m", 0.004)
         self.declare_parameter("close_contact_min_closure_delta_m", 0.015)
@@ -126,6 +132,8 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("refresh_plan_at_pregrasp_enabled", True)
         self.declare_parameter("refresh_plan_at_pregrasp_required", True)
         self.declare_parameter("refresh_plan_timeout_sec", 1.0)
+        self.declare_parameter("plan_max_age_sec", 1.5)
+        self.declare_parameter("candidates_max_age_sec", 1.5)
         self.declare_parameter("approach_visual_servo_enabled", False)
         self.declare_parameter("approach_visual_servo_max_iterations", 5)
         self.declare_parameter("approach_visual_servo_max_step_m", 0.02)
@@ -142,17 +150,56 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("place_open_max_effort", 0.25)
         self.declare_parameter("place_retreat_z_m", 0.06)
         self.declare_parameter("trajectory_precheck_enabled", True)
+        self.declare_parameter("failure_recovery_mode", "hold")
+        self.declare_parameter("failure_recovery_status_timeout_sec", 1.0)
+        self.declare_parameter("failure_recovery_return_velocity_scaling", 0.04)
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._input_topic = str(self.get_parameter("input_topic").value)
         self._candidates_topic = str(self.get_parameter("candidates_topic").value)
         self._target_frame = str(self.get_parameter("target_frame").value).strip()
+        self._ee_frame_id = str(self.get_parameter("ee_frame_id").value).strip()
         self._tcp_offset_xyz = self._tuple3("tcp_offset_xyz")
         self._target_base_offset_xyz = self._tuple3("target_base_offset_xyz")
         self._grasp_base_z_offset_m = float(self.get_parameter("grasp_base_z_offset_m").value)
         self._service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
         self._motion_result_timeout_sec = float(self.get_parameter("motion_result_timeout_sec").value)
         self._execution_mode = str(self.get_parameter("execution_mode").value).strip().lower()
+        for name, value in (
+            ("service_timeout_sec", self._service_timeout_sec),
+            ("motion_result_timeout_sec", self._motion_result_timeout_sec),
+        ):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
+        if self._execution_mode not in ("plan_only", "execute", "real"):
+            raise ValueError(
+                "execution_mode must be 'plan_only', 'execute', or 'real'"
+            )
+        self._failure_recovery_mode = (
+            str(self.get_parameter("failure_recovery_mode").value).strip().lower()
+        )
+        if self._failure_recovery_mode not in ("hold", "return_then_disable"):
+            raise ValueError(
+                "failure_recovery_mode must be 'hold' or 'return_then_disable'"
+            )
+        self._failure_recovery_status_timeout_sec = float(
+            self.get_parameter("failure_recovery_status_timeout_sec").value
+        )
+        if (
+            not math.isfinite(self._failure_recovery_status_timeout_sec)
+            or self._failure_recovery_status_timeout_sec <= 0.0
+        ):
+            raise ValueError("failure_recovery_status_timeout_sec must be finite and positive")
+        self._failure_recovery_return_velocity_scaling = float(
+            self.get_parameter("failure_recovery_return_velocity_scaling").value
+        )
+        if (
+            not math.isfinite(self._failure_recovery_return_velocity_scaling)
+            or not 0.0 < self._failure_recovery_return_velocity_scaling <= 1.0
+        ):
+            raise ValueError(
+                "failure_recovery_return_velocity_scaling must be in (0.0, 1.0]"
+            )
         self._stage_waits = {
             "move_to_pregrasp": float(self.get_parameter("pregrasp_wait_sec").value),
             "approach_grasp": float(self.get_parameter("approach_wait_sec").value),
@@ -164,6 +211,7 @@ class VisualGraspExecutorNode(Node):
 
         self._latest_plan: GraspPlan | None = None
         self._latest_candidates: GraspCandidateArray | None = None
+        self._freshness = FreshnessTracker()
         self._plan_revision = 0
         self._last_gripper_reached_position: float | None = None
         self._last_grasp_contact_detected = False
@@ -175,6 +223,9 @@ class VisualGraspExecutorNode(Node):
         self._current_candidate_index = -1
         self._current_attempt_plan: GraspPlan | None = None
         self._running = False
+        self._failure_recovery_start_pose: PoseTarget | None = None
+        self._latest_arm_status: ArmStatus | None = None
+        self._latest_arm_status_monotonic: float | None = None
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
@@ -218,11 +269,28 @@ class VisualGraspExecutorNode(Node):
             f"/{self._arm_namespace}/gripper/grasp",
             callback_group=self._callback_group,
         )
+        self._gripper_stop_client = self.create_client(
+            Trigger,
+            f"/{self._arm_namespace}/gripper/stop",
+            callback_group=self._callback_group,
+        )
+        self._disable_client = self.create_client(
+            Trigger,
+            f"/{self._arm_namespace}/disable",
+            callback_group=self._callback_group,
+        )
         self.create_subscription(GraspPlan, self._input_topic, self._on_plan, 10, callback_group=self._callback_group)
         self.create_subscription(
             GraspCandidateArray,
             self._candidates_topic,
             self._on_candidates,
+            10,
+            callback_group=self._callback_group,
+        )
+        self.create_subscription(
+            ArmStatus,
+            f"/{self._arm_namespace}/arm_status",
+            self._on_arm_status,
             10,
             callback_group=self._callback_group,
         )
@@ -247,22 +315,196 @@ class VisualGraspExecutorNode(Node):
     def _on_plan(self, plan: GraspPlan) -> None:
         if plan.valid:
             self._latest_plan = deepcopy(plan)
+            self._freshness.touch("plan")
             self._plan_revision += 1
+        else:
+            self._latest_plan = None
+            self._freshness.invalidate("plan")
 
     def _on_candidates(self, candidates: GraspCandidateArray) -> None:
         if candidates.candidates:
             self._latest_candidates = deepcopy(candidates)
+            self._freshness.touch("candidates")
+        else:
+            self._latest_candidates = None
+            self._freshness.invalidate("candidates")
+
+    def _on_arm_status(self, status: ArmStatus) -> None:
+        self._latest_arm_status = status
+        self._latest_arm_status_monotonic = time.monotonic()
+
+    def _capture_failure_recovery_start_pose(self) -> PoseTarget | None:
+        if (
+            not self._execution_enabled()
+            or self._failure_recovery_mode != "return_then_disable"
+        ):
+            return None
+        if not self._target_frame or not self._ee_frame_id:
+            self.get_logger().warn(
+                "failure recovery start pose unavailable: target_frame or ee_frame_id is empty"
+            )
+            return None
+        try:
+            tf_msg = self._tf_buffer.lookup_transform(
+                self._target_frame,
+                self._ee_frame_id,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.2),
+            )
+            transform = tf_msg.transform
+            values = (
+                float(transform.translation.x),
+                float(transform.translation.y),
+                float(transform.translation.z),
+                float(transform.rotation.x),
+                float(transform.rotation.y),
+                float(transform.rotation.z),
+                float(transform.rotation.w),
+            )
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError("TF contains a non-finite value")
+            quaternion_norm = math.sqrt(sum(value * value for value in values[3:]))
+            if quaternion_norm <= 1.0e-9:
+                raise ValueError("TF contains a zero-length quaternion")
+            return PoseTarget(position=values[:3], orientation=values[3:])
+        except Exception as exc:
+            self.get_logger().warn(
+                f"failure recovery start pose unavailable: {type(exc).__name__}: {exc}"
+            )
+            return None
+
+    def _wait_for_fresh_arm_status(
+        self,
+        *,
+        after_monotonic: float,
+    ) -> ArmStatus | None:
+        deadline = time.monotonic() + self._failure_recovery_status_timeout_sec
+        while rclpy.ok() and time.monotonic() < deadline:
+            updated = self._latest_arm_status_monotonic
+            if updated is not None and updated >= after_monotonic:
+                return self._latest_arm_status
+            time.sleep(0.02)
+        updated = self._latest_arm_status_monotonic
+        if updated is not None and updated >= after_monotonic:
+            return self._latest_arm_status
+        return None
+
+    def _recover_task_failure(self, failed_stage: str, failure_message: str) -> str:
+        if not self._execution_enabled():
+            return "not_required_in_plan_only_mode"
+
+        stop_ok, stop_message = self._confirm_arm_stopped_for_recovery()
+        status_requested_at = time.monotonic()
+        status = self._wait_for_fresh_arm_status(after_monotonic=status_requested_at)
+        if status is None:
+            return (
+                "status_unavailable_leave_state_unchanged"
+                if stop_ok
+                else f"stop_failed_status_unavailable_leave_state_unchanged:{stop_message}"
+            )
+        if not bool(status.enabled) or not bool(status.control_loop_active):
+            return "controller_not_in_enabled_hold"
+        if not healthy_enabled_hold(status):
+            ok, message = self._call_trigger_service(
+                self._disable_client,
+                "protective disable",
+                self._service_timeout_sec,
+            )
+            return (
+                "critical_status_protective_disable"
+                if ok
+                else f"critical_status_protective_disable_failed:{message}"
+            )
+        if not stop_ok:
+            return (
+                "stop_failed_healthy_enabled_hold_requires_operator_recovery:"
+                f"{stop_message}"
+            )
+        if self._failure_recovery_mode == "hold":
+            return "healthy_enabled_hold_requires_operator_recovery"
+        if self._failure_recovery_start_pose is None:
+            return "start_pose_unavailable_healthy_enabled_hold"
+
+        self.get_logger().warn(
+            "task failure recovery returning to the run start pose: "
+            f"stage={failed_stage}, reason={failure_message}"
+        )
+        return_stage = VisualGraspStage(
+            name="failure_return_to_start",
+            kind="move",
+            pose=self._failure_recovery_start_pose,
+        )
+        returned, return_message = self._call_execute_pose(return_stage)
+        if returned:
+            disabled, disable_message = self._call_trigger_service(
+                self._disable_client,
+                "disable after failure return",
+                self._service_timeout_sec,
+            )
+            return (
+                "returned_to_start_then_disabled"
+                if disabled
+                else f"returned_to_start_disable_failed:{disable_message}"
+            )
+
+        self._request_stop(stop_gripper=not self._last_grasp_contact_detected)
+        status_requested_at = time.monotonic()
+        status = self._wait_for_fresh_arm_status(after_monotonic=status_requested_at)
+        if status is None:
+            return (
+                "return_failed_status_unavailable_leave_state_unchanged:"
+                f"{return_message}"
+            )
+        if not bool(status.enabled) or not bool(status.control_loop_active):
+            return f"return_failed_controller_not_in_enabled_hold:{return_message}"
+        if healthy_enabled_hold(status):
+            return f"return_failed_healthy_enabled_hold:{return_message}"
+        disabled, disable_message = self._call_trigger_service(
+            self._disable_client,
+            "protective disable after failed return",
+            self._service_timeout_sec,
+        )
+        return (
+            f"return_failed_critical_status_protective_disable:{return_message}"
+            if disabled
+            else "return_failed_critical_status_protective_disable_failed:"
+            f"{disable_message}; return={return_message}"
+        )
+
+    def _confirm_arm_stopped_for_recovery(self) -> tuple[bool, str]:
+        results = (
+            self._call_trigger_service(
+                self._motion_stop_client,
+                "motion execution stop",
+                self._service_timeout_sec,
+            ),
+            self._call_trigger_service(
+                self._trajectory_stop_client,
+                "trajectory_stop",
+                self._service_timeout_sec,
+            ),
+        )
+        failures = [message for ok, message in results if not ok]
+        if failures:
+            return False, "; ".join(failures)
+        return True, "; ".join(message for _ok, message in results)
 
     def _execute_visual_grasp(self, _request, response):
-        if self._running:
-            response.success = False
-            response.message = "visual grasp already running"
-            return response
-        if self._latest_plan is None:
-            response.success = False
-            response.message = "no valid grasp plan received"
-            return response
-        self._running = True
+        with self._execution_lock:
+            if self._running:
+                response.success = False
+                response.message = "visual grasp already running"
+                return response
+            if self._latest_plan is None or not self._freshness.is_fresh(
+                "plan", float(self.get_parameter("plan_max_age_sec").value)
+            ):
+                self._latest_plan = None
+                self._latest_candidates = None
+                response.success = False
+                response.message = "no fresh valid grasp plan received"
+                return response
+            self._running = True
+        self._failure_recovery_start_pose = self._capture_failure_recovery_start_pose()
         self._run_counter += 1
         self._current_run_id = self._run_counter
         try:
@@ -304,14 +546,19 @@ class VisualGraspExecutorNode(Node):
                     ),
                 )
                 if decision.request_stop:
-                    self._request_stop()
+                    self._request_stop(
+                        stop_gripper=not self._last_grasp_contact_detected
+                    )
                 if decision.request_safe_retreat:
                     self._request_retry_retreat()
                 if decision.retry:
                     self.get_logger().warn(f"{decision.reason}: {message}")
                     continue
                 response.success = False
-                response.message = f"{failed_stage} failed: {message}"
+                recovery = self._recover_task_failure(failed_stage, message)
+                response.message = (
+                    f"{failed_stage} failed: {message}; recovery={recovery}"
+                )
                 self._log_failure_snapshot(failed_stage, message)
                 return response
             response.success = True
@@ -319,20 +566,29 @@ class VisualGraspExecutorNode(Node):
             self._log_diagnostic("result", "success", response.message)
             return response
         except Exception as exc:
-            self._request_stop()
+            self._request_stop(stop_gripper=not self._last_grasp_contact_detected)
             response.success = False
-            response.message = f"visual grasp failed: {exc}"
+            recovery = self._recover_task_failure("executor", str(exc))
+            response.message = f"visual grasp failed: {exc}; recovery={recovery}"
             self._log_failure_snapshot("executor", str(exc))
             return response
         finally:
             self._current_attempt_plan = None
-            self._running = False
+            self._failure_recovery_start_pose = None
+            with self._execution_lock:
+                self._running = False
 
     def _stop_visual_grasp(self, _request, response):
-        self._running = False
+        with self._execution_lock:
+            was_running = self._running
+            self._running = False
         self._request_stop()
         response.success = True
-        response.message = "visual grasp stop requested"
+        response.message = (
+            "visual grasp stop requested"
+            if was_running
+            else "no visual grasp execution was running"
+        )
         return response
 
     def _build_sequence_from_plan(self, plan: GraspPlan) -> list[VisualGraspStage]:
@@ -390,7 +646,14 @@ class VisualGraspExecutorNode(Node):
             return []
         attempts: list[tuple[int, GraspPlan]] = [(-1, deepcopy(self._latest_plan))]
         candidates = self._latest_candidates
-        if candidates is None or not candidates.candidates:
+        if (
+            candidates is None
+            or not candidates.candidates
+            or not self._freshness.is_fresh(
+                "candidates",
+                float(self.get_parameter("candidates_max_age_sec").value),
+            )
+        ):
             return attempts
         indices = ordered_candidate_indices(
             candidate_count=len(candidates.candidates),
@@ -769,6 +1032,8 @@ class VisualGraspExecutorNode(Node):
         return float(getattr(plan.candidate, "object_length", 0.0) or 0.0)
 
     def _velocity_scaling_for_stage(self, name: str) -> float:
+        if name == "failure_return_to_start":
+            return self._failure_recovery_return_velocity_scaling
         if name == "visual_servo_approach":
             return float(self.get_parameter("approach_velocity_scaling").value)
         if name == "approach_grasp":
@@ -870,9 +1135,33 @@ class VisualGraspExecutorNode(Node):
             time.sleep(0.02)
         return future.done()
 
-    def _request_stop(self) -> None:
+    def _request_stop(self, *, stop_gripper: bool = True) -> None:
         self._request_stop_service(self._motion_stop_client, "motion execution stop")
         self._request_stop_service(self._trajectory_stop_client, "trajectory_stop")
+        if stop_gripper:
+            self._request_stop_service(self._gripper_stop_client, "gripper stop")
+
+    def _call_trigger_service(
+        self,
+        client,
+        label: str,
+        timeout_sec: float,
+    ) -> tuple[bool, str]:
+        try:
+            if not client.wait_for_service(timeout_sec=timeout_sec):
+                return False, f"{label} service unavailable"
+            future = client.call_async(Trigger.Request())
+            deadline = time.monotonic() + max(0.0, timeout_sec)
+            while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if not future.done():
+                return False, f"{label} service call timed out"
+            result = future.result()
+            if result is None:
+                return False, f"{label} returned no result"
+            return bool(result.success), str(result.message)
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
 
     def _request_stop_service(self, client, label: str) -> None:
         try:

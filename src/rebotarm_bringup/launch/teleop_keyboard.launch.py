@@ -26,6 +26,9 @@ def generate_launch_description():
     )
     rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
 
     return LaunchDescription(
         [
@@ -33,7 +36,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_hardware", default_value="false"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
             DeclareLaunchArgument(
@@ -61,6 +64,7 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(use_hardware),
                 parameters=[
+                    controller_safety_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

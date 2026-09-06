@@ -25,7 +25,7 @@ def test_parse_open_gripper_synonym():
 
     assert command.intent == "open_gripper"
     assert command.command == "set_gripper"
-    assert command.params["position"] == 0.09
+    assert command.params["position"] == 0.085
     assert command.need_confirm is False
     assert command.source_text == "请打开夹爪"
 

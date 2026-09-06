@@ -9,7 +9,7 @@ rebotarm_visual_grasp_executor:
     close_margin_m: 0.012
     min_gripper_effort: 0.22
     max_gripper_effort: 0.60
-    max_allowed_grasp_width_m: 0.082
+    max_allowed_grasp_width_m: 0.085
     gripper_grasp_enabled: true
     gripper_grasp_close_force: 0.4
     gripper_grasp_timeout_sec: 8.0

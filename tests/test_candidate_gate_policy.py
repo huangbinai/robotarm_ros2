@@ -17,13 +17,13 @@ def test_candidate_gate_policy_rejects_jaw_width_outside_gripper_range():
         jaw_width_m=0.004,
         grasp_position_xyz=(0.4, 0.0, 0.12),
         object_center_xyz=None,
-        config=CandidateGateConfig(min_jaw_width_m=0.006, max_jaw_width_m=0.082),
+        config=CandidateGateConfig(min_jaw_width_m=0.006, max_jaw_width_m=0.085),
     )
     too_large = evaluate_candidate_gate(
         jaw_width_m=0.095,
         grasp_position_xyz=(0.4, 0.0, 0.12),
         object_center_xyz=None,
-        config=CandidateGateConfig(min_jaw_width_m=0.006, max_jaw_width_m=0.082),
+        config=CandidateGateConfig(min_jaw_width_m=0.006, max_jaw_width_m=0.085),
     )
 
     assert not too_small.accepted

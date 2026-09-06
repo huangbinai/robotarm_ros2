@@ -119,6 +119,10 @@ def generate_launch_description():
     moveit_planning_time = LaunchConfiguration("moveit_planning_time")
     moveit_num_planning_attempts = LaunchConfiguration("moveit_num_planning_attempts")
     plan_only_stage_pause_sec = LaunchConfiguration("plan_only_stage_pause_sec")
+    refresh_plan_at_pregrasp_enabled = LaunchConfiguration("refresh_plan_at_pregrasp_enabled")
+    refresh_plan_at_pregrasp_required = LaunchConfiguration("refresh_plan_at_pregrasp_required")
+    plan_max_age_sec = LaunchConfiguration("plan_max_age_sec")
+    candidates_max_age_sec = LaunchConfiguration("candidates_max_age_sec")
     approach_visual_servo_enabled = LaunchConfiguration("approach_visual_servo_enabled")
     approach_visual_servo_max_iterations = LaunchConfiguration("approach_visual_servo_max_iterations")
     approach_visual_servo_max_step_m = LaunchConfiguration("approach_visual_servo_max_step_m")
@@ -135,6 +139,13 @@ def generate_launch_description():
     place_open_max_effort = LaunchConfiguration("place_open_max_effort")
     place_retreat_z_m = LaunchConfiguration("place_retreat_z_m")
     trajectory_precheck_enabled = LaunchConfiguration("trajectory_precheck_enabled")
+    failure_recovery_mode = LaunchConfiguration("failure_recovery_mode")
+    failure_recovery_status_timeout_sec = LaunchConfiguration(
+        "failure_recovery_status_timeout_sec"
+    )
+    failure_recovery_return_velocity_scaling = LaunchConfiguration(
+        "failure_recovery_return_velocity_scaling"
+    )
 
     interactive_system = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -435,9 +446,11 @@ def generate_launch_description():
                     "execute_gripper": True,
                     "execution_mode": execution_mode,
                     "plan_only_stage_pause_sec": plan_only_stage_pause_sec,
-                    "refresh_plan_at_pregrasp_enabled": False,
-                    "refresh_plan_at_pregrasp_required": False,
+                    "refresh_plan_at_pregrasp_enabled": refresh_plan_at_pregrasp_enabled,
+                    "refresh_plan_at_pregrasp_required": refresh_plan_at_pregrasp_required,
                     "refresh_plan_timeout_sec": 1.0,
+                    "plan_max_age_sec": plan_max_age_sec,
+                    "candidates_max_age_sec": candidates_max_age_sec,
                     "approach_visual_servo_enabled": approach_visual_servo_enabled,
                     "approach_visual_servo_max_iterations": approach_visual_servo_max_iterations,
                     "approach_visual_servo_max_step_m": approach_visual_servo_max_step_m,
@@ -454,6 +467,9 @@ def generate_launch_description():
                     "place_open_max_effort": place_open_max_effort,
                     "place_retreat_z_m": place_retreat_z_m,
                     "trajectory_precheck_enabled": trajectory_precheck_enabled,
+                    "failure_recovery_mode": failure_recovery_mode,
+                    "failure_recovery_status_timeout_sec": failure_recovery_status_timeout_sec,
+                    "failure_recovery_return_velocity_scaling": failure_recovery_return_velocity_scaling,
                 }
             ],
         ),
@@ -525,7 +541,7 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_grasp_z_offsets_m", default_value="[0.0]"),
             DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20"),
             DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006"),
-            DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.082"),
+            DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085"),
             DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0"),
             DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120"),
             DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true"),
@@ -547,7 +563,7 @@ def generate_launch_description():
             DeclareLaunchArgument("close_margin_m", default_value="0.012"),
             DeclareLaunchArgument("min_gripper_effort", default_value="0.22"),
             DeclareLaunchArgument("max_gripper_effort", default_value="0.60"),
-            DeclareLaunchArgument("max_allowed_grasp_width_m", default_value="0.082"),
+            DeclareLaunchArgument("max_allowed_grasp_width_m", default_value="0.085"),
             DeclareLaunchArgument("gripper_grasp_enabled", default_value="true"),
             DeclareLaunchArgument("gripper_grasp_close_force", default_value="0.4"),
             DeclareLaunchArgument("gripper_grasp_timeout_sec", default_value="8.0"),
@@ -563,6 +579,10 @@ def generate_launch_description():
             DeclareLaunchArgument("moveit_planning_time", default_value="8.0"),
             DeclareLaunchArgument("moveit_num_planning_attempts", default_value="5"),
             DeclareLaunchArgument("plan_only_stage_pause_sec", default_value="3.0"),
+            DeclareLaunchArgument("refresh_plan_at_pregrasp_enabled", default_value="true"),
+            DeclareLaunchArgument("refresh_plan_at_pregrasp_required", default_value="true"),
+            DeclareLaunchArgument("plan_max_age_sec", default_value="1.5"),
+            DeclareLaunchArgument("candidates_max_age_sec", default_value="1.5"),
             DeclareLaunchArgument("approach_visual_servo_enabled", default_value="false"),
             DeclareLaunchArgument("approach_visual_servo_max_iterations", default_value="5"),
             DeclareLaunchArgument("approach_visual_servo_max_step_m", default_value="0.02"),
@@ -579,6 +599,23 @@ def generate_launch_description():
             DeclareLaunchArgument("place_open_max_effort", default_value="0.25"),
             DeclareLaunchArgument("place_retreat_z_m", default_value="0.06"),
             DeclareLaunchArgument("trajectory_precheck_enabled", default_value="true"),
+            DeclareLaunchArgument(
+                "failure_recovery_mode",
+                default_value="hold",
+                choices=["hold", "return_then_disable"],
+                description=(
+                    "On a real execution task failure, keep healthy holding torque or "
+                    "return through MoveIt to the run start pose and then disable"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "failure_recovery_status_timeout_sec",
+                default_value="1.0",
+            ),
+            DeclareLaunchArgument(
+                "failure_recovery_return_velocity_scaling",
+                default_value="0.04",
+            ),
             interactive_system,
             visual_ready_startup,
             RegisterEventHandler(

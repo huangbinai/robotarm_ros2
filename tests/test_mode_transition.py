@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 import sys
+import threading
 import types
 
 import numpy as np
@@ -396,6 +397,7 @@ def test_position_control_smoothly_exits_gravity_compensation_first():
     arm = SimpleNamespace(mode="mit", control_loop_active=False)
     manager = HardwareManager.__new__(HardwareManager)
     manager._arm = arm
+    manager._connected = True
     manager._enabled = True
     manager._gravity_comp_active = True
     manager._mode_transition = _TransitionState()
@@ -420,6 +422,10 @@ def test_disable_still_disables_when_smooth_exit_fails():
 
     calls = []
     manager = HardwareManager.__new__(HardwareManager)
+    manager._motor_lifecycle_lock = __import__("threading").RLock()
+    manager._connected = True
+    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._gripper_mot = None
     manager._arm = SimpleNamespace(disable=lambda: calls.append("disable"))
     manager._enabled = True
     manager.stop_gravity_compensation = lambda: (_ for _ in ()).throw(
@@ -427,6 +433,12 @@ def test_disable_still_disables_when_smooth_exit_fails():
     )
     manager._stop_control_loop = lambda: calls.append("stop_control_loop")
     manager.set_state_machine = lambda state: calls.append(state)
+    manager._validated_joint_feedback = lambda **_kwargs: (
+        [], [], [], [0] * 6
+    )
+    manager._validated_gripper_status = lambda **_kwargs: None
+    manager._error_codes = []
+    manager._state_machine = "IDLE"
 
     try:
         manager.disable()
@@ -444,8 +456,13 @@ def test_shutdown_still_disables_when_smooth_exit_fails():
 
     calls = []
     manager = HardwareManager.__new__(HardwareManager)
+    manager._motor_lifecycle_lock = threading.RLock()
     manager._connected = True
     manager._enabled = True
+    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._state_machine = "IDLE"
+    manager._error_codes = []
+    manager._gripper_mot = None
     manager._arm = SimpleNamespace(
         disable=lambda: calls.append("disable"),
         disconnect=lambda: calls.append("disconnect"),
@@ -456,10 +473,18 @@ def test_shutdown_still_disables_when_smooth_exit_fails():
         RuntimeError("transition failed")
     )
     manager._stop_control_loop = lambda: calls.append("stop_control_loop")
+    manager._validated_joint_feedback = lambda **_kwargs: (
+        np.zeros(6), np.zeros(6), np.zeros(6), [0] * 6
+    )
+    manager._validated_gripper_status = lambda **_kwargs: None
 
-    manager.shutdown()
+    assert manager.shutdown() is True
 
     assert "disable" in calls
     assert "disconnect" in calls
     assert manager._connected is False
     assert manager._enabled is False
+    assert manager.lifecycle_state == "DISCONNECTED"
+    assert any(
+        "SHUTDOWN_GRAVITY_STOP_FAILED" in code for code in manager._error_codes
+    )

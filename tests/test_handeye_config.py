@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_load_handeye_config_builds_static_tf_arguments(tmp_path):
     from rebotarm_vision.handeye_config import load_handeye_config
@@ -38,3 +40,22 @@ handeye:
         "end_link",
         "camera_depth_frame",
     ]
+
+
+def test_handeye_config_rejects_non_finite_values(tmp_path):
+    from rebotarm_calibration.handeye_config import load_handeye_config
+
+    config_path = tmp_path / "invalid_handeye.yaml"
+    config_path.write_text(
+        """
+handeye:
+  parent_frame: end_link
+  child_frame: camera_depth_frame
+  translation: {x: .nan, y: 0.0, z: 0.0}
+  rotation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        load_handeye_config(config_path)

@@ -50,6 +50,9 @@ def generate_launch_description():
     mode_transition_params = PathJoinSubstitution(
         [bringup_share, "config", "mode_transition.yaml"]
     )
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
     moveit_config = (
         MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
         .robot_description(file_path="config/rebotarm.urdf")
@@ -85,7 +88,7 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("use_moveit_preview", default_value="false"),
@@ -132,6 +135,7 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(use_hardware),
                 parameters=[mode_transition_params,
+                    controller_safety_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

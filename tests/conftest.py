@@ -162,6 +162,17 @@ def _ensure_ros_stubs() -> None:
             self.source = ""
             self.reason = ""
 
+    class ArmStatus:
+        def __init__(self):
+            self.header = Header()
+            self.mode = ""
+            self.enabled = False
+            self.control_loop_active = False
+            self.state_machine = ""
+            self.joint_names = []
+            self.per_joint_status_code = []
+            self.error_codes = []
+
     class Image:
         def __init__(self):
             self.header = Header()
@@ -220,6 +231,7 @@ def _ensure_ros_stubs() -> None:
     rebotarm_msgs_msg.GraspCandidate = GraspCandidate
     rebotarm_msgs_msg.GraspCandidateArray = GraspCandidateArray
     rebotarm_msgs_msg.GraspPlan = GraspPlan
+    rebotarm_msgs_msg.ArmStatus = ArmStatus
     _module("rebotarm_msgs").msg = rebotarm_msgs_msg
     rebotarm_msgs_srv = _module("rebotarm_msgs.srv")
     rebotarm_msgs_srv.ExecutePose = _Service

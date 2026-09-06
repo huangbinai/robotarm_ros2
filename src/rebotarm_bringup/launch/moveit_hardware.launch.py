@@ -35,6 +35,9 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
 
     demo_launch = PathJoinSubstitution([moveit_share, "launch", "demo.launch.py"])
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
 
     return LaunchDescription(
         [
@@ -50,7 +53,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
@@ -63,6 +66,7 @@ def generate_launch_description():
                 name="reBotArmController",
                 output="screen",
                 parameters=[
+                    controller_safety_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

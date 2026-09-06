@@ -17,7 +17,7 @@ class ArmServices:
         node.create_service(
             Trigger,
             self._service("enable"),
-            self.enable,
+            self._exclusive_callback("arm", "enable", self.enable),
             callback_group=node.slow_group,
         )
         node.create_service(
@@ -29,7 +29,7 @@ class ArmServices:
         node.create_service(
             Trigger,
             self._service("safe_home"),
-            self.safe_home,
+            self._exclusive_callback("arm", "safe_home", self.safe_home),
             callback_group=node.slow_group,
         )
         node.create_service(
@@ -40,49 +40,79 @@ class ArmServices:
         )
         node.create_service(
             Trigger,
+            self._service("gripper/stop"),
+            self.gripper_stop,
+            callback_group=node.reentrant_group,
+        )
+        node.create_service(
+            Trigger,
             self._service("gravity_compensation/start"),
-            self.start_gravity_compensation,
+            self._exclusive_callback(
+                "arm", "start_gravity_compensation", self.start_gravity_compensation
+            ),
             callback_group=node.slow_group,
         )
         node.create_service(
             Trigger,
             self._service("gravity_compensation/stop"),
-            self.stop_gravity_compensation,
+            self._exclusive_callback(
+                "arm", "stop_gravity_compensation", self.stop_gravity_compensation
+            ),
             callback_group=node.slow_group,
         )
         node.create_service(
             SetZero,
             self._service("set_zero"),
-            self.set_zero,
+            self._exclusive_callback("arm", "set_zero", self.set_zero),
             callback_group=node.slow_group,
         )
         node.create_service(
             SetMode,
             self._service("set_mode"),
-            self.set_mode,
+            self._exclusive_callback("arm", "set_mode", self.set_mode),
             callback_group=node.slow_group,
         )
         node.create_service(
             MoveToPoseIK,
             self._service("move_to_pose_ik"),
-            self.move_to_pose_ik,
+            self._exclusive_callback("arm", "move_to_pose_ik", self.move_to_pose_ik),
             callback_group=node.reentrant_group,
         )
         node.create_service(
             SetGripper,
             self._service("gripper/set"),
-            self.set_gripper,
+            self._exclusive_callback("gripper", "set_gripper", self.set_gripper),
             callback_group=node.reentrant_group,
         )
         node.create_service(
             GraspGripper,
             self._service("gripper/grasp"),
-            self.grasp_gripper,
+            self._exclusive_callback("gripper", "grasp_gripper", self.grasp_gripper),
             callback_group=node.reentrant_group,
         )
 
     def _service(self, name: str) -> str:
         return f"/{self._namespace}/{name}"
+
+    def _exclusive_callback(self, resource: str, owner: str, callback):
+        def _wrapped(request, response):
+            lease = self._hardware.command_arbiter.acquire(resource, owner)
+            if lease is None:
+                response.success = False
+                if hasattr(response, "message"):
+                    response.message = (
+                        f"{resource} command busy: "
+                        f"{self._hardware.command_arbiter.owner(resource)}"
+                    )
+                if hasattr(response, "q_solution"):
+                    response.q_solution = []
+                return response
+            try:
+                return callback(request, response)
+            finally:
+                self._hardware.command_arbiter.release(lease)
+
+        return _wrapped
 
     def enable(self, _request, response):
         try:
@@ -97,6 +127,10 @@ class ArmServices:
 
     def disable(self, _request, response):
         try:
+            self._hardware.stop_active_motion()
+            self._hardware.stop_gripper_motion()
+            self._hardware.command_arbiter.force_release("arm")
+            self._hardware.command_arbiter.force_release("gripper")
             self._hardware.disable()
             response.success = True
             response.message = "disabled"
@@ -109,6 +143,7 @@ class ArmServices:
     def trajectory_stop(self, _request, response):
         try:
             self._hardware.stop_active_motion()
+            self._hardware.command_arbiter.force_release("arm")
             response.success = True
             response.message = "trajectory stop requested"
         except Exception as exc:
@@ -119,11 +154,22 @@ class ArmServices:
 
     def safe_home(self, _request, response):
         try:
-            self._hardware.stop_gravity_compensation()
-            self._hardware.ensure_pos_vel_control()
-            self._hardware.endpos_ctrl.safe_home()
+            response.success = bool(self._hardware.safe_home())
+            response.message = (
+                "safe_home complete" if response.success else "safe_home timed out and is holding"
+            )
+        except Exception as exc:
+            response.success = False
+            response.message = str(exc)
+        self._node.publish_arm_status()
+        return response
+
+    def gripper_stop(self, _request, response):
+        try:
+            self._hardware.stop_gripper_motion()
+            self._hardware.command_arbiter.force_release("gripper")
             response.success = True
-            response.message = "safe_home complete"
+            response.message = "gripper motion stopped; neutral release requested"
         except Exception as exc:
             response.success = False
             response.message = str(exc)

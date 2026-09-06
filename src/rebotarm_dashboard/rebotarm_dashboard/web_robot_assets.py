@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 
-DEFAULT_GRIPPER_LIMITS_M = (0.0, 0.09)
+DEFAULT_GRIPPER_LIMITS_M = (0.0, 0.085)
 
 
 def clamp_gripper_opening(position_m: float, limits_m: tuple[float, float]) -> float:

@@ -34,7 +34,7 @@ Ubuntu VM：
 3. 底层 actuator 使用 motor，ctrl 表示力矩/力
 4. 上层 API 仍使用位置目标和夹爪宽度目标
 5. joint1-3 使用 DM4340P，峰值 27 N·m
-6. joint4-6 使用 DM4310 V1.2，峰值 12.5 N·m
+6. joint4-6 使用 DM4310 V1.2，模型 effort 为 7 N·m
 7. POS_VEL 仿真控制器能把位置目标转为 MuJoCo joint torque
 8. 夹爪 MIT 控制器能把开合宽度转为滑动指等效力
 9. reset、reset_home、save_state、restore_state 可用
@@ -46,15 +46,11 @@ Ubuntu VM：
 这部分只用于提交前快速发现代码错误，不是正式运行验收。
 
 ```powershell
-cd "C:\Users\Green Bone\.config\superpowers\worktrees\reBotArmController_ROS2-main\tabletop-scene"
+cd /path/to/reBotArmController_ROS2-main
 python -m pytest tests/test_mujoco_motor_control.py tests/test_mujoco_sim_core.py tests/test_mujoco_model_contract.py tests/test_urdf_to_mjcf.py -q
 ```
 
-当前预期：
-
-```text
-64 passed
-```
+当前预期为所有选定测试通过；具体数量随测试维护而变化。
 
 完整回归：
 
@@ -346,8 +342,8 @@ python -m rebotarm_simulation.mujoco_moveit_acceptance --timeout 30
 模型加载失败：
 检查 robot.xml 是否重新生成，STL 路径是否存在。
 
-joint4-6 力矩仍是 7：
-检查 rebotarm.urdf、reBot-DevArm_fixend.urdf、robot.xml 是否都已更新到 12.5。
+joint4-6 effort 不一致：
+检查 rebotarm.urdf、reBot-DevArm_fixend.urdf、robot.xml 是否都使用当前实机值 7。
 
 机械臂软绵绵：
 这是控制标定问题，优先看 motor_control_calibration.yaml 的 firmware_to_torque_scale、积分限幅和 effort 是否打满。

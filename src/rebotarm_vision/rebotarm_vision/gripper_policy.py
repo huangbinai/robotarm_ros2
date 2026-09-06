@@ -7,18 +7,18 @@ from dataclasses import dataclass
 class GripperPolicyConfig:
     auto_width: bool = True
     auto_effort: bool = True
-    default_open_width_m: float = 0.09
+    default_open_width_m: float = 0.085
     default_close_width_m: float = 0.025
     default_max_effort: float = 0.4
     open_clearance_m: float = 0.0
     close_margin_m: float = 0.012
     min_open_width_m: float = 0.035
-    max_open_width_m: float = 0.09
+    max_open_width_m: float = 0.085
     min_close_width_m: float = 0.006
     max_close_width_m: float = 0.08
     min_effort: float = 0.22
     max_effort: float = 0.60
-    max_allowed_width_m: float = 0.082
+    max_allowed_width_m: float = 0.085
 
 
 @dataclass(frozen=True)

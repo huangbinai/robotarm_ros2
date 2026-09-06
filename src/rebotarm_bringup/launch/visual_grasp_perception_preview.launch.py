@@ -105,7 +105,7 @@ def generate_launch_description():
             DeclareLaunchArgument("candidate_grasp_z_offsets_m", default_value="[0.0]"),
             DeclareLaunchArgument("candidate_max_candidates_per_frame", default_value="20"),
             DeclareLaunchArgument("candidate_min_jaw_width_m", default_value="0.006"),
-            DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.088"),
+            DeclareLaunchArgument("candidate_max_jaw_width_m", default_value="0.085"),
             DeclareLaunchArgument("candidate_min_grasp_z_m", default_value="0.0"),
             DeclareLaunchArgument("candidate_safe_lift_min_z_m", default_value="0.120"),
             DeclareLaunchArgument("candidate_workspace_gate_enabled", default_value="true"),

@@ -103,3 +103,12 @@ def test_feedback_gate_rejects_stale_or_fast_feedback():
             config,
             max_velocity_rad_s=config.enter_max_velocity_rad_s,
         )
+
+
+def test_mode_transition_config_rejects_non_finite_or_negative_values():
+    from rebotarmcontroller.mode_transition_policy import ModeTransitionConfig
+
+    with pytest.raises(ValueError, match="feedback_timeout_sec"):
+        ModeTransitionConfig(feedback_timeout_sec=float("nan"))
+    with pytest.raises(ValueError, match="gravity_kp"):
+        ModeTransitionConfig(gravity_kp=-1.0)

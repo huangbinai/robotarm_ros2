@@ -44,3 +44,10 @@ def test_tool_call_without_unit_is_rejected():
 def test_unknown_tool_is_rejected():
     with pytest.raises(SafetyViolationError, match="not whitelisted"):
         ToolCallParser().parse_json('{"tool":"set_joint_positions","arguments":{}}')
+
+
+def test_non_finite_json_number_is_rejected():
+    with pytest.raises(SafetyViolationError, match="non-finite"):
+        ToolCallParser().parse_json(
+            '{"tool":"move_relative","arguments":{"axis":"z","distance":NaN,"unit":"m"}}'
+        )

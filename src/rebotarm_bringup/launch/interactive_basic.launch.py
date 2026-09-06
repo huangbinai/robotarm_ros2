@@ -29,6 +29,9 @@ def generate_launch_description():
     )
     rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
 
     return LaunchDescription(
         [
@@ -42,7 +45,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
@@ -59,6 +62,7 @@ def generate_launch_description():
                 name="reBotArmController",
                 output="screen",
                 parameters=[
+                    controller_safety_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

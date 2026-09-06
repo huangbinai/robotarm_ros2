@@ -10,7 +10,7 @@ pick_place_demo:
     - intent: "open_gripper"
       command: "set_gripper"
       params:
-        position: 0.09
+        position: 0.085
         max_effort: 0.5
       need_confirm: false
     - intent: "move_named_pose"

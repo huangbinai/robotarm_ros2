@@ -18,6 +18,9 @@ def generate_launch_description():
     mode_transition_params = PathJoinSubstitution(
         [bringup_share, "config", "mode_transition.yaml"]
     )
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
 
     return LaunchDescription(
         [
@@ -30,7 +33,7 @@ def generate_launch_description():
                 default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
             ),
             DeclareLaunchArgument("channel", default_value=""),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             Node(
@@ -39,6 +42,7 @@ def generate_launch_description():
                 name="reBotArmController",
                 output="screen",
                 parameters=[mode_transition_params,
+                    controller_safety_params,
                     {
                         "arm_config": arm_config,
                         "gripper_config": gripper_config,

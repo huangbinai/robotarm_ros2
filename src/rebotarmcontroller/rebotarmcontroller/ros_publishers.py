@@ -56,6 +56,7 @@ class JointStatePublisher:
             pos, vel, effort = self._hardware.get_joint_state()
         except Exception as exc:
             self._node.get_logger().warn(f"joint state read failed: {exc}")
+            self.publish_status()
             return
 
         msg = JointState()
@@ -87,6 +88,7 @@ class JointStatePublisher:
             gripper_msg.torque = float(g_torque)
             gripper_msg.status_code = int(g_status)
             self._gripper_state_publisher.publish(gripper_msg)
+        self.publish_status()
 
     def publish_status(self) -> None:
         msg = ArmStatus()

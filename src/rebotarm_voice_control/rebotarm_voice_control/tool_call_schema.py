@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from .models import IntentCommand, SafetyViolationError, ToolCall
@@ -18,10 +19,25 @@ _WHITELIST = {
     "confirm_action",
     "cancel_task",
 }
+_MAX_TOOL_CALL_JSON_BYTES = 65_536
+
+
+def _reject_json_constant(value: str):
+    raise SafetyViolationError(f"non-finite JSON number is not allowed: {value}")
+
+
+def _finite_number(value: Any, label: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SafetyViolationError(f"{label} must be numeric") from exc
+    if not math.isfinite(number):
+        raise SafetyViolationError(f"{label} must be finite")
+    return number
 
 
 def _distance_to_meters(value: Any, unit: str) -> float:
-    amount = float(value)
+    amount = _finite_number(value, "distance")
     if unit == "m":
         return amount
     if unit == "cm":
@@ -33,13 +49,20 @@ def _distance_to_meters(value: Any, unit: str) -> float:
 
 class ToolCallParser:
     def parse_json(self, payload: str | dict[str, Any]) -> ToolCall:
-        raw = json.loads(payload) if isinstance(payload, str) else dict(payload)
+        if isinstance(payload, str):
+            if len(payload.encode("utf-8")) > _MAX_TOOL_CALL_JSON_BYTES:
+                raise SafetyViolationError("tool call JSON exceeds 65536 bytes")
+            raw = json.loads(payload, parse_constant=_reject_json_constant)
+        else:
+            raw = dict(payload)
         tool = str(raw.get("tool") or raw.get("name") or "")
         if tool not in _WHITELIST:
             raise SafetyViolationError(f"tool is not whitelisted: {tool}")
         arguments = raw.get("arguments", {})
         if isinstance(arguments, str):
-            arguments = json.loads(arguments or "{}")
+            arguments = json.loads(
+                arguments or "{}", parse_constant=_reject_json_constant
+            )
         if not isinstance(arguments, dict):
             raise SafetyViolationError("tool arguments must be a JSON object")
         self._validate(tool, arguments)
@@ -51,7 +74,7 @@ class ToolCallParser:
         if tool == "move_home":
             return IntentCommand("move_home", "safe_home", need_confirm=True)
         if tool == "open_gripper":
-            width = float(args.get("width", 0.09))
+            width = float(args.get("width", 0.085))
             return IntentCommand(
                 "open_gripper",
                 "set_gripper",
@@ -97,6 +120,10 @@ class ToolCallParser:
             if distance_m > 0.05:
                 raise SafetyViolationError("move_relative distance exceeds 0.05 m")
         if tool == "open_gripper" and "width" in arguments:
-            width = float(arguments["width"])
-            if width < 0.0 or width > 0.09:
-                raise SafetyViolationError("open_gripper width must be between 0.0 and 0.09 m")
+            width = _finite_number(arguments["width"], "open_gripper width")
+            if width < 0.0 or width > 0.085:
+                raise SafetyViolationError("open_gripper width must be between 0.0 and 0.085 m")
+        if tool in {"open_gripper", "close_gripper"} and "max_effort" in arguments:
+            effort = _finite_number(arguments["max_effort"], "gripper max_effort")
+            if effort < 0.0 or effort > 1.5:
+                raise SafetyViolationError("gripper max_effort must be between 0.0 and 1.5")

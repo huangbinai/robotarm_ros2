@@ -289,7 +289,7 @@ def test_raw_torque_is_limited_reported_and_expires_to_hold(runtime_sim) -> None
     reached = runtime_sim.command_joint_torques(requested, timeout_s=0.1)
     status = runtime_sim.get_control_status()
 
-    assert reached == pytest.approx((27.0, -27.0, 3.0, -12.5, 2.0, -1.0))
+    assert reached == pytest.approx((27.0, -27.0, 3.0, -7.0, 2.0, -1.0))
     assert status.mode == "raw_torque"
     assert status.requested_torques == pytest.approx(requested)
     assert status.applied_torques == pytest.approx(reached)

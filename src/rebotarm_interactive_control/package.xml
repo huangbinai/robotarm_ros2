@@ -3,7 +3,7 @@
 <package format="3">
   <name>rebotarm_interactive_control</name>
   <version>0.1.0</version>
-  <description>Phase-1 interactive control coordination for reBotArm.</description>
+  <description>Compatibility wrappers for legacy reBotArm interactive-control imports and executables.</description>
   <maintainer email="support@example.com">reBotArm Maintainers</maintainer>
   <license>Apache-2.0</license>
 

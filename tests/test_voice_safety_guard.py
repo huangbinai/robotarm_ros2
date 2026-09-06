@@ -80,3 +80,17 @@ def test_raw_joint_command_is_rejected():
 
     with pytest.raises(SafetyViolationError, match="not whitelisted"):
         guard.validate(command)
+
+
+def test_non_finite_motion_and_gripper_values_are_rejected():
+    config = load_voice_control_config(SRC / "config")
+    guard = SafetyGuard(config)
+
+    with pytest.raises(SafetyViolationError, match="finite"):
+        guard.validate(
+            IntentCommand("move", "move_relative", {"axis": "x", "distance_m": float("nan")})
+        )
+    with pytest.raises(SafetyViolationError, match="finite"):
+        guard.validate(
+            IntentCommand("grip", "set_gripper", {"position": float("inf"), "max_effort": 0.5})
+        )

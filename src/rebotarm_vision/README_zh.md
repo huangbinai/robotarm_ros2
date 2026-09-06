@@ -1,86 +1,89 @@
 # reBotArm 视觉抓取
 
-当前正式抓取链路为 YOLO + GraspNet：
+## 功能定位
+
+本包负责 RGB-D 输入、目标检测、GraspNet 6D 候选、候选筛选、抓取计划显示和抓取执行状态机。正式感知链路为 **YOLO + GraspNet**，硬件运动仍通过 MoveIt、运动层和 `rebotarmcontroller` 完成。
+
+正式数据流：
 
 ```text
-Gemini 2 RGB-D
--> Windows YOLO 检测与目标选择
--> Windows GraspNet baseline 生成 6D 抓取候选
--> /grasp/graspnet_candidates
--> candidate IK / 姿态 / 安全条件筛选
--> /grasp/filtered_plan
--> visual_grasp_executor
--> MoveIt / 夹爪 / 抬升 / 放置
+RGB-D + detections
+  -> GraspNet candidates
+  -> 新鲜度 / 几何 / 工作空间 / 姿态 / IK / 碰撞筛选
+  -> filtered_plan
+  -> plan_only 显示或受控执行
 ```
 
-旧 ordinary grasp 已移除，不再提供 `/grasp/plan` 或 `/grasp/candidates` 回退路线。GraspNet 不可用或没有有效候选时，系统应停止在感知/筛选阶段，不得自动生成简化抓取动作。
+系统不提供“没有 GraspNet 候选时自动生成简化动作”的回退。输入断流、空候选或旧计划都应停止在感知/筛选阶段。
 
-## Windows 感知服务
+## 输入模式
 
-在仓库的 `tools` 目录启动整套服务：
+视觉节点支持两种部署方式：
 
-```powershell
-.\tools\windows_start_grasp_ai_stack.ps1
-```
+- Ubuntu 本地：`camera.type=gemini2`，本地 YOLO，GraspNet 使用 `source_mode=local_backend`；
+- 网络兼容：`camera.type=network_mjpeg`，从 HTTP 获取图像、检测或 GraspNet 候选。
 
-该脚本启动 YOLO 图像服务和 GraspNet bridge。默认 HTTP 服务端口为 `8081`，主要接口包括：
+仓库当前 `camera.yaml` 和 `graspnet_policy.yaml` 的默认值仍是网络兼容模式。切换本地模式时必须显式覆盖配置，并提供本机模型和 GraspNet checkpoint。
 
-```text
-http://<windows-ip>:8081/snapshot.jpg
-http://<windows-ip>:8081/video.mjpg
-http://<windows-ip>:8081/detections.json
-http://<windows-ip>:8081/graspnet_candidates.json
-```
-
-## ROS 2 感知预览
+ROS 构建解释器与视觉推理解释器可以分离：
 
 ```bash
-cd ~/robotarm_ros2
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+export REBOTARM_VISION_PYTHON=/path/to/vision-venv/bin/python
+ros2 launch rebotarm_vision vision.launch.py \
+  camera_config:=/path/to/camera.yaml \
+  handeye_config:=/path/to/handeye.yaml \
+  yolo_model_path:=/path/to/model.engine \
+  yolo_device:=cuda:0
+```
 
+## 主要组件
+
+| 组件 | 职责 |
+| --- | --- |
+| `vision_node.py` | Gemini 2 或网络 RGB-D、CameraInfo、YOLO 检测 |
+| `graspnet_baseline_node.py` | 本地后端或网络候选输入 |
+| `candidate_ik_filter_node.py` | 候选门限、姿态变体、IK、碰撞和评分 |
+| `visual_grasp_marker_node.py` | 候选、TCP、接近轴和夹爪模型显示 |
+| `visual_grasp_executor_node.py` | 预抓取、接近、闭合、抬升、放置、撤退和恢复 |
+| `visual_ready_node.py` | 视觉准备位姿规划和移动 |
+
+## 推荐验证顺序
+
+先启动感知预览：
+
+```bash
 ros2 launch rebotarm_bringup visual_grasp_perception_preview.launch.py
-```
-
-验证候选和筛选结果：
-
-```bash
 ros2 topic echo /grasp/graspnet_candidates --once
 ros2 topic echo /grasp/filtered_plan --once
 ```
 
-## 完整抓取系统
-
-先用只规划模式验证候选、TF、TCP 和 MoveIt 可达性：
+再以只规划模式运行完整管线：
 
 ```bash
 ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
   use_hardware:=false \
-  start_vision:=true \
-  start_graspnet_baseline:=true \
-  graspnet_source_mode:=network \
   execution_mode:=plan_only
 ```
 
-真实机械臂执行必须在确认相机、TF、TCP、候选姿态和运动范围安全后显式启用。不要把 `plan_only` 验证当作实机安全验证。
+确认图像、深度、内参、手眼、TCP、TF、桌面、工作空间、IK 和碰撞结果后，才能进行低速实机测试。`plan_only` 通过不等于实机安全通过。
 
-## 核心组件
+完成分阶段检查后，可用 20 次稳定性测试统计失败阶段：
 
-- `vision_node.py`：接收网络 RGB-D、相机内参和 YOLO 检测结果。
-- `graspnet_baseline_node.py`：接收网络 GraspNet 候选并发布 `/grasp/graspnet_candidates`。
-- `candidate_ik_filter_node.py`：执行 IK、姿态变体、约束和候选评分。
-- `visual_grasp_executor_node.py`：执行预抓取、接近、闭合、抬升、放置和安全撤退状态机。
-- `visual_grasp_marker_node.py`：显示筛选后的抓取位姿和 TCP 信息。
-- `tcp_calibration_node.py`：辅助维护 TCP 偏移。
-
-## 验证
-
-Windows 侧非硬件测试：
-
-```powershell
-python -m pytest tests -q
+```bash
+ros2 run rebotarm_vision rebotarm_visual_grasp_benchmark -- \
+  --attempts 20 \
+  --return-ready-before-each \
+  --wait-enter
 ```
 
-实机稳定性验收使用 `rebotarm_visual_grasp_benchmark --attempts 20 --return-ready-before-each --wait-enter`，按失败阶段统计 20 次抓取结果。
+结果应按 `failed_stage` 分类，不只统计总成功率。
 
-ROS 2 构建和 launch 验证应在 Ubuntu 工作区执行。涉及 `use_hardware:=true`、夹爪闭合或轨迹执行前，必须先完成实机安全检查。
+## 安全约束
+
+- 最大候选和夹爪宽度为 `0.085 m`。
+- 候选与计划默认最大年龄为 `1.5 s`。
+- 执行器只允许一个抓取请求进入状态机。
+- 停止请求必须同时停止机械臂和夹爪步骤。
+- 无有效计划时执行服务返回失败。
+
+配置细节见[视觉七层参数](../../docs/visual_grasp_seven_layer_params.md)，总体状态见[功能状态矩阵](../../docs/feature_status_zh.md)。

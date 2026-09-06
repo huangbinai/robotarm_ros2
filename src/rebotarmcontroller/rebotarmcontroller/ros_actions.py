@@ -9,23 +9,56 @@ from rebotarm_msgs.action import MoveToPose
 from trajectory_msgs.msg import JointTrajectoryPoint
 
 from .conversions import pose_to_xyz_rpy
-
-_FOLLOW_TRAJECTORY_START_TOL = 0.10
-_FOLLOW_TRAJECTORY_SETTLE_TIMEOUT = 2.0
-_FOLLOW_TRAJECTORY_GOAL_TOLERANCE = 0.03
+from .gripper_safety import active_gripper_failure_reason
+from .runtime_parameters import validate_move_to_pose_goal
+from .trajectory_safety import (
+    TrajectorySafetyLimits,
+    interpolate_trajectory,
+    validate_trajectory,
+)
 
 
 class ArmActions:
     def __init__(self, node, hardware, namespace: str) -> None:
         self._node = node
         self._hardware = hardware
+        self._command_arbiter = hardware.command_arbiter
+        self._trajectory_limits = TrajectorySafetyLimits(
+            position_min=np.asarray(
+                node.get_parameter("trajectory_safety.position_min_rad").value
+            ),
+            position_max=np.asarray(
+                node.get_parameter("trajectory_safety.position_max_rad").value
+            ),
+            max_velocity=np.asarray(
+                node.get_parameter("trajectory_safety.max_velocity_rad_s").value
+            ),
+            max_acceleration=np.asarray(
+                node.get_parameter(
+                    "trajectory_safety.max_acceleration_rad_s2"
+                ).value
+            ),
+            start_tolerance_rad=float(
+                node.get_parameter("trajectory_safety.start_tolerance_rad").value
+            ),
+        )
+        self._goal_tolerance_rad = self._positive_parameter(
+            "trajectory_safety.goal_tolerance_rad"
+        )
+        self._settle_timeout_sec = self._positive_parameter(
+            "trajectory_safety.settle_timeout_sec"
+        )
+        self._sample_period_sec = self._positive_parameter(
+            "trajectory_safety.sample_period_sec"
+        )
+        self._goal_leases = {}
         self._namespace = namespace
         self._move_to_pose_server = ActionServer(
             node,
             MoveToPose,
             f"/{namespace}/move_to_pose",
-            execute_callback=self.execute_move_to_pose,
-            goal_callback=self.goal_callback,
+            execute_callback=self._execute_move_to_pose_exclusive,
+            goal_callback=self.arm_goal_callback,
             cancel_callback=self.cancel_move_to_pose,
             callback_group=node.reentrant_group,
         )
@@ -33,8 +66,8 @@ class ArmActions:
             node,
             FollowJointTrajectory,
             f"/{namespace}/follow_joint_trajectory",
-            execute_callback=self.execute_follow_joint_trajectory,
-            goal_callback=self.goal_callback,
+            execute_callback=self._execute_follow_joint_trajectory_exclusive,
+            goal_callback=self.arm_goal_callback,
             cancel_callback=self.cancel_follow_joint_trajectory,
             callback_group=node.reentrant_group,
         )
@@ -42,18 +75,45 @@ class ArmActions:
             node,
             GripperCommand,
             f"/{namespace}/gripper/command",
-            execute_callback=self.execute_gripper_command,
-            goal_callback=self.goal_callback,
+            execute_callback=self._execute_gripper_command_exclusive,
+            goal_callback=self.gripper_goal_callback,
             cancel_callback=self.cancel_gripper_command,
             callback_group=node.reentrant_group,
         )
 
-    def goal_callback(self, _goal_request):
-        return GoalResponse.ACCEPT
+    def _positive_parameter(self, name: str) -> float:
+        value = float(self._node.get_parameter(name).value)
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
+        return value
+
+    def arm_goal_callback(self, _goal_request):
+        if not self._hardware.ready_for_motion:
+            self._node.get_logger().warning(
+                "Rejecting arm motion goal: hardware is not explicitly enabled and ready"
+            )
+            return GoalResponse.REJECT
+        return (
+            GoalResponse.ACCEPT
+            if self._command_arbiter.available("arm")
+            else GoalResponse.REJECT
+        )
+
+    def gripper_goal_callback(self, _goal_request):
+        if not self._hardware.ready_for_motion:
+            self._node.get_logger().warning(
+                "Rejecting gripper motion goal: hardware is not explicitly enabled and ready"
+            )
+            return GoalResponse.REJECT
+        return (
+            GoalResponse.ACCEPT
+            if self._command_arbiter.available("gripper")
+            else GoalResponse.REJECT
+        )
 
     def cancel_move_to_pose(self, _goal_handle):
-        self._hardware.endpos_ctrl._stop_send.set()
-        self._hardware.endpos_ctrl._moving = False
+        self._stop_move_to_pose_motion()
+        self._node.publish_arm_status()
         return CancelResponse.ACCEPT
 
     def cancel_follow_joint_trajectory(self, _goal_handle):
@@ -62,17 +122,41 @@ class ArmActions:
         return CancelResponse.ACCEPT
 
     def cancel_gripper_command(self, _goal_handle):
+        self._hardware.stop_gripper_motion()
         return CancelResponse.ACCEPT
+
+    def _execute_move_to_pose_exclusive(self, goal_handle):
+        lease = self._command_arbiter.acquire("arm", "move_to_pose")
+        if lease is None:
+            result = MoveToPose.Result()
+            goal_handle.abort()
+            result.success = False
+            result.message = f"arm command busy: {self._command_arbiter.owner('arm')}"
+            self._set_move_to_pose_final_pose(result)
+            return result
+        try:
+            self._goal_leases[id(goal_handle)] = lease
+            return self.execute_move_to_pose(goal_handle)
+        finally:
+            self._goal_leases.pop(id(goal_handle), None)
+            if self._command_arbiter.release(lease):
+                self._hardware.set_state_machine("IDLE")
+                self._node.publish_arm_status()
 
     def execute_move_to_pose(self, goal_handle):
         goal = goal_handle.request
         result = MoveToPose.Result()
 
         try:
+            requested_duration = validate_move_to_pose_goal(goal)
+            x, y, z, roll, pitch, yaw = pose_to_xyz_rpy(goal.target_pose)
+            if not np.all(
+                np.isfinite(np.asarray((x, y, z, roll, pitch, yaw), dtype=np.float64))
+            ):
+                raise ValueError("move_to_pose converted target pose must be finite")
             self._hardware.set_state_machine("TRAJ_RUNNING")
             self._node.publish_arm_status()
             self._hardware.ensure_pos_vel_control()
-            x, y, z, roll, pitch, yaw = pose_to_xyz_rpy(goal.target_pose)
             ok = self._hardware.endpos_ctrl.move_to_traj(
                 x,
                 y,
@@ -80,7 +164,7 @@ class ArmActions:
                 roll,
                 pitch,
                 yaw,
-                float(goal.duration),
+                requested_duration,
             )
         except Exception as exc:
             self._hardware.set_state_machine("IDLE")
@@ -88,7 +172,7 @@ class ArmActions:
             goal_handle.abort()
             result.success = False
             result.message = str(exc)
-            result.final_pose = self._hardware.current_pose()
+            self._set_move_to_pose_final_pose(result)
             return result
 
         if not ok:
@@ -97,29 +181,23 @@ class ArmActions:
             goal_handle.abort()
             result.success = False
             result.message = "trajectory planning failed"
-            result.final_pose = self._hardware.current_pose()
+            self._set_move_to_pose_final_pose(result)
             return result
 
         start = time.monotonic()
-        requested_duration = float(goal.duration)
+        motion_deadline = start + requested_duration + self._settle_timeout_sec
         feedback = MoveToPose.Feedback()
         while bool(getattr(self._hardware.endpos_ctrl, "_moving", False)):
-            if goal_handle.is_cancel_requested:
-                self._hardware.endpos_ctrl._stop_send.set()
-                self._hardware.endpos_ctrl._moving = False
-                self._hardware.set_state_machine("IDLE")
-                self._node.publish_arm_status()
-                goal_handle.canceled()
-                result.success = False
-                result.message = "canceled"
-                result.final_pose = self._hardware.current_pose()
+            if self._move_to_pose_interrupted(goal_handle, result):
                 return result
-
-            if self._hardware.state_machine != "TRAJ_RUNNING":
+            if time.monotonic() >= motion_deadline:
+                self._stop_move_to_pose_motion()
                 goal_handle.abort()
                 result.success = False
-                result.message = "preempted"
-                result.final_pose = self._hardware.current_pose()
+                result.message = (
+                    "move_to_pose execution timed out before trajectory sender completed"
+                )
+                self._set_move_to_pose_final_pose(result)
                 return result
 
             feedback.current_pose = self._hardware.current_pose()
@@ -137,13 +215,116 @@ class ArmActions:
             goal_handle.publish_feedback(feedback)
             time.sleep(0.05)
 
+        # Cancellation, explicit stops, and protective disable can all clear
+        # ``_moving``.  Recheck the action state before treating that as normal
+        # trajectory completion.
+        if self._move_to_pose_interrupted(goal_handle, result):
+            return result
+
+        trajectory = list(getattr(self._hardware.endpos_ctrl, "_traj", []))
+        if not trajectory:
+            goal_handle.abort()
+            result.success = False
+            result.message = "move_to_pose completed without a final joint target"
+            self._set_move_to_pose_final_pose(result)
+            return result
+        final_target = np.asarray(trajectory[-1], dtype=np.float64)
+        settle_deadline = time.monotonic() + self._settle_timeout_sec
+        max_error = float("inf")
+        while time.monotonic() < settle_deadline:
+            if self._move_to_pose_interrupted(goal_handle, result):
+                return result
+            positions, _velocities, _effort = self._hardware.get_joint_state()
+            current = np.asarray(positions, dtype=np.float64)
+            if current.shape != final_target.shape or not np.all(np.isfinite(current)):
+                self._stop_move_to_pose_motion()
+                goal_handle.abort()
+                result.success = False
+                result.message = "move_to_pose final joint feedback is invalid"
+                self._set_move_to_pose_final_pose(result)
+                return result
+            max_error = float(np.max(np.abs(current - final_target)))
+            if max_error <= self._goal_tolerance_rad:
+                break
+            time.sleep(0.05)
+        else:
+            self._stop_move_to_pose_motion()
+            goal_handle.abort()
+            result.success = False
+            result.message = (
+                "move_to_pose goal not reached within tolerance "
+                f"(max error {max_error:.3f} rad > "
+                f"{self._goal_tolerance_rad:.3f} rad)"
+            )
+            self._set_move_to_pose_final_pose(result)
+            return result
+
         result.success = True
         result.message = "move_to_pose complete"
-        result.final_pose = self._hardware.current_pose()
+        self._set_move_to_pose_final_pose(result)
         self._hardware.set_state_machine("IDLE")
         self._node.publish_arm_status()
         goal_handle.succeed()
         return result
+
+    def _stop_move_to_pose_motion(self) -> None:
+        self._hardware.endpos_ctrl._stop_send.set()
+        self._hardware.endpos_ctrl._moving = False
+        if self._hardware.ready_for_motion:
+            try:
+                self._hardware.hold_current_position()
+                self._hardware.set_state_machine("IDLE")
+            except Exception as exc:
+                self._node.get_logger().error(
+                    f"move_to_pose stop could not establish position hold: {exc}"
+                )
+
+    def _move_to_pose_interrupted(self, goal_handle, result) -> bool:
+        if goal_handle.is_cancel_requested:
+            self._stop_move_to_pose_motion()
+            self._node.publish_arm_status()
+            goal_handle.canceled()
+            result.success = False
+            result.message = "canceled"
+            self._set_move_to_pose_final_pose(result)
+            return True
+        if (
+            self._hardware.state_machine != "TRAJ_RUNNING"
+            or not self._hardware.ready_for_motion
+            or not self._goal_lease_is_current(goal_handle)
+        ):
+            self._stop_move_to_pose_motion()
+            goal_handle.abort()
+            result.success = False
+            result.message = "preempted or hardware no longer ready"
+            self._set_move_to_pose_final_pose(result)
+            return True
+        return False
+
+    def _set_move_to_pose_final_pose(self, result) -> None:
+        try:
+            result.final_pose = self._hardware.current_pose()
+        except Exception as exc:
+            self._node.get_logger().error(
+                f"move_to_pose final pose unavailable: {exc}"
+            )
+
+    def _execute_follow_joint_trajectory_exclusive(self, goal_handle):
+        lease = self._command_arbiter.acquire("arm", "follow_joint_trajectory")
+        if lease is None:
+            result = FollowJointTrajectory.Result()
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = f"arm command busy: {self._command_arbiter.owner('arm')}"
+            return result
+        try:
+            self._goal_leases[id(goal_handle)] = lease
+            return self.execute_follow_joint_trajectory(goal_handle)
+        finally:
+            self._goal_leases.pop(id(goal_handle), None)
+            if self._command_arbiter.release(lease):
+                self._hardware.set_state_machine("IDLE")
+                self._node.publish_arm_status()
 
     def execute_follow_joint_trajectory(self, goal_handle):
         goal = goal_handle.request
@@ -179,12 +360,12 @@ class ArmActions:
         try:
             self._hardware.ensure_pos_vel_control()
 
-            for target_time, target in zip(sample_times[1:], sample_positions[1:]):
-                if not self._wait_until_time(goal_handle, start + target_time, result):
-                    return result
+            final_time = sample_times[-1]
+            while True:
                 if self._trajectory_stopped(goal_handle, result):
                     return result
-
+                elapsed = min(max(time.monotonic() - start, 0.0), final_time)
+                target = interpolate_trajectory(sample_times, sample_positions, elapsed)
                 self._set_endpos_target(list(trajectory.joint_names), target)
 
                 desired = JointTrajectoryPoint()
@@ -193,6 +374,9 @@ class ArmActions:
                 feedback.actual = self._actual_point(list(trajectory.joint_names))
                 feedback.error = self._error_point(desired, feedback.actual)
                 goal_handle.publish_feedback(feedback)
+                if elapsed >= final_time:
+                    break
+                time.sleep(min(self._sample_period_sec, final_time - elapsed))
             trajectory_done = True
 
             if not trajectory_done:
@@ -206,7 +390,7 @@ class ArmActions:
                 goal_handle,
                 list(trajectory.joint_names),
                 sample_positions[-1],
-                _FOLLOW_TRAJECTORY_GOAL_TOLERANCE,
+                self._goal_tolerance_rad,
                 result,
             )
             if not ok:
@@ -218,12 +402,14 @@ class ArmActions:
                 result.error_string = (
                     "trajectory goal not reached within tolerance "
                     f"(max error {max_error:.3f} rad > "
-                    f"{_FOLLOW_TRAJECTORY_GOAL_TOLERANCE:.3f} rad)"
+                    f"{self._goal_tolerance_rad:.3f} rad)"
                 )
                 return result
             goal_handle.succeed()
             result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
             result.error_string = "follow_joint_trajectory complete"
+            if self._goal_lease_is_current(goal_handle):
+                self._hardware.set_state_machine("IDLE")
             return result
         except Exception as exc:
             self._hardware.hold_current_position()
@@ -231,9 +417,6 @@ class ArmActions:
             result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
             result.error_string = str(exc)
             return result
-        finally:
-            self._hardware.set_state_machine("IDLE")
-            self._node.publish_arm_status()
 
     def _set_endpos_target(self, joint_names: list[str], positions: np.ndarray) -> None:
         if set(joint_names) != set(self._hardware.joint_names):
@@ -259,7 +442,16 @@ class ArmActions:
             result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
             result.error_string = "preempted"
             return True
+        if not self._goal_lease_is_current(goal_handle):
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = "preempted"
+            return True
         return False
+
+    def _goal_lease_is_current(self, goal_handle) -> bool:
+        lease = self._goal_leases.get(id(goal_handle))
+        return lease is None or self._command_arbiter.is_current(lease)
 
     def _current_positions_for(self, joint_names: list[str]) -> np.ndarray:
         if len(joint_names) != len(set(joint_names)):
@@ -281,39 +473,12 @@ class ArmActions:
         points: list[JointTrajectoryPoint],
         current: np.ndarray,
     ) -> tuple[list[float], list[np.ndarray]]:
-        sample_times = [0.0]
-        sample_positions = [current.copy()]
-        last_time = 0.0
-        last_positions = current.copy()
-
-        for index, point in enumerate(points, start=1):
-            if len(point.positions) != len(joint_names):
-                raise ValueError("point.positions length must match joint_names")
-
-            point_time = float(point.time_from_start.sec) + (
-                float(point.time_from_start.nanosec) * 1e-9
-            )
-            if point_time < last_time - 1e-9:
-                raise ValueError("trajectory time_from_start must be nondecreasing")
-            positions = np.array(point.positions, dtype=np.float64)
-
-            if index == 1:
-                start_delta = float(np.max(np.abs(positions - current)))
-                if start_delta > _FOLLOW_TRAJECTORY_START_TOL:
-                    raise ValueError(
-                        "first trajectory point is too far from current joint state "
-                        f"(max delta {start_delta:.3f} rad)"
-                    )
-                if point_time <= 1e-9:
-                    last_positions = current.copy()
-                    continue
-
-            sample_times.append(point_time)
-            sample_positions.append(positions)
-            last_time = point_time
-            last_positions = positions
-
-        return sample_times, sample_positions
+        return validate_trajectory(
+            joint_names,
+            points,
+            current,
+            self._trajectory_limits,
+        )
 
     def _wait_until_time(self, goal_handle, target_time: float, result) -> bool:
         while time.monotonic() < target_time:
@@ -340,7 +505,7 @@ class ArmActions:
         goal_tolerance: float,
         result,
     ) -> tuple[bool, float]:
-        deadline = time.monotonic() + _FOLLOW_TRAJECTORY_SETTLE_TIMEOUT
+        deadline = time.monotonic() + self._settle_timeout_sec
         max_error = float("inf")
         while time.monotonic() < deadline:
             if goal_handle.is_cancel_requested:
@@ -388,6 +553,21 @@ class ArmActions:
             ]
         return point
 
+    def _execute_gripper_command_exclusive(self, goal_handle):
+        lease = self._command_arbiter.acquire("gripper", "gripper_command")
+        if lease is None:
+            result = GripperCommand.Result()
+            goal_handle.abort()
+            result.position = self._hardware.gripper_position_m()
+            result.effort = 0.0
+            result.stalled = False
+            result.reached_goal = False
+            return result
+        try:
+            return self.execute_gripper_command(goal_handle)
+        finally:
+            self._command_arbiter.release(lease)
+
     def execute_gripper_command(self, goal_handle):
         goal = goal_handle.request.command
         result = GripperCommand.Result()
@@ -404,10 +584,12 @@ class ArmActions:
             return result
 
         start = time.monotonic()
+        timeout_sec = max(self._hardware.gripper_target_timeout_sec(), 0.1)
         last_pos = self._hardware.gripper_position_m()
         stalled = False
-        while time.monotonic() - start < 5.0:
+        while time.monotonic() - start < timeout_sec:
             if goal_handle.is_cancel_requested:
+                self._hardware.stop_gripper_motion()
                 goal_handle.canceled()
                 result.position = self._hardware.gripper_position_m()
                 result.effort = self._hardware.get_gripper_state()[2]
@@ -416,7 +598,21 @@ class ArmActions:
                 return result
 
             pos = self._hardware.gripper_position_m()
-            effort = self._hardware.get_gripper_state()[2]
+            _raw_pos, _raw_vel, effort, status_code = (
+                self._hardware.get_gripper_state()
+            )
+            failure = active_gripper_failure_reason(
+                command_error=self._hardware.gripper_command_error,
+                status_code=status_code,
+            )
+            if failure is not None:
+                self._hardware.stop_gripper_motion(failure)
+                goal_handle.abort()
+                result.position = pos
+                result.effort = effort
+                result.stalled = False
+                result.reached_goal = False
+                return result
             reached = self._hardware.gripper_reached_target()
             stalled = abs(pos - last_pos) < 1e-4 and abs(effort) >= float(goal.max_effort)
             feedback.position = pos
@@ -436,5 +632,6 @@ class ArmActions:
         if result.reached_goal:
             goal_handle.succeed()
         else:
+            self._hardware.stop_gripper_motion("gripper action timeout")
             goal_handle.abort()
         return result

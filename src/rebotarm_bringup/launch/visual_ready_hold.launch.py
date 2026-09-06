@@ -23,6 +23,9 @@ def generate_launch_description():
     visual_ready_max_start_delta_rad = LaunchConfiguration("visual_ready_max_start_delta_rad")
     visual_ready_startup_delay_sec = LaunchConfiguration("visual_ready_startup_delay_sec")
     visual_ready_params = PathJoinSubstitution([vision_share, "config", "visual_ready.yaml"])
+    controller_safety_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_safety.yaml"]
+    )
 
     controller = Node(
         package="rebotarmcontroller",
@@ -30,6 +33,7 @@ def generate_launch_description():
         name="reBotArmController",
         output="screen",
         parameters=[
+            controller_safety_params,
             {
                 "arm_config": arm_config,
                 "gripper_config": gripper_config,
@@ -90,7 +94,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("channel", default_value="auto"),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
-            DeclareLaunchArgument("joint_state_rate", default_value="200.0"),
+            DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("visual_ready_joint_positions", default_value="[0.0, -0.1, -0.2, 0.2, 0.0, 0.0]"),

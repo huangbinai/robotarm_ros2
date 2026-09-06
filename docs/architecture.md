@@ -143,6 +143,24 @@ It is responsible for:
 Calibration outputs should be consumed by vision and motion layers through
 configuration or TF, not copied into dashboard or controller code.
 
+### Simulation ownership
+
+`rebotarm_simulation` owns physics backends and simulation-facing adapters.
+
+It is responsible for:
+
+- the backend-neutral simulation protocol and versioned state/action contracts
+- MuJoCo model loading, control runtime, contacts, and scene state
+- Viewer, ROS 2, CLI, Gymnasium, and vector-environment adapters
+- Reach/Pick task runtimes and Sim2Real validation utilities
+- the explicitly named RViz fake controller used for non-physical previews
+
+Front ends depend on the backend-neutral protocol. Native MuJoCo model/data
+handles are exposed only through the rendering and kinematics capability
+adapters. A launch must select exactly one controller backend for a ROS
+namespace; the RViz fake controller and MuJoCo controller must never provide
+the same action and state interfaces simultaneously.
+
 ### Compatibility layer
 
 `rebotarm_interactive_control` is now a compatibility layer.
@@ -204,6 +222,7 @@ rebotarm_vision -> motor SDK
 | `rebotarm_moveit_config` | no | no | configuration only | model/config files only | no |
 | `rebotarm_vision` | no | only through planned execution interfaces | yes, for validation/execution gates | perception assets/models only | no |
 | `rebotarm_calibration` | no | no, except explicit validation tools | no, except validation tools | calibration outputs only | no |
+| `rebotarm_simulation` | no | provides simulated equivalents only | may integrate for acceptance | simulation assets/logs only | no |
 | `rebotarm_interactive_control` | no | no new logic | no new logic | compatibility only | no new logic |
 
 If a package needs authority outside its row, create a small interface in the

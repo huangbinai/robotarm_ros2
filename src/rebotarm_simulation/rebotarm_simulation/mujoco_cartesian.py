@@ -14,10 +14,13 @@ from typing import Literal, Protocol, Sequence
 
 import numpy as np
 
+from .model_contract import ARM_JOINT_NAMES, END_EFFECTOR_SITE_NAME
+from .mujoco_adapters import MujocoKinematicsAdapter
+from .simulation_protocol import SimulationProtocol
+
 
 CartesianFrame = Literal["world", "tool"]
 IkStatus = Literal["converged", "max_iterations", "unreachable", "numerical_failure"]
-_ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
 
 
 def _vector3(values: Sequence[float], label: str) -> tuple[float, float, float]:
@@ -120,24 +123,29 @@ class IkResult:
     reached_rpy_rad: tuple[float, float, float]
 
 
-class _Simulation(Protocol):
-    def _unsafe_viewer_handles(self): ...
-    def command_joint_positions(self, values: Sequence[float]) -> tuple[float, ...]: ...
+class _MujocoSimulation(SimulationProtocol, Protocol):
+    @property
+    def kinematics_adapter(self) -> MujocoKinematicsAdapter: ...
 
 
 class MujocoCartesianController:
     """Damped-least-squares IK adapter for a ``RebotArmMujoco`` instance."""
 
-    def __init__(self, simulation: _Simulation, *, options: IkOptions | None = None) -> None:
+    def __init__(
+        self, simulation: _MujocoSimulation, *, options: IkOptions | None = None
+    ) -> None:
         self._simulation = simulation
         self.options = options or IkOptions()
         self._mj = importlib.import_module("mujoco")
-        self._model, live_data = simulation._unsafe_viewer_handles()
+        self._kinematics = simulation.kinematics_adapter
+        self._model, live_data = self._kinematics.handles()
         self._data = self._mj.MjData(self._model)
-        self._site_id = self._required_id(self._mj.mjtObj.mjOBJ_SITE, "ee_site")
+        self._site_id = self._required_id(
+            self._mj.mjtObj.mjOBJ_SITE, END_EFFECTOR_SITE_NAME
+        )
         self._joint_ids = tuple(
             self._required_id(self._mj.mjtObj.mjOBJ_JOINT, name)
-            for name in _ARM_JOINT_NAMES
+            for name in ARM_JOINT_NAMES
         )
         self._qpos_addresses = np.asarray(
             [int(self._model.jnt_qposadr[joint_id]) for joint_id in self._joint_ids], dtype=int
@@ -157,7 +165,7 @@ class MujocoCartesianController:
         """Solve an incremental pose command without changing live simulation state."""
         if not isinstance(delta, CartesianDelta):
             raise TypeError("delta must be a CartesianDelta")
-        _model, live_data = self._simulation._unsafe_viewer_handles()
+        _model, live_data = self._kinematics.handles()
         if _model is not self._model:
             raise RuntimeError("simulation model changed after Cartesian controller creation")
         self._copy_live_kinematics(live_data)
@@ -185,7 +193,7 @@ class MujocoCartesianController:
         target_position = np.asarray(_vector3(position_m, "position_m"), dtype=float)
         quaternion = _unit_quaternion_wxyz(quaternion_wxyz)
         target_rotation = _rotation_from_quaternion_wxyz(quaternion)
-        _model, live_data = self._simulation._unsafe_viewer_handles()
+        _model, live_data = self._kinematics.handles()
         if _model is not self._model:
             raise RuntimeError("simulation model changed after Cartesian controller creation")
         self._copy_live_kinematics(live_data)

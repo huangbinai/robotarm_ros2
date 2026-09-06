@@ -263,6 +263,42 @@ rebotarm_mujoco_ros_acceptance --timeout 15
 MoveIt 的控制器映射保持为 `/rebotarm/follow_joint_trajectory`。联调时所有
 bringup 必须显式使用 `use_hardware:=false`，且只保留一个该 Action 的服务端。
 
+完整视觉抓取 launch 通过 `simulation_backend` 显式选择仿真控制器，默认值为
+`rviz`。选择 MuJoCo 时使用：
+
+```bash
+ros2 launch rebotarm_bringup visual_grasp_system.launch.py \
+  use_hardware:=false simulation_backend:=mujoco
+```
+
+`simulation_backend:=rviz` 只启动无物理的 RViz fake controller；
+`simulation_backend:=mujoco` 只启动 MuJoCo 物理控制器。两者不会同时提供
+`/rebotarm/follow_joint_trajectory`。
+
+### 强化学习适配器
+
+核心 Reach/Pick 环境不强制依赖 Gymnasium。需要标准 Gymnasium API 时安装可选依赖：
+
+```bash
+python -m pip install -e "src/rebotarm_simulation[rl]"
+```
+
+随后可以显式注册版本化环境，并创建单环境或同步无界面向量环境：
+
+```python
+import gymnasium as gym
+
+from rebotarm_simulation.gym_adapter import register_gymnasium_envs
+from rebotarm_simulation.vector_env import make_headless_vector_env
+
+register_gymnasium_envs()
+env = gym.make("RebotArmReach-v1")
+vector_env = make_headless_vector_env("pick", num_envs=4)
+```
+
+策略与数据集应记录环境的 `schema.identifier`，当前正式合同为
+`rebotarm_reach/v1` 和 `rebotarm_pick/v1`，避免以后字段变化时误用旧模型。
+
 ### MuJoCo 与 MoveIt 的安全双终端接线
 
 终端 1 先启动唯一的 MuJoCo 轨迹服务端：

@@ -7,8 +7,8 @@ import threading
 import time
 from typing import Sequence
 
-from .mujoco_viewer import _close_viewer_then_sim
 from .real2sim_ros_node import build_node_class
+from .viewer_runtime import close_viewer_then_sim
 
 
 def _positive_float(value: str) -> float:
@@ -45,7 +45,7 @@ def main(
             node_factory = build_node_class()
         node = node_factory()
         simulation = node.simulation
-        model, data = simulation._unsafe_viewer_handles()
+        model, data = simulation.render_adapter.handles()
         if launch_passive is None:
             launch_passive = importlib.import_module("mujoco.viewer").launch_passive
 
@@ -88,7 +88,7 @@ def main(
             except Exception:
                 pass
         if simulation is not None:
-            _close_viewer_then_sim(viewer, simulation, model, data)
+            close_viewer_then_sim(viewer, simulation, model, data)
         if node is not None:
             node.destroy_node()
         if rclpy.ok():

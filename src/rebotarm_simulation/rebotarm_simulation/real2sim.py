@@ -10,7 +10,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import yaml
 
-from .mujoco_sim import ARM_JOINT_NAMES
+from .model_contract import ARM_JOINT_NAMES
 
 
 REAL2SIM_MODES = ("mirror", "physics")

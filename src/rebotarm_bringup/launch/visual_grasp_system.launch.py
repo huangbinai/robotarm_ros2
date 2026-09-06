@@ -3,7 +3,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDesc
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -11,6 +11,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     bringup_share = FindPackageShare("rebotarm_bringup")
     vision_share = FindPackageShare("rebotarm_vision")
+    simulation_share = FindPackageShare("rebotarm_simulation")
     grasp_pose_policy_params = PathJoinSubstitution([vision_share, "config", "grasp_pose_policy.yaml"])
     gripper_policy_params = PathJoinSubstitution([vision_share, "config", "gripper_policy.yaml"])
     retry_policy_params = PathJoinSubstitution([vision_share, "config", "retry_policy.yaml"])
@@ -24,6 +25,7 @@ def generate_launch_description():
     arm_namespace = LaunchConfiguration("arm_namespace")
     channel = LaunchConfiguration("channel")
     use_hardware = LaunchConfiguration("use_hardware")
+    simulation_backend = LaunchConfiguration("simulation_backend")
     shutdown_safe_home = LaunchConfiguration("shutdown_safe_home")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
     execution_mode = LaunchConfiguration("execution_mode")
@@ -316,15 +318,51 @@ def generate_launch_description():
         ),
         Node(
             package="rebotarm_simulation",
-            executable="rebotarm_sim_trajectory_controller",
-            name="rebotarm_sim_trajectory_controller",
+            executable="rebotarm_rviz_fake_controller",
+            name="rebotarm_rviz_fake_controller",
             output="screen",
-            condition=UnlessCondition(use_hardware),
+            condition=IfCondition(
+                PythonExpression(
+                    [
+                        "'",
+                        use_hardware,
+                        "' == 'false' and '",
+                        simulation_backend,
+                        "' == 'rviz'",
+                    ]
+                )
+            ),
             parameters=[
                 {
                     "arm_namespace": arm_namespace,
                     "initial_joint_positions": visual_ready_joint_positions,
                 }
+            ],
+        ),
+        Node(
+            package="rebotarm_simulation",
+            executable="rebotarm_mujoco_node",
+            name="rebotarm_mujoco_node",
+            output="screen",
+            condition=IfCondition(
+                PythonExpression(
+                    [
+                        "'",
+                        use_hardware,
+                        "' == 'false' and '",
+                        simulation_backend,
+                        "' == 'mujoco'",
+                    ]
+                )
+            ),
+            parameters=[
+                PathJoinSubstitution([simulation_share, "config", "mujoco_sim.yaml"]),
+                {
+                    "arm_namespace": arm_namespace,
+                    "initial_joint_positions": visual_ready_joint_positions,
+                    "backend": "mujoco",
+                    "headless": True,
+                },
             ],
         ),
         Node(
@@ -426,6 +464,12 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value="auto"),
             DeclareLaunchArgument("use_hardware", default_value="true"),
+            DeclareLaunchArgument(
+                "simulation_backend",
+                default_value="rviz",
+                description="Simulation controller used when use_hardware=false: rviz or mujoco",
+                choices=["rviz", "mujoco"],
+            ),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("execution_mode", default_value="execute"),

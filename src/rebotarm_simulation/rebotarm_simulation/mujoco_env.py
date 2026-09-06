@@ -6,7 +6,9 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from .mujoco_sim import RebotArmMujoco
+from .reach_task import evaluate_reach
+from .rl_schema import REACH_SCHEMA_V1, PolicySchema
+from .simulation_protocol import SimulationProtocol
 from .sim2real.randomization import RandomizationSample
 from .sim2real.schemas import TrajectorySample
 
@@ -36,14 +38,14 @@ class RebotArmReachEnv:
         model_path: str | None = None,
         *,
         config: ReachEnvConfig | None = None,
-        sim_factory: Callable = RebotArmMujoco,
+        sim_factory: Callable[[str | None], SimulationProtocol] | None = None,
     ) -> None:
         self.config = config or ReachEnvConfig()
         if self.config.max_steps <= 0:
             raise ValueError("max_steps must be positive")
         if self.config.physics_steps_per_action <= 0:
             raise ValueError("physics_steps_per_action must be positive")
-        self._sim = sim_factory(model_path)
+        self._sim = _default_sim_factory(model_path) if sim_factory is None else sim_factory(model_path)
         self._target = np.zeros(3, dtype=float)
         self._step_count = 0
         self._randomization_sample: RandomizationSample | None = None
@@ -51,8 +53,12 @@ class RebotArmReachEnv:
         self._action_history: list[np.ndarray] = []
 
     @property
-    def sim(self):
+    def sim(self) -> SimulationProtocol:
         return self._sim
+
+    @property
+    def schema(self) -> PolicySchema:
+        return REACH_SCHEMA_V1
 
     @property
     def target_position(self) -> tuple[float, float, float]:
@@ -99,9 +105,9 @@ class RebotArmReachEnv:
     def step(self, action: Sequence[float]):
         self._advance_action(action)
         obs = self._observation()
-        distance = float(np.linalg.norm(obs["ee_position"] - obs["target_position"]))
-        reward = -distance
-        terminated = distance <= self.config.target_tolerance_m
+        result = evaluate_reach(obs, target_tolerance_m=self.config.target_tolerance_m)
+        reward = result.reward
+        terminated = result.terminated
         truncated = self._step_count >= self.config.max_steps
         info = self._info(obs)
         info["done"] = terminated or truncated
@@ -114,10 +120,11 @@ class RebotArmReachEnv:
         applied_action = self._apply_randomized_action(action_vector)
         current_targets = np.asarray(self._sim.control_targets[:6], dtype=float)
         target = current_targets + applied_action[:6] * self.config.action_scale_rad
-        self._sim.set_joint_position_targets(target)
+        _command_joint_positions(self._sim, target)
         if len(applied_action) >= 7:
             current_width = float(self._sim.control_targets[-2] - self._sim.control_targets[-1])
-            self._sim.set_gripper_width(
+            _command_gripper_width(
+                self._sim,
                 current_width + applied_action[6] * self.config.gripper_action_scale_m
             )
         self._sim.step(self.config.physics_steps_per_action)
@@ -207,12 +214,14 @@ class RebotArmReachEnv:
             "max_contact_force": float(max_contact_force),
         }
 
-    def _info(self, obs: dict[str, np.ndarray | float]) -> dict[str, float | int | bool]:
-        distance = float(np.linalg.norm(obs["ee_position"] - obs["target_position"]))
+    def _info(self, obs: dict[str, np.ndarray | float]) -> dict[str, float | int | bool | str]:
+        result = evaluate_reach(obs, target_tolerance_m=self.config.target_tolerance_m)
         return {
             "step_count": self._step_count,
-            "distance_to_target_m": distance,
-            "is_success": distance <= self.config.target_tolerance_m,
+            "distance_to_target_m": result.distance_to_target_m,
+            "is_success": result.is_success,
+            "schema_version": self.schema.version,
+            "schema_id": self.schema.identifier,
         }
 
     def __enter__(self) -> "RebotArmReachEnv":
@@ -231,3 +240,27 @@ def _finite_action(action: Sequence[float]) -> np.ndarray:
     if not np.isfinite(result).all():
         raise ValueError("action values must be finite")
     return np.clip(result, -1.0, 1.0)
+
+
+def _default_sim_factory(model_path: str | None):
+    # Keep task/schema modules importable on machines that do not install MuJoCo.
+    from .mujoco_sim import RebotArmMujoco
+
+    return RebotArmMujoco(model_path)
+
+
+def _command_joint_positions(simulation, values) -> None:
+    command = getattr(simulation, "command_joint_positions", None)
+    if command is not None:
+        command(values)
+        return
+    # Compatibility for existing test doubles and downstream integrations.
+    simulation.set_joint_position_targets(values)
+
+
+def _command_gripper_width(simulation, width_m: float) -> None:
+    command = getattr(simulation, "command_gripper_width", None)
+    if command is not None:
+        command(width_m)
+        return
+    simulation.set_gripper_width(width_m)

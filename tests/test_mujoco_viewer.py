@@ -33,13 +33,13 @@ class FakeSim:
         self.calls = []
         self.call_threads = []
         self.closed = False
+        self.render_adapter = SimpleNamespace(
+            handles=lambda: (self.viewer_model, self.viewer_data)
+        )
 
     @property
     def control_targets(self):
         return tuple(self.targets) + (self.width / 2.0, -self.width / 2.0)
-
-    def _unsafe_viewer_handles(self):
-        return self.viewer_model, self.viewer_data
 
     def get_state(self):
         return SimpleNamespace(
@@ -138,11 +138,11 @@ class FakeViewer:
         self.texts = texts
 
 
-def test_internal_viewer_handles_reject_closed_simulation():
+def test_render_adapter_rejects_closed_simulation():
     sim = RebotArmMujoco.__new__(RebotArmMujoco)
     sim._closed = True
     with pytest.raises(RuntimeError, match="closed"):
-        sim._unsafe_viewer_handles()
+        _ = sim.render_adapter
 
 
 def test_control_state_selects_six_arm_joints_with_wrapping():

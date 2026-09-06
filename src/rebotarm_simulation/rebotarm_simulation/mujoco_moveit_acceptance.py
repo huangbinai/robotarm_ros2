@@ -7,8 +7,8 @@ import sys
 import time
 from typing import Sequence
 
+from .model_contract import ARM_JOINT_NAMES
 
-ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
 MOVEIT_ACCEPTANCE_TARGET = (0.04, -0.12, -0.12, 0.06, 0.0, 0.0)
 
 

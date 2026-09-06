@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 import math
 import os
-from pathlib import Path
-import sys
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
 import numpy as np
 
-from .motor_control import GripperMitController, PosVelController, load_motor_control_parameters
+from .model_contract import (
+    ARM_JOINT_NAMES,
+    FINGER_JOINT_NAMES,
+    HOME_KEYFRAME_NAME,
+    JOINT_NAMES,
+)
+from .motor_control import (
+    GripperMitController,
+    PosVelController,
+    load_motor_control_parameters_from_files,
+)
+from .mujoco_adapters import MujocoKinematicsAdapter, MujocoRenderAdapter
+from .mujoco_contact_reader import MujocoContactReader
+from .mujoco_model_index import MujocoModelIndex
+from .mujoco_scene_runtime import MujocoSceneRuntime
 from .mujoco_types import (
     ContactInfo,
     ControlStatus,
@@ -21,28 +32,11 @@ from .mujoco_types import (
 )
 from .sim2real.randomization import RandomizationSample
 from .sim_gripper import gripper_joint_positions_for_width
-from .urdf_to_mjcf import actuator_name_for_joint
+from .simulation_config import SimulationConfig
 
 
-ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
-FINGER_JOINT_NAMES = ("left_finger_joint", "right_finger_joint")
-JOINT_NAMES = ARM_JOINT_NAMES + FINGER_JOINT_NAMES
 CONTROL_MODES = ("position", "hold", "gravity_comp", "raw_torque")
 _CONTROL_MODE_ALIASES = {"pos_vel": "position"}
-
-
-def _default_scene_path() -> Path:
-    package_root = Path(__file__).resolve().parents[1]
-    relative = Path("models/rebotarm/scene.xml")
-    candidates = [package_root / relative, Path(sys.prefix) / "share/rebotarm_simulation" / relative]
-    for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(os.pathsep):
-        if prefix:
-            candidates.append(Path(prefix) / "share/rebotarm_simulation" / relative)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    searched = ", ".join(str(candidate) for candidate in candidates)
-    raise FileNotFoundError(f"Could not locate reBotArm MuJoCo scene.xml; searched: {searched}")
 
 
 def _finite_vector(values: Sequence[float], length: int, label: str) -> tuple[float, ...]:
@@ -59,37 +53,18 @@ def _finite_vector(values: Sequence[float], length: int, label: str) -> tuple[fl
     return result
 
 
-def _ordered_bounds(values: Sequence[float], label: str) -> tuple[float, float]:
-    lower, upper = float(values[0]), float(values[1])
-    if lower > upper:
-        raise ValueError(f"{label} lower bound must be <= upper bound")
-    return lower, upper
-
-
-def _bounds2(values: Sequence[Sequence[float]], label: str) -> tuple[tuple[float, float], tuple[float, float]]:
-    bounds = tuple(_finite_vector(item, 2, label) for item in values)
-    if len(bounds) != 2:
-        raise ValueError(f"{label} must contain exactly 2 bounds")
-    return (_ordered_bounds(bounds[0], label), _ordered_bounds(bounds[1], label))
-
-
-def _bounds3(
-    values: Sequence[Sequence[float]], label: str
-) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
-    bounds = tuple(_finite_vector(item, 2, label) for item in values)
-    if len(bounds) != 3:
-        raise ValueError(f"{label} must contain exactly 3 bounds")
-    return (
-        _ordered_bounds(bounds[0], label),
-        _ordered_bounds(bounds[1], label),
-        _ordered_bounds(bounds[2], label),
-    )
-
-
 class RebotArmMujoco:
     joint_names = JOINT_NAMES
 
-    def __init__(self, model_path: str | os.PathLike[str] | None = None) -> None:
+    def __init__(
+        self,
+        model_path: str | os.PathLike[str] | None = None,
+        *,
+        config: SimulationConfig | None = None,
+    ) -> None:
+        if model_path is not None and config is not None:
+            raise ValueError("model_path and config cannot both be supplied")
+        self.config = config or SimulationConfig.default(model_path)
         try:
             self._mj = importlib.import_module("mujoco")
         except (ImportError, ModuleNotFoundError) as exc:
@@ -97,7 +72,7 @@ class RebotArmMujoco:
                 "MuJoCo is required. Install src/rebotarm_simulation/requirements-mujoco.txt "
                 "in the active Python environment."
             ) from exc
-        self.model_path = str(Path(model_path) if model_path is not None else _default_scene_path())
+        self.model_path = str(self.config.model_path)
         self._model = self._mj.MjModel.from_xml_path(self.model_path)
         self._data = self._mj.MjData(self._model)
         self._closed = False
@@ -108,8 +83,12 @@ class RebotArmMujoco:
         }
         self._randomization_sample: RandomizationSample | None = None
         self._randomization_torque_scale = 1.0
-        self._rng = np.random.default_rng()
-        motor_parameters = load_motor_control_parameters(Path(__file__).resolve().parents[3])
+        motor_parameters = load_motor_control_parameters_from_files(
+            self.config.arm_config_path,
+            self.config.gripper_config_path,
+            self.config.motor_calibration_path,
+            self.config.robot_urdf_path,
+        )
         self._motor_parameters = motor_parameters
         self._arm_controller = PosVelController(motor_parameters.arm)
         self._gripper_controller = GripperMitController(motor_parameters.gripper)
@@ -128,28 +107,24 @@ class RebotArmMujoco:
         self._gripper_max_force_n: float | None = None
         self._gripper_control_force = np.zeros(2, dtype=float)
 
-        self._joint_ids = tuple(self._name_id(self._mj.mjtObj.mjOBJ_JOINT, name) for name in JOINT_NAMES)
-        self._actuator_ids = tuple(
-            self._name_id(self._mj.mjtObj.mjOBJ_ACTUATOR, actuator_name_for_joint(name))
-            for name in JOINT_NAMES
+        self._model_index = MujocoModelIndex(self._mj, self._model)
+        self._joint_ids = self._model_index.joint_ids
+        self._actuator_ids = self._model_index.actuator_ids
+        self._ee_site_id = self._model_index.end_effector_site_id
+        self._render_adapter = MujocoRenderAdapter(
+            self._model, self._data, self._ensure_open
         )
-        self._ee_site_id = self._name_id(self._mj.mjtObj.mjOBJ_SITE, "ee_site")
-        self._free_bodies = self._find_free_bodies()
-        # State checkpoint scope is explicit even on MuJoCo releases where
-        # mjSTATE_INTEGRATION already aggregates CTRL and USER. This preserves
-        # commanded controls, applied forces, mocap/userdata/equality state,
-        # plugin state, and the solver integration/warm-start state.
-        self._state_spec = (
-            int(self._mj.mjtState.mjSTATE_INTEGRATION)
-            | int(self._mj.mjtState.mjSTATE_USER)
-            | int(self._mj.mjtState.mjSTATE_CTRL)
+        self._kinematics_adapter = MujocoKinematicsAdapter(
+            self._model, self._data, self._ensure_open
         )
-        self._model_dimensions = tuple(int(value) for value in (
-            self._model.nq, self._model.nv, self._model.na, self._model.nu,
-            self._model.nbody, self._model.njnt, self._model.ngeom,
-            self._mj.mj_stateSize(self._model, self._state_spec),
-        ))
-        self._model_fingerprint = self._fingerprint_model()
+        self._free_bodies = self._model_index.free_bodies
+        self._state_spec = self._model_index.state_spec
+        self._model_dimensions = self._model_index.model_dimensions
+        self._model_fingerprint = self._model_index.model_fingerprint
+        self._contact_reader = MujocoContactReader(self._mj, self._model, self._data)
+        self._scene_runtime = MujocoSceneRuntime(
+            self._mj, self._model, self._data, self._free_bodies
+        )
         self.reset()
 
     @property
@@ -157,15 +132,17 @@ class RebotArmMujoco:
         self._ensure_open()
         return float(self._model.opt.timestep)
 
-    def _unsafe_viewer_handles(self):
-        """Return mutable native handles for the package's viewer adapter.
-
-        The returned MuJoCo objects are only valid while this simulation is
-        open.  Callers must not retain them or mutate physics outside the
-        simulation's owning thread.
-        """
+    @property
+    def render_adapter(self) -> MujocoRenderAdapter:
+        """Return the explicit MuJoCo rendering capability."""
         self._ensure_open()
-        return self._model, self._data
+        return self._render_adapter
+
+    @property
+    def kinematics_adapter(self) -> MujocoKinematicsAdapter:
+        """Return the explicit MuJoCo FK/Jacobian capability."""
+        self._ensure_open()
+        return self._kinematics_adapter
 
     @property
     def control_targets(self) -> tuple[float, ...]:
@@ -266,48 +243,16 @@ class RebotArmMujoco:
         """
         return self.set_mode(mode)
 
-    def _name_id(self, object_type, name: str) -> int:
-        identifier = int(self._mj.mj_name2id(self._model, object_type, name))
-        if identifier < 0:
-            raise ValueError(f"MuJoCo model is missing required {name!r}")
-        return identifier
-
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("MuJoCo simulation is closed")
 
-    def _find_free_bodies(self) -> dict[str, tuple[int, int]]:
-        result: dict[str, tuple[int, int]] = {}
-        free_type = int(self._mj.mjtJoint.mjJNT_FREE)
-        for body_id in range(1, int(self._model.nbody)):
-            joint_start = int(self._model.body_jntadr[body_id])
-            joint_count = int(self._model.body_jntnum[body_id])
-            for joint_id in range(joint_start, joint_start + joint_count):
-                if int(self._model.jnt_type[joint_id]) == free_type:
-                    name = self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_BODY, body_id)
-                    result[str(name)] = (body_id, int(self._model.jnt_qposadr[joint_id]))
-        return result
-
-    def _fingerprint_model(self) -> str:
-        digest = hashlib.sha256()
-        digest.update(repr(self._model_dimensions).encode("ascii"))
-        for values in (
-            self._model.names,
-            self._model.jnt_type,
-            self._model.jnt_qposadr,
-            self._model.jnt_dofadr,
-            self._model.jnt_range,
-            self._model.actuator_trnid,
-            self._model.geom_bodyid,
-        ):
-            digest.update(np.asarray(values).tobytes())
-        digest.update(np.asarray([self._model.opt.timestep], dtype=np.float64).tobytes())
-        return digest.hexdigest()
-
     def reset(self, seed: int | None = None) -> SimulationState:
         self._ensure_open()
-        self._rng = np.random.default_rng(seed)
-        home_key = self._mj.mj_name2id(self._model, self._mj.mjtObj.mjOBJ_KEY, "home")
+        self._scene_runtime.reset_random_generator(seed)
+        home_key = self._mj.mj_name2id(
+            self._model, self._mj.mjtObj.mjOBJ_KEY, HOME_KEYFRAME_NAME
+        )
         if home_key >= 0:
             self._mj.mj_resetDataKeyframe(self._model, self._data, home_key)
         else:
@@ -617,14 +562,7 @@ class RebotArmMujoco:
         for joint_id in self._joint_ids:
             positions.append(float(self._data.qpos[int(self._model.jnt_qposadr[joint_id])]))
             velocities.append(float(self._data.qvel[int(self._model.jnt_dofadr[joint_id])]))
-        object_poses = {
-            name: (
-                *(float(value) for value in self._data.qpos[address : address + 3]),
-                *(float(value) for value in self._data.qpos[address + 4 : address + 7]),
-                float(self._data.qpos[address + 3]),
-            )
-            for name, (_, address) in self._free_bodies.items()
-        }
+        object_poses = self._scene_runtime.object_poses()
         ee_quaternion_wxyz = np.empty(4, dtype=float)
         self._mj.mju_mat2Quat(
             ee_quaternion_wxyz, self._data.site_xmat[self._ee_site_id]
@@ -667,25 +605,7 @@ class RebotArmMujoco:
 
     def get_contacts(self) -> tuple[ContactInfo, ...]:
         self._ensure_open()
-        contacts = []
-        force = np.zeros(6, dtype=float)
-        for index in range(int(self._data.ncon)):
-            contact = self._data.contact[index]
-            geom1, geom2 = int(contact.geom1), int(contact.geom2)
-            body1, body2 = int(self._model.geom_bodyid[geom1]), int(self._model.geom_bodyid[geom2])
-            force.fill(0.0)
-            self._mj.mj_contactForce(self._model, self._data, index, force)
-            contacts.append(ContactInfo(
-                body1=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_BODY, body1) or "world"),
-                body2=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_BODY, body2) or "world"),
-                geom1=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_GEOM, geom1) or f"geom{geom1}"),
-                geom2=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_GEOM, geom2) or f"geom{geom2}"),
-                position=tuple(float(value) for value in contact.pos),
-                force=float(np.linalg.norm(force[:3])),
-                penetration_depth=max(0.0, -float(contact.dist)),
-                normal=tuple(float(value) for value in contact.frame[:3]),
-            ))
-        return tuple(contacts)
+        return self._contact_reader.read()
 
     def save_state(self) -> SavedSimulationState:
         self._ensure_open()
@@ -772,28 +692,12 @@ class RebotArmMujoco:
         zero_velocity: bool = True,
     ) -> tuple[float, ...]:
         self._ensure_open()
-        if body_name not in self._free_bodies:
-            raise ValueError(f"Body {body_name!r} is not a free object")
-        position_values = _finite_vector(position, 3, "position")
-        quaternion = np.asarray(_finite_vector(orientation, 4, "orientation"), dtype=float)
-        norm = float(np.linalg.norm(quaternion))
-        if norm <= 1e-12:
-            raise ValueError("orientation quaternion must have non-zero norm")
-        quaternion /= norm
-        body_id, address = self._free_bodies[body_name]
-        orientation_xyzw = tuple(float(value) for value in quaternion)
-        internal_pose_wxyz = (
-            *position_values,
-            orientation_xyzw[3],
-            *orientation_xyzw[:3],
+        return self._scene_runtime.set_object_pose(
+            body_name,
+            position,
+            orientation,
+            zero_velocity=zero_velocity,
         )
-        self._data.qpos[address : address + 7] = internal_pose_wxyz
-        if zero_velocity:
-            joint_id = int(self._model.body_jntadr[body_id])
-            dof_address = int(self._model.jnt_dofadr[joint_id])
-            self._data.qvel[dof_address : dof_address + 6] = 0.0
-        self._mj.mj_forward(self._model, self._data)
-        return (*position_values, *orientation_xyzw)
 
     def randomize_scene(
         self,
@@ -808,30 +712,11 @@ class RebotArmMujoco:
         ),
     ) -> RandomizedScene:
         self._ensure_open()
-        rng = np.random.default_rng(seed) if seed is not None else self._rng
-        cube_x_bounds, cube_y_bounds = _bounds2(cube_xy_bounds, "cube_xy_bounds")
-        target_x_bounds, target_y_bounds, target_z_bounds = _bounds3(
-            reach_target_bounds, "reach_target_bounds"
-        )
-        cube_position = (
-            float(rng.uniform(*cube_x_bounds)),
-            float(rng.uniform(*cube_y_bounds)),
-            float(cube_z),
-        )
-        target = (
-            float(rng.uniform(*target_x_bounds)),
-            float(rng.uniform(*target_y_bounds)),
-            float(rng.uniform(*target_z_bounds)),
-        )
-        cube_pose = self.set_object_pose(
-            "test_cube",
-            cube_position,
-            (0.0, 0.0, 0.0, 1.0),
-        )
-        return RandomizedScene(
-            cube_pose=cube_pose,
-            reach_target_position=target,
-            seed=seed,
+        return self._scene_runtime.randomize(
+            seed,
+            cube_xy_bounds=cube_xy_bounds,
+            cube_z=cube_z,
+            reach_target_bounds=reach_target_bounds,
         )
 
     def close(self) -> None:

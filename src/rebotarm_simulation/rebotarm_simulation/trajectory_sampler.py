@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import math
 
 
-ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
+from .model_contract import ARM_JOINT_NAMES
 
 
 @dataclass(frozen=True)

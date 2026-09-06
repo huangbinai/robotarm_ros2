@@ -17,6 +17,7 @@ from rebotarm_msgs.msg import JointMotorState
 from rebotarm_msgs.srv import SetGripper
 from trajectory_msgs.msg import JointTrajectory
 
+from .model_contract import JOINT_NAMES
 from .sim_gripper import gripper_joint_positions_for_width
 
 
@@ -28,19 +29,10 @@ class SimTrajectoryControllerNode(Node):
     """RViz-only FollowJointTrajectory server that animates complete joint states."""
 
     def __init__(self) -> None:
-        super().__init__("rebotarm_sim_trajectory_controller")
+        super().__init__("rebotarm_rviz_fake_controller")
         self.declare_parameter(
             "joint_names",
-            [
-                "joint1",
-                "joint2",
-                "joint3",
-                "joint4",
-                "joint5",
-                "joint6",
-                "left_finger_joint",
-                "right_finger_joint",
-            ],
+            list(JOINT_NAMES),
         )
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("publish_rate_hz", 30.0)

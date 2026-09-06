@@ -10,12 +10,16 @@ import xml.etree.ElementTree as ET
 import mujoco
 import yaml
 
+from .model_contract import (
+    END_EFFECTOR_SITE_NAME,
+    FINGER_JOINT_NAMES,
+    JOINT_NAMES,
+    actuator_name_for_joint,
+)
+
 
 PACKAGE_MESH_PREFIX = "package://rebotarm_bringup/description/meshes/"
-JOINTS = [f"joint{index}" for index in range(1, 7)] + [
-    "left_finger_joint",
-    "right_finger_joint",
-]
+JOINTS = list(JOINT_NAMES)
 SUPPORTED_COLLISION_TYPES = {"box", "capsule", "cylinder", "mesh"}
 
 
@@ -29,12 +33,6 @@ def _model_directory(repo_root: Path) -> Path:
 
 def collision_config_path(repo_root: Path) -> Path:
     return repo_root / "src/rebotarm_simulation/config/mujoco_collision.yaml"
-
-
-def actuator_name_for_joint(joint_name: str) -> str:
-    if joint_name in {f"joint{index}" for index in range(1, 7)}:
-        return f"{joint_name}_torque"
-    return f"{joint_name.removesuffix('_joint')}_force"
 
 
 def stage_urdf(source: Path, repo_root: Path, temporary_dir: Path) -> Path:
@@ -297,7 +295,11 @@ def _add_sites(root: ET.Element) -> None:
     end_link = root.find('.//body[@name="end_link"]')
     if end_link is None:
         raise ValueError("converted MJCF is missing end_link")
-    ET.SubElement(end_link, "site", {"name": "ee_site", "pos": "-0.105 0 0", "size": "0.008"})
+    ET.SubElement(
+        end_link,
+        "site",
+        {"name": END_EFFECTOR_SITE_NAME, "pos": "-0.105 0 0", "size": "0.008"},
+    )
     ET.SubElement(
         end_link,
         "site",
@@ -347,7 +349,7 @@ def _add_actuators(root: ET.Element, urdf_root: ET.Element, repo_root: Path) -> 
             raise ValueError(f"URDF joint has no limit: {joint_name}")
         effort = (
             finger_force_limit
-            if joint_name in {"left_finger_joint", "right_finger_joint"}
+            if joint_name in FINGER_JOINT_NAMES
             else float(limit.attrib["effort"])
         )
         ET.SubElement(
@@ -390,8 +392,8 @@ def _add_sensors(root: ET.Element) -> None:
             "actuatorfrc",
             {"name": f"{prefix}_force", "actuator": actuator_name_for_joint(joint_name)},
         )
-    ET.SubElement(sensor, "framepos", {"name": "ee_position", "objtype": "site", "objname": "ee_site"})
-    ET.SubElement(sensor, "framequat", {"name": "ee_orientation", "objtype": "site", "objname": "ee_site"})
+    ET.SubElement(sensor, "framepos", {"name": "ee_position", "objtype": "site", "objname": END_EFFECTOR_SITE_NAME})
+    ET.SubElement(sensor, "framequat", {"name": "ee_orientation", "objtype": "site", "objname": END_EFFECTOR_SITE_NAME})
 
 
 def _canonicalize(root: ET.Element) -> bytes:

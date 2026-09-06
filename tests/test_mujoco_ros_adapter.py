@@ -25,6 +25,11 @@ from rebotarm_simulation.mujoco_ros_node import (
     validate_gripper_width,
     validate_gripper_force,
 )
+from rebotarm_simulation.ros_diagnostics import build_control_diagnostic
+from rebotarm_simulation.trajectory_execution import (
+    ActiveTrajectory as ExecutionActiveTrajectory,
+    GoalSettlingPolicy as ExecutionGoalSettlingPolicy,
+)
 
 
 class _LegacySimulation:
@@ -293,6 +298,61 @@ def test_execution_failure_holds_aborts_and_always_clears_active_token():
     assert not active.busy
 
 
+def test_ros_node_keeps_trajectory_policy_compatibility_exports():
+    assert ActiveTrajectory is ExecutionActiveTrajectory
+    assert GoalSettlingPolicy is ExecutionGoalSettlingPolicy
+
+
+def test_control_diagnostic_is_ros_independent_and_preserves_wire_values():
+    state = SimpleNamespace(joint_positions=(0.1,) * 6)
+    status = SimpleNamespace(
+        mode="position",
+        joint_targets=(0.2,) * 6,
+        saturated=(False, True, False, False, False, False),
+        watchdog_remaining_s=None,
+    )
+    contacts = [SimpleNamespace(force=20.0, penetration_depth=0.002)]
+
+    report = build_control_diagnostic(
+        arm_namespace="rebotarm",
+        configured_rate_hz=30.0,
+        measured_rate_hz=29.5,
+        state=state,
+        status=status,
+        contacts=contacts,
+        max_contact_force_n=200.0,
+        max_contact_penetration_m=0.005,
+    )
+
+    assert report.warning
+    assert report.name == "rebotarm/mujoco_control"
+    assert report.message == "actuator saturation"
+    assert {value.key: value.value for value in report.values} == {
+        "mode": "position",
+        "configured_rate_hz": "30.000",
+        "measured_rate_hz": "29.500",
+        "saturated_actuators": "1",
+        "watchdog_remaining_s": "0.000000",
+        "max_tracking_error_rad": "0.100000",
+        "contact_anomaly": "false",
+    }
+
+
+def test_control_diagnostic_prioritizes_contact_anomaly_message():
+    report = build_control_diagnostic(
+        arm_namespace="arm",
+        configured_rate_hz=30.0,
+        measured_rate_hz=30.0,
+        state=SimpleNamespace(joint_positions=(0.0,) * 6),
+        status={"joint_targets": (0.0,) * 6, "saturated": True},
+        contacts=[SimpleNamespace(force=201.0, penetration_depth=0.0)],
+        max_contact_force_n=200.0,
+        max_contact_penetration_m=0.005,
+    )
+    assert report.warning
+    assert report.message == "contact anomaly"
+
+
 def test_execute_callback_is_synchronous_and_does_not_use_asyncio():
     source = Path("src/rebotarm_simulation/rebotarm_simulation/mujoco_ros_node.py").read_text()
     assert "asyncio" not in source
@@ -354,6 +414,9 @@ def test_gate_timer_and_stop_sim_calls_are_serialized_on_one_sim_lock():
 
 def test_ros_adapter_source_has_required_safe_interfaces_and_no_hardware_imports():
     source = Path("src/rebotarm_simulation/rebotarm_simulation/mujoco_ros_node.py").read_text()
+    execution_source = Path(
+        "src/rebotarm_simulation/rebotarm_simulation/trajectory_execution.py"
+    ).read_text()
     assert "FollowJointTrajectory" in source
     assert 'f"/{self._arm_namespace}/follow_joint_trajectory"' in source
     assert 'f"/{self._arm_namespace}/joint_states"' in source
@@ -375,9 +438,9 @@ def test_ros_adapter_source_has_required_safe_interfaces_and_no_hardware_imports
     assert source.count("self._hold_current_position") >= 3
     assert "ActiveTrajectory(self._lock)" not in source
     assert "GOAL_TOLERANCE_VIOLATED" in source
-    assert "complete_if_active" in source
+    assert "complete_if_active" in execution_source
     assert "apply_with_reason" in source
-    assert "GateOutcome.ACTION_CANCEL" in source
+    assert "GateOutcome.ACTION_CANCEL" in execution_source
     assert "simulation trajectory stopped by service" in source
     assert "type(exc).__name__" in source
     assert "FeedbackRateLimiter" in source

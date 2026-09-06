@@ -8,8 +8,8 @@ import threading
 import time
 from typing import Sequence
 
+from .model_contract import ARM_JOINT_NAMES
 
-ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
 ACCEPTANCE_TARGET = (0.05, -0.10, -0.10, 0.05, 0.0, 0.0)
 
 

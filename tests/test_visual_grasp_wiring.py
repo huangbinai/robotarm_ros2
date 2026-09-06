@@ -318,7 +318,7 @@ def test_visual_grasp_perception_preview_launch_avoids_second_controller_stack()
     assert '"input_topic": graspnet_candidates_topic' in launch_text
     assert "interactive_system.launch.py" not in launch_text
     assert "rebotarm_visual_ready" not in launch_text
-    assert "rebotarm_sim_trajectory_controller" not in launch_text
+    assert "rebotarm_rviz_fake_controller" not in launch_text
     assert "PoseExecutionNode" not in launch_text
     assert "reBotArmController" not in launch_text
     assert "move_group" not in launch_text
@@ -337,7 +337,7 @@ def test_visual_ready_hold_launch_starts_real_controller_without_moveit_stack():
     assert "interactive_system.launch.py" not in launch_text
     assert "move_group" not in launch_text
     assert "PoseExecutionNode" not in launch_text
-    assert "rebotarm_sim_trajectory_controller" not in launch_text
+    assert "rebotarm_rviz_fake_controller" not in launch_text
 
 
 def test_real_perception_sim_execution_launch_uses_independent_sim_namespace():
@@ -378,6 +378,24 @@ def test_sim_trajectory_controller_publishes_gripper_state_for_rviz_finger_links
     assert "self._gripper_state_pub.publish(msg)" in sim_text
     assert 'f"/{namespace}/gripper/state"' in visual_text
     assert "self._latest_gripper_position = float(msg.position)" in visual_text
+
+
+def test_visual_grasp_simulation_backends_are_explicit_and_mutually_exclusive():
+    launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
+    setup_text = _read("src/rebotarm_simulation/setup.py")
+
+    assert '"simulation_backend"' in launch_text
+    assert 'description="Simulation controller used when use_hardware=false: rviz or mujoco"' in launch_text
+    assert 'choices=["rviz", "mujoco"]' in launch_text
+    assert '"\' == \'false\' and \'"' in launch_text
+    assert '"\' == \'rviz\'"' in launch_text
+    assert '"\' == \'mujoco\'"' in launch_text
+    assert 'executable="rebotarm_rviz_fake_controller"' in launch_text
+    assert 'executable="rebotarm_mujoco_node"' in launch_text
+    assert (
+        "rebotarm_rviz_fake_controller = "
+        "rebotarm_simulation.sim_trajectory_controller_node:main"
+    ) in setup_text
 
 
 def test_visual_grasp_system_forwards_hardware_channel_and_disables_on_shutdown():

@@ -9,7 +9,7 @@ from typing import Mapping, Sequence
 from .mujoco_telemetry import TelemetrySnapshot
 
 
-ARM_JOINT_NAMES = tuple(f"joint{index}" for index in range(1, 7))
+from .model_contract import ARM_JOINT_NAMES
 FIGURE_NAMES = ("tracking", "torque")
 
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Sequence
+from typing import Mapping, Sequence
+
+import numpy as np
 
 
 PICK_STAGES = ("approach", "contact", "grasp", "lift", "success", "failure")
@@ -88,6 +90,100 @@ class CubeContactSummary:
 
     def force_closure_candidate(self, max_normal_dot: float) -> bool:
         return self.bilateral_finger_contact and self.finger_normal_dot <= max_normal_dot
+
+
+@dataclass(frozen=True)
+class PickTaskResult:
+    reward: float
+    terminated: bool
+    stage: str
+    failure_reason: str
+    is_success: bool
+    lift_height_m: float
+
+
+class PickTaskRuntime:
+    """Backend-independent Pick episode state and task evaluation."""
+
+    def __init__(self, config: PickTaskConfig) -> None:
+        self.config = config
+        self.reset(initial_cube_z=0.0)
+
+    def reset(self, *, initial_cube_z: float) -> None:
+        self.initial_cube_z = float(initial_cube_z)
+        self.grasp_stable_steps = 0
+        self.lift_stable_steps = 0
+        self.lost_grasp_steps = 0
+        self.ever_grasped = False
+        self.stage = "approach"
+        self.failure_reason = "none"
+
+    def evaluate(
+        self,
+        observation: Mapping[str, object],
+        contacts: CubeContactSummary,
+    ) -> PickTaskResult:
+        force_closure = contacts.force_closure_candidate(self.config.max_finger_normal_dot)
+        grasp_candidate = (
+            force_closure
+            and float(observation["gripper_width"]) <= self.config.max_grasp_width_m
+        )
+        self.grasp_stable_steps = self.grasp_stable_steps + 1 if grasp_candidate else 0
+        grasped = self.grasp_stable_steps >= self.config.grasp_stability_steps
+        self.ever_grasped = self.ever_grasped or grasped
+        if self.ever_grasped and not contacts.bilateral_finger_contact:
+            self.lost_grasp_steps += 1
+        else:
+            self.lost_grasp_steps = 0
+
+        lift_height = float(np.asarray(observation["cube_pose"])[2]) - self.initial_cube_z
+        lifted = lift_height >= self.config.lift_height_m
+        self.lift_stable_steps = self.lift_stable_steps + 1 if lifted and force_closure else 0
+        success = self.lift_stable_steps >= self.config.success_stability_steps
+        self.failure_reason = pick_failure_reason(
+            config=self.config,
+            cube_position=np.asarray(observation["cube_pose"])[0:3],
+            contacts=contacts,
+            ever_grasped=self.ever_grasped,
+            lost_grasp_steps=self.lost_grasp_steps,
+        )
+        failed = self.failure_reason != "none"
+        self.stage = self._resolve_stage(observation, contacts, success, failed)
+        reward = self._reward(observation, contacts, lift_height, success, failed)
+        return PickTaskResult(
+            reward=reward,
+            terminated=success or failed,
+            stage=self.stage,
+            failure_reason=self.failure_reason,
+            is_success=success,
+            lift_height_m=lift_height,
+        )
+
+    def _resolve_stage(self, observation, contacts, success: bool, failed: bool) -> str:
+        if success:
+            return "success"
+        if failed:
+            return "failure"
+        if self.ever_grasped:
+            return "lift"
+        if contacts.force_closure_candidate(self.config.max_finger_normal_dot):
+            return "grasp"
+        if contacts.left_finger_contact or contacts.right_finger_contact:
+            return "contact"
+        distance = float(np.linalg.norm(observation["cube_to_ee"]))
+        return "contact" if distance <= self.config.approach_tolerance_m else "approach"
+
+    def _reward(self, observation, contacts, lift_height, success, failed) -> float:
+        distance = float(np.linalg.norm(observation["cube_to_ee"]))
+        reward = -distance + 2.0 * max(0.0, lift_height)
+        reward += 0.1 * float(contacts.left_finger_contact)
+        reward += 0.1 * float(contacts.right_finger_contact)
+        reward += 0.25 * float(self.ever_grasped)
+        if success:
+            reward += 10.0
+        if failed:
+            reward -= 5.0
+        return float(reward)
 
 
 def summarize_cube_contacts(contacts: Sequence, *, cube_body: str = "test_cube") -> CubeContactSummary:

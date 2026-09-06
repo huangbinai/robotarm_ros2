@@ -30,6 +30,7 @@ setup(
     + install_resources("config/*.yaml")
     + install_resources("launch/*.launch.py"),
     install_requires=["setuptools", "mujoco>=3.3,<4", "numpy>=1.26", "PyYAML>=6"],
+    extras_require={"rl": ["gymnasium>=0.29,<2"]},
     zip_safe=True,
     maintainer="reBotArm Maintainers",
     maintainer_email="support@example.com",
@@ -37,6 +38,8 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
+            "rebotarm_rviz_fake_controller = rebotarm_simulation.sim_trajectory_controller_node:main",
+            # Backward-compatible name; new launch files use the explicit RViz-only name above.
             "rebotarm_sim_trajectory_controller = rebotarm_simulation.sim_trajectory_controller_node:main",
             "rebotarm_mujoco_health = rebotarm_simulation.mujoco_health:main",
             "rebotarm_mujoco_acceptance = rebotarm_simulation.mujoco_acceptance:main",

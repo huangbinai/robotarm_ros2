@@ -8,7 +8,8 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
+from .model_contract import ARM_JOINT_NAMES, HOME_JOINT_POSITIONS
+from .mujoco_sim import RebotArmMujoco
 from .real2sim import (
     JointMappingConfig,
     Real2SimMapper,
@@ -18,7 +19,7 @@ from .real2sim import (
 )
 
 
-HOME = np.asarray((0.0, -0.8, -1.0, 0.3, 0.0, 0.0), dtype=float)
+HOME = np.asarray(HOME_JOINT_POSITIONS, dtype=float)
 AMPLITUDE = np.asarray((0.12, 0.08, 0.08, 0.06, 0.05, 0.08), dtype=float)
 PHASE = np.asarray((0.0, 0.5, 1.0, 1.5, 2.0, 2.5), dtype=float)
 

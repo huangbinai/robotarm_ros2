@@ -84,16 +84,17 @@ class GripperCommand:
     finger_force_n: float
 
 
-def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParameters:
-    root = Path(repo_root)
-    arm_yaml = _read_yaml(root / "src/rebotarm_bringup/config/arm.yaml")
-    gripper_yaml = _read_yaml(root / "src/rebotarm_bringup/config/gripper.yaml")
-    calibration = _read_yaml(
-        root / "src/rebotarm_simulation/config/motor_control_calibration.yaml"
-    )
-    urdf_efforts = _load_urdf_efforts(
-        root / "src/rebotarm_moveit_config/config/rebotarm.urdf"
-    )
+def load_motor_control_parameters_from_files(
+    arm_config_path: str | Path,
+    gripper_config_path: str | Path,
+    calibration_path: str | Path,
+    robot_urdf_path: str | Path,
+) -> MotorControlParameters:
+    """Load controller parameters from explicit, injectable resources."""
+    arm_yaml = _read_yaml(Path(arm_config_path))
+    gripper_yaml = _read_yaml(Path(gripper_config_path))
+    calibration = _read_yaml(Path(calibration_path))
+    urdf_efforts = _load_urdf_efforts(Path(robot_urdf_path))
 
     motor_specs = {
         name: MotorSpec(
@@ -187,6 +188,17 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
             displacement_min_m=float(displacement_range[0]),
             displacement_max_m=float(displacement_range[1]),
         ),
+    )
+
+
+def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParameters:
+    """Compatibility loader for tools/tests that still operate on a repository."""
+    root = Path(repo_root)
+    return load_motor_control_parameters_from_files(
+        root / "src/rebotarm_bringup/config/arm.yaml",
+        root / "src/rebotarm_bringup/config/gripper.yaml",
+        root / "src/rebotarm_simulation/config/motor_control_calibration.yaml",
+        root / "src/rebotarm_moveit_config/config/rebotarm.urdf",
     )
 
 

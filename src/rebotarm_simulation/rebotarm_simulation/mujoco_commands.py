@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import shlex
 
-from .mujoco_sim import ARM_JOINT_NAMES
+from .model_contract import ARM_JOINT_NAMES
 
 
 @dataclass(frozen=True)

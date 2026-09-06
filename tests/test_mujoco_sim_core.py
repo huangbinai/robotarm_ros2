@@ -420,7 +420,7 @@ def test_gripper_public_command_applies_optional_force_limit(runtime_sim) -> Non
 def test_gripper_motor_control_is_clamped_before_viewer_exposes_ctrl(runtime_sim) -> None:
     runtime_sim.reset_home()
     runtime_sim.set_gripper_width(0.09)
-    model, data = runtime_sim._unsafe_viewer_handles()
+    model, data = runtime_sim.render_adapter.handles()
 
     runtime_sim.step()
 
@@ -434,7 +434,7 @@ def test_gripper_motor_control_is_clamped_before_viewer_exposes_ctrl(runtime_sim
 def test_gripper_opening_force_does_not_flip_sign_while_below_target(runtime_sim) -> None:
     runtime_sim.reset_home()
     runtime_sim.set_gripper_width(0.09)
-    _, data = runtime_sim._unsafe_viewer_handles()
+    _, data = runtime_sim.render_adapter.handles()
 
     left_forces = []
     widths = []
@@ -630,7 +630,7 @@ def test_randomize_scene_rejects_invalid_bounds(runtime_sim, kwargs, message: st
 def test_randomization_session_changes_and_restores_model_parameters(runtime_sim) -> None:
     from rebotarm_simulation.sim2real.randomization import RandomizationSample
 
-    model, _data = runtime_sim._unsafe_viewer_handles()
+    model, _data = runtime_sim.render_adapter.handles()
     baseline_mass = np.asarray(model.body_mass).copy()
     baseline_damping = np.asarray(model.dof_damping).copy()
     baseline_friction = np.asarray(model.geom_friction).copy()

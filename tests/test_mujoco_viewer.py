@@ -166,8 +166,7 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
     option.flags[texture] = 0
     option.frame = mujoco.mjtFrame.mjFRAME_BODY
     option.label = mujoco.mjtLabel.mjLABEL_JOINT
-    simulate = SimpleNamespace(ui0_enable=True, ui1_enable=True)
-    viewer = SimpleNamespace(opt=option, _get_sim=lambda: simulate)
+    viewer = SimpleNamespace(opt=option)
 
     mujoco_viewer.configure_viewer_rendering(viewer, collision_visible=False)
 
@@ -178,8 +177,6 @@ def test_project_rendering_restores_stock_shortcut_flags_and_geom_groups():
     assert option.flags[texture] == 1
     assert option.frame == mujoco.mjtFrame.mjFRAME_NONE
     assert option.label == mujoco.mjtLabel.mjLABEL_NONE
-    assert simulate.ui0_enable is False
-    assert simulate.ui1_enable is False
 
     mujoco_viewer.configure_viewer_rendering(
         viewer, collision_visible=True, target_visible=True
@@ -419,7 +416,7 @@ def test_default_overlay_is_compact_and_contains_only_operational_overview():
     text = mujoco_viewer.overlay_text(state)
     for expected in (
         "GRAVITY_COMP", "J3", "+0.200", "+0.250", "+0.050", "0.035/0.040",
-        "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "Tab / F8",
+        "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "M / F8",
         "F6/7/9  F10/11/12  Q",
     ):
         assert expected in text
@@ -571,17 +568,22 @@ def test_fast_gear_scales_joint_and_gripper_jog_rates():
     assert sim.width == pytest.approx(0.04925)
 
 
-def test_tab_cycles_joint_xyz_rpy_and_axis_selection_is_independent():
+def test_m_cycles_joint_xyz_rpy_and_axis_selection_is_independent():
     state = mujoco_viewer.ViewerControlState(selected_joint=2)
-    state = mujoco_viewer.reduce_key(state, "tab")
+    state = mujoco_viewer.reduce_key(state, "m")
     assert state.interaction_mode == "xyz"
     state = mujoco_viewer.reduce_key(state, "x")
     assert state.selected_cartesian_axis == 1
     assert state.selected_joint == 2
-    state = mujoco_viewer.reduce_key(state, "tab")
+    state = mujoco_viewer.reduce_key(state, "m")
     assert state.interaction_mode == "rpy"
-    state = mujoco_viewer.reduce_key(state, "tab")
+    state = mujoco_viewer.reduce_key(state, "m")
     assert state.interaction_mode == "joint"
+
+
+def test_tab_is_left_to_native_viewer_and_does_not_change_input_mode():
+    state = mujoco_viewer.ViewerControlState(interaction_mode="joint")
+    assert mujoco_viewer.reduce_key(state, "tab") == state
 
 
 def test_conflict_free_function_keys_toggle_plots_record_replay_and_clear():
@@ -689,6 +691,60 @@ def test_cartesian_jog_is_rate_limited_and_uses_selected_axis():
     )
     assert controller.calls[0].xyz_m == pytest.approx((0.0, 0.0004, 0.0))
     assert state.ik_status == "converged"
+
+
+@pytest.mark.parametrize(
+    ("interaction_mode", "tolerance", "expected"),
+    (
+        ("xyz", 0.0005, (0.0006, 0.0, 0.0)),
+        ("rpy", 0.002, (0.004, 0.0, 0.0)),
+    ),
+)
+def test_cartesian_jog_accumulates_past_ik_tolerance_and_enters_position(
+    interaction_mode, tolerance, expected
+):
+    sim = FakeSim()
+
+    class FakeCartesian:
+        def __init__(self):
+            self.calls = []
+            self.options = SimpleNamespace(
+                position_tolerance_m=tolerance,
+                orientation_tolerance_rad=tolerance,
+            )
+
+        def command_delta(self, delta):
+            self.calls.append(delta)
+            return SimpleNamespace(
+                success=True,
+                status="converged",
+                position_error_m=0.0,
+                orientation_error_rad=0.0,
+                joint_positions=(0.1,) * 6,
+            )
+
+    controller = FakeCartesian()
+    state = mujoco_viewer.ViewerControlState(
+        interaction_mode=interaction_mode,
+        joint_jog_direction=1,
+        active_mode="hold",
+    )
+    for _ in range(2 if interaction_mode == "rpy" else 3):
+        state = mujoco_viewer.apply_continuous_jog(
+            sim,
+            state,
+            dt=0.01,
+            joint_rate=0.2,
+            gripper_rate=0.02,
+            cartesian_controller=controller,
+        )
+
+    assert len(controller.calls) == 1
+    delta = controller.calls[0]
+    actual = delta.xyz_m if interaction_mode == "xyz" else delta.rpy_rad
+    assert actual == pytest.approx(expected)
+    assert sim.control_mode == "position"
+    assert state.active_mode == "position"
 
 
 def test_refresh_updates_live_cartesian_actual_values():

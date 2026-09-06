@@ -27,7 +27,7 @@ from .mujoco_visualization import GhostArmOverlay, TelemetryFigures
 
 
 HELP = (
-    "Tab JOINT/XYZ/RPY | Z/X select | J/K start jog | C/O gripper | S stop\n"
+    "M JOINT/XYZ/RPY | Z/X select | J/K start jog | C/O gripper | S stop\n"
     "-/+ speed | G gravity | H hold | P position | V collision | F6 page | F7 help\n"
     "F8 world/tool | F9 plots | F10 record | F11 replay | F12 clear | T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
@@ -105,7 +105,7 @@ class ViewerControlState:
 
 def reduce_key(state: ViewerControlState, key: str) -> ViewerControlState:
     key = key.lower()
-    if key == "tab":
+    if key == "m":
         modes = ("joint", "xyz", "rpy")
         mode = modes[(modes.index(state.interaction_mode) + 1) % len(modes)]
         return replace(
@@ -593,9 +593,26 @@ def apply_continuous_jog(
         targets = tuple(_command_positions(sim, {name: requested}))
     elif state.joint_jog_direction and cartesian_controller is not None:
         cartesian_accumulator += dt
-        if cartesian_accumulator >= cartesian_update_period_s:
-            rate = gripper_rate if state.interaction_mode == "xyz" else joint_rate
-            distance_or_angle = rate * speed_scale * cartesian_accumulator
+        rate = gripper_rate if state.interaction_mode == "xyz" else joint_rate
+        distance_or_angle = rate * speed_scale * cartesian_accumulator
+        options = getattr(cartesian_controller, "options", None)
+        tolerance = float(
+            getattr(
+                options,
+                "position_tolerance_m"
+                if state.interaction_mode == "xyz"
+                else "orientation_tolerance_rad",
+                0.0,
+            )
+        )
+        # An increment inside the IK convergence tolerance succeeds at
+        # iteration zero without changing a joint. Accumulate it instead of
+        # repeatedly reporting a no-op as CONVERGED.
+        command_due = (
+            cartesian_accumulator >= cartesian_update_period_s
+            and distance_or_angle > tolerance * 1.05
+        )
+        if command_due:
             direction = state.joint_jog_direction
             values = [0.0, 0.0, 0.0]
             values[state.selected_cartesian_axis] = direction * distance_or_angle
@@ -609,6 +626,7 @@ def apply_continuous_jog(
             ik_error = max(result.position_error_m, result.orientation_error_rad)
             if result.success:
                 targets = tuple(result.joint_positions)
+                _set_mode(sim, "position")
                 target_position = tuple(
                     getattr(result, "target_position_m", state.target_position)
                 )
@@ -715,21 +733,6 @@ def overlay_text(state: ViewerControlState) -> str:
 def configure_viewer_rendering(
     viewer, *, collision_visible: bool, target_visible: bool = False
 ) -> None:
-    # ``show_left_ui=False`` and ``show_right_ui=False`` only set the initial
-    # state.  Simulate still handles Tab after our callback and can reopen
-    # its native panels.  Keep those panels disabled so project controls never
-    # change the dashboard layout.  This is isolated behind a compatibility
-    # guard because MuJoCo currently exposes the switches on the passive
-    # viewer's underlying Simulate object rather than on Handle itself.
-    get_sim = getattr(viewer, "_get_sim", None)
-    simulate = get_sim() if callable(get_sim) else None
-    if simulate is not None:
-        try:
-            simulate.ui0_enable = False
-            simulate.ui1_enable = False
-        except (AttributeError, TypeError):
-            pass
-
     option = getattr(viewer, "opt", None)
     groups = getattr(option, "geomgroup", None)
     if option is None or groups is None or len(groups) < 4:

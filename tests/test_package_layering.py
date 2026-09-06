@@ -44,10 +44,24 @@ def test_teach_package_exports_core_modules() -> None:
     import rebotarm_teach.teach_recording as teach_recording
     import rebotarm_teach.teach_replay_coordinator as teach_replay_coordinator
     import rebotarm_teach.teach_replay_settings as teach_replay_settings
+    import rebotarm_teach.teach_replay_workflow as teach_replay_workflow
 
     assert hasattr(teach_recording, "TeachSample")
     assert hasattr(teach_replay_coordinator, "TeachReplayCoordinator")
     assert hasattr(teach_replay_settings, "TeachReplaySettingsProvider")
+    assert hasattr(teach_replay_workflow, "TeachReplayWorkflow")
+
+
+def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
+    source = (
+        ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"
+    ).read_text(encoding="utf-8")
+
+    assert "prepare_teach_replay_samples" not in source
+    assert "TeachReplayTrajectoryConfig(" not in source
+    assert "MoveItStartAlignmentConfig(" not in source
+    assert "CollisionPrecheckConfig(" not in source
+    assert "self._teach_replay_workflow.build_trajectory(" in source
 
 
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:

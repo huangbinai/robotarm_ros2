@@ -29,13 +29,14 @@ from .arm_command_api import (
     should_stop_trajectory_before_arm_command,
     status_state,
 )
-from rebotarm_motion.collision_precheck import CollisionPrecheckConfig, CollisionPrechecker
+from rebotarm_motion.collision_precheck import CollisionPrechecker
 from .parameter_helpers import build_joint_limits
 from .parameter_helpers import sensor_qos_kwargs
 from rebotarm_motion.replay_runtime_monitor import ReplayRuntimeMonitor, ReplayRuntimeMonitorConfig
 from .status_panel_http import create_status_panel_server
 from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
+from .teach_replay_config import TeachReplayParameterAdapter
 from .web_command_gateway import WebCommandGateway, WebCommandRequest
 from rebotarm_teleop.teleop_core import validate_web_keyboard_command
 from rebotarm_teach.teach_record_client import TeachRecordClient
@@ -46,21 +47,14 @@ from rebotarm_teach.teach_recording import (
     ReplayStartBand,
     inspect_teach_record,
     list_teach_record_files,
-    load_teach_samples,
-    prepare_teach_replay_samples,
-    prepared_teach_replay_to_dict,
     teach_record_info_to_dict,
     validate_teach_dry_run_request,
 )
 from rebotarm_teach.teach_replay_settings import TeachReplaySettingsProvider
-from rebotarm_motion.teach_replay_start_align_precheck import (
-    MoveItStartAlignPrecheckConfig,
-    MoveItStartAlignPrechecker,
-)
-from rebotarm_motion.teach_replay_start_alignment import MoveItStartAligner, MoveItStartAlignmentConfig
+from rebotarm_motion.teach_replay_start_align_precheck import MoveItStartAlignPrechecker
+from rebotarm_motion.teach_replay_start_alignment import MoveItStartAligner
 from rebotarm_teach.teach_replay_trajectory_builder import (
     TeachReplayTrajectoryBuilder,
-    TeachReplayTrajectoryConfig,
     set_duration,
 )
 from rebotarm_motion.moveit_planner import MoveItMotionPlanner
@@ -270,7 +264,7 @@ class TeleopStatusPanelNode(Node):
             FollowJointTrajectory,
             f"/{self._arm_namespace}/follow_joint_trajectory",
         )
-        self._moveit_planner = MoveItMotionPlanner(
+        moveit_planner = MoveItMotionPlanner(
             self,
             group_name=str(self.get_parameter("moveit_group_name").value),
             ee_frame_id="end_link",
@@ -283,12 +277,12 @@ class TeleopStatusPanelNode(Node):
             goal_position_tolerance=0.005,
             goal_orientation_tolerance=0.02,
         )
-        self._state_validity_client = self.create_client(
+        state_validity_client = self.create_client(
             GetStateValidity,
             str(self.get_parameter("collision_check_service").value),
         )
-        self._collision_prechecker = CollisionPrechecker(
-            client=self._state_validity_client,
+        collision_prechecker = CollisionPrechecker(
+            client=state_validity_client,
             request_factory=GetStateValidity.Request,
         )
         self._gripper_action_client = ActionClient(
@@ -348,19 +342,25 @@ class TeleopStatusPanelNode(Node):
         )
         self._teach_replay_client = TeachReplayClient()
         self._teach_replay_coordinator = TeachReplayCoordinator()
-        self._teach_replay_workflow = TeachReplayWorkflow()
-        self._teach_replay_trajectory_builder = TeachReplayTrajectoryBuilder(
+        trajectory_builder = TeachReplayTrajectoryBuilder(
             trajectory_factory=JointTrajectory,
             trajectory_point_factory=JointTrajectoryPoint,
         )
-        self._moveit_start_aligner = MoveItStartAligner(
-            planner=self._moveit_planner,
+        moveit_start_aligner = MoveItStartAligner(
+            planner=moveit_planner,
             trajectory_point_factory=JointTrajectoryPoint,
         )
-        self._moveit_start_align_prechecker = MoveItStartAlignPrechecker(
-            planner=self._moveit_planner,
-            service_client=self._moveit_planner._client,  # noqa: SLF001
+        moveit_start_align_prechecker = MoveItStartAlignPrechecker(
+            planner=moveit_planner,
+            service_client=moveit_planner._client,  # noqa: SLF001
         )
+        self._teach_replay_workflow = TeachReplayWorkflow(
+            trajectory_builder=trajectory_builder,
+            moveit_start_aligner=moveit_start_aligner,
+            moveit_start_align_prechecker=moveit_start_align_prechecker,
+            collision_prechecker=collision_prechecker,
+        )
+        self._teach_replay_config = TeachReplayParameterAdapter(self.get_parameter)
         self._teach_replay_settings_provider = TeachReplaySettingsProvider(
             replay_speed=float(self.get_parameter("replay_speed").value),
             align_duration=float(self.get_parameter("align_duration").value),
@@ -614,78 +614,24 @@ class TeleopStatusPanelNode(Node):
             compact["prepared_replay"] = cls._compact_replay_payload(compact["prepared_replay"], limit=limit)
         return compact
 
-    def _max_replay_velocity_limits(self, joint_names: tuple[str, ...]):
-        scalar_limit = float(self.get_parameter("max_replay_velocity_rad_s").value)
-        values = self.get_parameter("max_replay_velocity_rad_s_by_joint").value
-        if isinstance(values, (list, tuple)) and len(values) == len(joint_names):
-            return tuple(float(value) for value in values)
-        return scalar_limit
-
-    def _prepare_teach_replay_samples(self, samples, settings: dict[str, float | int] | None = None):
-        replay_speed = float(settings["replay_speed"]) if settings else float(self.get_parameter("replay_speed").value)
-        return prepare_teach_replay_samples(
-            samples,
-            smoothing_enabled=bool(self.get_parameter("smoothing_enabled").value),
-            smoothing_window=int(self.get_parameter("smoothing_window").value),
-            filter_enabled=bool(self.get_parameter("filter_enabled").value),
-            filter_cutoff_hz=float(self.get_parameter("filter_cutoff_hz").value),
-            filter_sample_rate_hz=float(self.get_parameter("filter_sample_rate_hz").value),
-            resample_enabled=bool(self.get_parameter("resample_enabled").value),
-            resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
-            retime_enabled=True,
-            replay_speed=replay_speed,
-            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(samples[0].joint_names) if samples else ()),
-            max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-            time_parameterization_method=str(self.get_parameter("time_parameterization_method").value),
-            large_motion_span_rad=float(self.get_parameter("large_motion_span_rad").value),
-            large_motion_total_rad=float(self.get_parameter("large_motion_total_rad").value),
-            large_motion_max_speed=float(self.get_parameter("large_motion_max_speed").value),
-        )
-
     def _moveit_align_summary(self, info_payload: dict, samples=None, *, plan: bool = False) -> dict:
-        return self._moveit_start_align_prechecker.summary(
+        return self._teach_replay_workflow.summarize_start_alignment(
             info_payload,
-            config=MoveItStartAlignPrecheckConfig(
-                enabled=bool(self.get_parameter("use_moveit_start_align").value),
-                service=str(self.get_parameter("moveit_planning_service").value),
-                skip_threshold=float(self.get_parameter("moveit_start_skip_threshold").value),
-                joint_goal_tolerance=float(self.get_parameter("moveit_joint_goal_tolerance").value),
-                velocity_scaling=float(self.get_parameter("moveit_velocity_scaling").value),
-                acceleration_scaling=float(self.get_parameter("moveit_acceleration_scaling").value),
-            ),
+            config=self._teach_replay_config.moveit_precheck(),
             samples=samples,
             plan=plan,
         )
 
-    def _collision_precheck(self, samples) -> dict:
-        if not samples:
-            return self._collision_precheck_positions((), [])
-        first = samples[0]
-        positions = [tuple(sample.positions) for sample in samples]
-        return self._collision_precheck_positions(tuple(first.joint_names), positions)
-
     def _collision_precheck_trajectory(self, trajectory: JointTrajectory) -> dict:
-        positions = [
-            tuple(point.positions)
-            for point in getattr(trajectory, "points", [])
-            if getattr(point, "positions", None)
-        ]
-        return self._collision_precheck_positions(tuple(trajectory.joint_names), positions)
+        joint_names = tuple(trajectory.joint_names)
+        return self._teach_replay_workflow.check_trajectory(
+            trajectory,
+            config=self._collision_precheck_config(joint_names),
+        )
 
-    def _collision_precheck_positions(self, joint_names: tuple[str, ...], positions_list: list[tuple[float, ...]]) -> dict:
-        default_joint_positions = self._collision_default_joint_positions(joint_names)
-        return self._collision_prechecker.check_positions(
-            joint_names=joint_names,
-            positions_list=positions_list,
-            config=CollisionPrecheckConfig(
-                enabled=bool(self.get_parameter("collision_check_enabled").value),
-                service=str(self.get_parameter("collision_check_service").value),
-                group_name=str(self.get_parameter("collision_group_name").value),
-                max_samples=max(int(self.get_parameter("collision_check_max_samples").value), 1),
-                timeout_sec=max(float(self.get_parameter("collision_check_timeout_sec").value), 0.1),
-                default_joint_positions=default_joint_positions,
-            ),
+    def _collision_precheck_config(self, joint_names: tuple[str, ...]):
+        return self._teach_replay_config.collision(
+            default_joint_positions=self._collision_default_joint_positions(joint_names),
         )
 
     def _collision_default_joint_positions(self, joint_names: tuple[str, ...]) -> tuple[tuple[str, float], ...]:
@@ -703,11 +649,7 @@ class TeleopStatusPanelNode(Node):
         return (("left_finger_joint", left), ("right_finger_joint", right))
 
     def _teach_replay_limits(self) -> TeachReplayLimits:
-        return TeachReplayLimits(
-            max_prepared_jump_rad=float(self.get_parameter("max_prepared_jump_rad").value),
-            max_replay_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_replay_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-        )
+        return self._teach_replay_config.limits()
 
     def _target_runtime(self) -> str:
         return "hardware" if bool(self.get_parameter("use_hardware").value) else "simulation"
@@ -740,12 +682,16 @@ class TeleopStatusPanelNode(Node):
     def _teach_trajectory(self, record_path: str | None = None, max_points: int = 500) -> dict:
         path = record_path or str(self._teach_record_info(None).get("path", self.get_parameter("record_path").value))
         try:
+            info_payload = self._teach_record_info(str(path))
             return self._teach_replay_workflow.build_preview(
                 path,
                 max_points=max_points,
-                prepare_samples=self._prepare_teach_replay_samples,
-                collision_precheck=self._collision_precheck,
-                record_info=lambda value: self._teach_record_info(value),
+                preparation_config=lambda joint_names: self._teach_replay_config.preparation(
+                    joint_names,
+                    replay_speed=float(self.get_parameter("replay_speed").value),
+                ),
+                collision_config=self._collision_precheck_config,
+                info_payload=info_payload,
             )
         except Exception as exc:
             return {
@@ -782,7 +728,10 @@ class TeleopStatusPanelNode(Node):
         try:
             record = self._teach_replay_workflow.prepare_record(
                 str(info_payload.get("path", "")),
-                prepare_samples=lambda samples: self._prepare_teach_replay_samples(samples, settings),
+                config=lambda joint_names: self._teach_replay_config.preparation(
+                    joint_names,
+                    replay_speed=float(settings["replay_speed"]),
+                ),
             )
             samples_for_precheck = record.source_samples
             prepared_record_path = record.prepared_path
@@ -790,7 +739,7 @@ class TeleopStatusPanelNode(Node):
             moveit_align = self._moveit_align_summary(info_payload, samples_for_precheck, plan=decision.accepted)
             if decision.accepted and str(moveit_align.get("state", "")).lower() not in ("failed", "unavailable", "unknown"):
                 trajectory = self._build_teach_replay_trajectory(
-                    samples_for_precheck,
+                    record,
                     str(info_payload.get("start_band", "")),
                     settings,
                 )
@@ -832,17 +781,20 @@ class TeleopStatusPanelNode(Node):
             payload,
             max_error=info_payload.get("max_error"),
         )
-        quality = info_payload.get("quality") if isinstance(info_payload.get("quality"), dict) else {}
         prepared_payload = {}
         prepared_quality = {}
         prepared_record_path = ""
         collision_precheck = {"state": "unknown", "message": "collision precheck not run"}
         moveit_align = self._moveit_align_summary(info_payload)
         trajectory = None
+        record = None
         try:
             record = self._teach_replay_workflow.prepare_record(
                 str(info_payload.get("path", "")),
-                prepare_samples=lambda samples: self._prepare_teach_replay_samples(samples, settings),
+                config=lambda joint_names: self._teach_replay_config.preparation(
+                    joint_names,
+                    replay_speed=float(settings["replay_speed"]),
+                ),
             )
             source_samples = record.source_samples
             prepared_record_path = record.prepared_path
@@ -869,10 +821,13 @@ class TeleopStatusPanelNode(Node):
             )
         if decision.accepted:
             try:
-                samples = load_teach_samples(str(info_payload["path"]))
-                if not samples:
-                    raise ValueError("record contains no samples")
-                trajectory = self._build_teach_replay_trajectory(samples, str(info_payload.get("start_band", "")), settings)
+                if record is None:
+                    raise ValueError("record preparation did not complete")
+                trajectory = self._build_teach_replay_trajectory(
+                    record,
+                    str(info_payload.get("start_band", "")),
+                    settings,
+                )
                 collision_precheck = self._collision_precheck_trajectory(trajectory)
             except Exception as exc:
                 collision_precheck = {"state": "unknown", "message": f"collision precheck failed: {exc}"}
@@ -1038,62 +993,22 @@ class TeleopStatusPanelNode(Node):
     ) -> dict[str, float | int]:
         return self._teach_replay_settings_provider.from_payload(payload, max_error=max_error)
 
-    def _build_teach_replay_trajectory(self, samples, start_band: str, settings: dict[str, float | int]) -> JointTrajectory:
-        prepared = self._prepare_teach_replay_samples(samples, settings)
-        self._last_teach_prepared_payload = prepared_teach_replay_to_dict(prepared)
-        first = prepared.samples[0]
+    def _build_teach_replay_trajectory(self, record, start_band: str, settings: dict[str, float | int]) -> JointTrajectory:
+        self._last_teach_prepared_payload = record.payload
+        first = record.prepared.samples[0]
         snapshot = self._store.snapshot()
         current_map = {
             name: float(data["position"])
             for name, data in snapshot.joints.items()
             if "position" in data
         }
-        result = self._teach_replay_trajectory_builder.build(
-            prepared=prepared,
+        return self._teach_replay_workflow.build_trajectory(
+            record,
             current_positions=current_map,
             start_band=start_band,
             settings=settings,
-            config=TeachReplayTrajectoryConfig(
-                use_moveit_start_align=bool(self.get_parameter("use_moveit_start_align").value),
-                start_hold_sec=float(self.get_parameter("start_hold_sec").value),
-                soft_start_duration=float(self.get_parameter("soft_start_duration").value),
-                soft_start_steps=int(self.get_parameter("soft_start_steps").value),
-                first_hold_sec=float(self.get_parameter("first_hold_sec").value),
-                yellow_max_speed=float(self.get_parameter("yellow_max_speed").value),
-                initial_replay_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
-                max_velocity_rad_s=self._max_replay_velocity_limits(tuple(first.joint_names)),
-                max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-                max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-            ),
-            moveit_start_alignment=self._append_moveit_start_alignment,
-        )
-        return result.trajectory
-
-    def _append_final_hold(self, trajectory: JointTrajectory, *, final_hold_sec: float) -> None:
-        self._teach_replay_trajectory_builder.append_final_hold(
-            trajectory,
-            final_hold_sec=final_hold_sec,
-        )
-
-    def _append_moveit_start_alignment(
-        self,
-        trajectory: JointTrajectory,
-        *,
-        current_positions: tuple[float, ...],
-        first_positions: tuple[float, ...],
-    ) -> float:
-        return self._moveit_start_aligner.append(
-            trajectory,
-            current_positions=current_positions,
-            first_positions=first_positions,
-            config=MoveItStartAlignmentConfig(
-                start_hold_sec=float(self.get_parameter("start_hold_sec").value),
-                first_hold_sec=float(self.get_parameter("first_hold_sec").value),
-                skip_threshold=float(self.get_parameter("moveit_start_skip_threshold").value),
-                joint_goal_tolerance=float(self.get_parameter("moveit_joint_goal_tolerance").value),
-                velocity_scaling=float(self.get_parameter("moveit_velocity_scaling").value),
-                acceleration_scaling=float(self.get_parameter("moveit_acceleration_scaling").value),
-            ),
+            trajectory_config=self._teach_replay_config.trajectory(tuple(first.joint_names)),
+            alignment_config=self._teach_replay_config.alignment(),
         )
 
     def _on_teach_replay_goal_response(self, future, info_payload: dict, points: int, trajectory: JointTrajectory) -> None:

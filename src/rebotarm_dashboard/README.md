@@ -5,3 +5,5 @@
 主要入口为 `TeleopStatusPanelNode`。它订阅关节、机械臂、示教和任务状态，并通过受控接口调用运动、夹爪、重力补偿、示教和停止功能。
 
 Dashboard 不生成底层电机命令，不实现轨迹重定时、碰撞检测或示教准备算法。网页预览与真实执行应保持明确区分。
+
+`TeachReplayParameterAdapter` 仅负责把 ROS 参数转换为示教包定义的配置对象；轨迹准备、MoveIt 起点对齐和碰撞预检由 `rebotarm_teach.TeachReplayWorkflow` 统一编排。

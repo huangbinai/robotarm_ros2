@@ -425,14 +425,14 @@ def test_default_overlay_is_compact_and_contains_only_operational_overview():
     for expected in (
         "GRAVITY_COMP", "J3", "+0.200", "+0.250", "+0.050", "0.035/0.040",
         "2 / 2.50 N", "PAUSED", "TARGET OFF / COLL ON", "M / F8",
-        "F6/7/9  F10/11/12  Q",
+        "F6/7/9  T/R  Q",
     ):
         assert expected in text
     for hidden_detail in ("TAU REQ/OUT", "+1.50/ +1.20", "TRAJECTORY\nRECORD"):
         assert hidden_detail not in text
 
 
-def test_f6_pages_separate_overview_joints_and_trajectory_content():
+def test_f6_pages_separate_overview_and_joints_content():
     state = mujoco_viewer.ViewerControlState(selected_joint=4)
     overview = compose_dashboard(state)
     assert "OVERVIEW" in overview.top_right.left
@@ -443,15 +443,11 @@ def test_f6_pages_separate_overview_joints_and_trajectory_content():
         assert name in joints.left
     assert "> J5" in joints.left
     state = mujoco_viewer.reduce_key(state, "f6")
-    trajectory = compose_dashboard(state).top_right
-    assert "TRAJECTORY" in trajectory.left
-    assert "TRACK RMSE" in trajectory.left
-    state = mujoco_viewer.reduce_key(state, "f6")
     assert state.dashboard_page == "overview"
 
 
 def test_overlay_panels_remain_compact_for_small_vm_windows():
-    for page in ("overview", "joints", "trajectory"):
+    for page in ("overview", "joints"):
         panels = compose_dashboard(
             mujoco_viewer.ViewerControlState(dashboard_page=page), compact=True
         )
@@ -513,28 +509,6 @@ def test_command_events_report_errors_and_keep_running():
 
     assert "command error: usage: joints" in status.getvalue()
     assert sim.targets[0] == pytest.approx(0.2)
-    assert state.quit is False
-
-
-def test_command_events_report_filesystem_errors_and_keep_running(monkeypatch):
-    sim = FakeSim()
-    events = SimpleQueue()
-    events.put('trajectory save "/unwritable/demo.json"')
-    status = io.StringIO()
-
-    def fail_command(*_args, **_kwargs):
-        raise PermissionError("read-only destination")
-
-    monkeypatch.setattr(mujoco_viewer, "dispatch_sim_command", fail_command)
-    state = mujoco_viewer.process_command_events(
-        sim,
-        events,
-        mujoco_viewer.ViewerControlState(),
-        status,
-        session=SimpleNamespace(playback=None, recorder=SimpleNamespace(is_recording=False)),
-    )
-
-    assert "command error: read-only destination" in status.getvalue()
     assert state.quit is False
 
 
@@ -616,7 +590,7 @@ def test_tab_is_left_to_native_viewer_and_does_not_change_input_mode():
     assert mujoco_viewer.reduce_key(state, "tab") == state
 
 
-def test_conflict_free_function_keys_toggle_plots_record_replay_and_clear():
+def test_conflict_free_function_key_toggles_plots():
     state = mujoco_viewer.ViewerControlState()
     state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(298))
     assert state.plot_page == "tracking"
@@ -624,10 +598,8 @@ def test_conflict_free_function_keys_toggle_plots_record_replay_and_clear():
     assert state.plot_page == "effort"
     state = mujoco_viewer.reduce_key(state, "f9")
     assert state.plot_page == "off"
-    for keycode, field in ((299, "record_toggle"), (300, "replay_toggle"),
-                           (301, "trajectory_clear")):
-        state = mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode))
-        assert getattr(state, field) is True
+    for keycode in (299, 300, 301):
+        assert mujoco_viewer.reduce_key(state, mujoco_viewer._decode_key(keycode)) == state
 
 
 def test_native_f1_to_f5_are_not_reused_by_project_controls():
@@ -663,31 +635,6 @@ def test_plot_hides_right_text_panels_and_alerts_only_appear_on_faults():
 def test_cartesian_input_marks_target_layer_visible_in_status_panel():
     state = mujoco_viewer.ViewerControlState(interaction_mode="xyz")
     assert "TARGET ON / COLL OFF" in mujoco_viewer.overlay_text(state)
-
-
-def test_viewer_state_exposes_completed_replay_error_summary():
-    session = SimpleNamespace(
-        state=lambda: {
-            "recording": False,
-            "replay_state": "finished",
-            "replay_progress": 1.0,
-            "comparison": {
-                "overall_tracking_rmse_rad": 0.012,
-                "overall_repeatability_rmse_rad": 0.008,
-                "passed": True,
-            },
-        }
-    )
-    state = mujoco_viewer._state_from_session(
-        mujoco_viewer.ViewerControlState(), session
-    )
-    assert state.replay_passed is True
-    assert state.replay_tracking_rmse_rad == pytest.approx(0.012)
-    state = replace(state, dashboard_page="trajectory")
-    text = mujoco_viewer.overlay_text(state)
-    assert "0.0120 rad" in text
-    assert "0.0080 rad" in text
-    assert "PASS" in text
 
 
 def test_cartesian_jog_is_rate_limited_and_uses_selected_axis():

@@ -24,36 +24,11 @@ def _positive_int(value: str) -> int:
     return number
 
 
-def dispatch_sim_command(sim, line: str, *, paused: bool = False, session=None) -> CommandResult:
+def dispatch_sim_command(sim, line: str, *, paused: bool = False) -> CommandResult:
     parts = shlex.split(line)
     if not parts:
         return CommandResult(paused)
     command, arguments = parts[0].lower(), parts[1:]
-    if command in ("record", "replay", "trajectory"):
-        if session is None:
-            raise RuntimeError("trajectory commands require a MuJoCo session")
-        if command == "record":
-            if len(arguments) != 1 or arguments[0] not in {"start", "stop", "clear"}:
-                raise ValueError("usage: record start|stop|clear")
-            method = getattr(session, f"record_{arguments[0]}")
-            return CommandResult(paused, method(), mutated=True)
-        if command == "replay":
-            if len(arguments) != 1 or arguments[0] not in {"start", "pause", "resume", "stop"}:
-                raise ValueError("usage: replay start|pause|resume|stop")
-            method = getattr(session, f"replay_{arguments[0]}")
-            return CommandResult(paused, method(), mutated=True)
-        if arguments == ["state"]:
-            return CommandResult(paused, session.state())
-        if arguments == ["compare"]:
-            return CommandResult(paused, session.comparison())
-        if len(arguments) == 2 and arguments[0] in {"save", "load"}:
-            method = session.save if arguments[0] == "save" else session.load
-            return CommandResult(paused, method(arguments[1]), mutated=arguments[0] == "load")
-        if len(arguments) == 2 and arguments[0] == "report":
-            return CommandResult(paused, session.save_comparison(arguments[1]))
-        raise ValueError(
-            "usage: trajectory state|compare|save PATH|load PATH|report PATH"
-        )
     if command in ("quit", "q"):
         if arguments:
             raise ValueError("usage: quit")
@@ -122,8 +97,7 @@ def dispatch_sim_command(sim, line: str, *, paused: bool = False, session=None) 
         count = 1 if not arguments else _positive_int(arguments[0])
         if paused:
             return CommandResult(paused, "paused; step ignored")
-        operation = sim.step if session is None else session.step
-        return CommandResult(paused, operation(count), mutated=True)
+        return CommandResult(paused, sim.step(count), mutated=True)
     if command == "reset":
         if arguments:
             raise ValueError("usage: reset")

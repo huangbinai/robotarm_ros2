@@ -9,7 +9,6 @@ from pathlib import Path
 import sys
 
 from .mujoco_commands import dispatch_sim_command
-from .mujoco_session import MujocoSession
 from .mujoco_sim import RebotArmMujoco
 
 
@@ -80,8 +79,8 @@ def _emit(value, stdout) -> None:
     print(json.dumps(_plain(value), ensure_ascii=False, sort_keys=True), file=stdout)
 
 
-def dispatch_command(sim, line: str, *, paused: bool = False, session=None):
-    result = dispatch_sim_command(sim, line, paused=paused, session=session)
+def dispatch_command(sim, line: str, *, paused: bool = False):
+    result = dispatch_sim_command(sim, line, paused=paused)
     return result.paused, result.value, result.should_quit
 
 
@@ -124,12 +123,9 @@ def _run_torque(sim, values, *, timeout: float, observe: float):
 
 def _interactive(sim, stdin, stdout) -> int:
     paused = False
-    session = MujocoSession(sim)
     for line in stdin:
         try:
-            paused, result, should_quit = dispatch_command(
-                sim, line, paused=paused, session=session
-            )
+            paused, result, should_quit = dispatch_command(sim, line, paused=paused)
             if result is not None:
                 _emit(result, stdout)
             if should_quit:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .mujoco_jog import jog_speed
 
 
-DASHBOARD_PAGES = ("overview", "joints", "trajectory")
+DASHBOARD_PAGES = ("overview", "joints")
 PLOT_PAGES = ("off", "tracking", "effort")
 _XYZ = ("X", "Y", "Z")
 _RPY = ("ROLL", "PITCH", "YAW")
@@ -112,20 +112,6 @@ def joints_panel(state, *, compact: bool = False) -> TextPanel:
     )
 
 
-def trajectory_panel(state) -> TextPanel:
-    if state.replay_passed is None:
-        result = "--"
-    else:
-        result = "PASS" if state.replay_passed else "INCOMPLETE / FAIL"
-    return TextPanel(
-        "TRAJECTORY\nRECORD\nFRAMES\nDURATION\nREPLAY\nPROGRESS\nTRACK RMSE\nREPEAT RMSE\nRESULT",
-        f"\n{'ON' if state.recording else 'OFF'}\n{state.trajectory_frame_count}\n"
-        f"{state.trajectory_duration_s:.2f} s\n{state.playback_state.upper()}\n"
-        f"{state.playback_progress:.0%}\n{state.replay_tracking_rmse_rad:.4f} rad\n"
-        f"{state.replay_repeatability_rmse_rad:.4f} rad\n{result}",
-    )
-
-
 def alert_panel(state) -> TextPanel | None:
     alerts = []
     if any(state.saturated):
@@ -133,8 +119,6 @@ def alert_panel(state) -> TextPanel | None:
         alerts.append(f"TORQUE SATURATION: {joints}")
     if state.ik_status not in ("idle", "converged"):
         alerts.append(f"IK {state.ik_status.upper()}: {state.ik_error:.4f}")
-    if state.replay_passed is False and state.playback_state == "finished":
-        alerts.append("REPLAY ERROR LIMIT FAILED")
     if state.active_mode == "raw_torque" and state.watchdog_remaining_s < 0.03:
         alerts.append(f"TORQUE WATCHDOG: {state.watchdog_remaining_s:.3f} s")
     if not alerts:
@@ -144,15 +128,15 @@ def alert_panel(state) -> TextPanel | None:
 
 def compact_help_panel() -> TextPanel:
     return TextPanel(
-        "M / F8\nZ/X  J/K  C/O  S\n-/+  G/H/P  V\nF6/7/9  F10/11/12  Q",
-        "mode / frame\nselect  move  grip  stop\nspeed  control  collision\npage/help/plot  rec/play/clear  quit",
+        "M / F8\nZ/X  J/K  C/O  S\n-/+  G/H/P  V\nF6/7/9  T/R  Q",
+        "mode / frame\nselect  move  grip  stop\nspeed  control  collision\npage/help/plot  home/reset  quit",
     )
 
 
 def full_help_panel() -> TextPanel:
     return TextPanel(
-        "CONTROLS\nM\nF8\nZ / X\nJ / K\nC / O\nS\n- / +\nG / H / P\nV\nF9\nF10 / F11 / F12\nF6\nF7\nT / R\nQ",
-        "\nJoint / XYZ / RPY\nWorld / Tool frame\nPrevious / next item\nStart negative / positive jog\nClose / open gripper\nStop and Hold\nSpeed down / up\nGravity / Hold / Position\nCollision layer\nPlot: off / tracking / effort\nRecord / replay / clear\nOverview / Joints / Trajectory\nClose help\nHome / reset\nQuit",
+        "CONTROLS\nM\nF8\nZ / X\nJ / K\nC / O\nS\n- / +\nG / H / P\nV\nF9\nF6\nF7\nT / R\nQ",
+        "\nJoint / XYZ / RPY\nWorld / Tool frame\nPrevious / next item\nStart negative / positive jog\nClose / open gripper\nStop and Hold\nSpeed down / up\nGravity / Hold / Position\nCollision layer\nPlot: off / tracking / effort\nOverview / Joints\nClose help\nHome / reset\nQuit",
     )
 
 
@@ -167,8 +151,6 @@ def compose_dashboard(state, *, compact: bool = False) -> DashboardPanels:
             top_right = overview_panel(state)
         elif page == "joints":
             top_right = joints_panel(state, compact=compact)
-        elif page == "trajectory":
-            top_right = trajectory_panel(state)
         else:
             raise ValueError(f"unsupported dashboard page: {page}")
         bottom_right = compact_help_panel()

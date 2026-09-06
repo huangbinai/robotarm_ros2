@@ -175,6 +175,19 @@ def test_interactive_bad_command_is_reported_and_loop_continues():
     assert output.getvalue().count("error:") == 2
 
 
+def test_legacy_mujoco_teach_commands_are_rejected_in_favor_of_ros_teach_workflow():
+    output = io.StringIO()
+    code = mujoco_cli.main(
+        ["shell"],
+        sim_factory=lambda _: FakeSim(),
+        stdin=io.StringIO("record start\nreplay start\ntrajectory state\nquit\n"),
+        stdout=output,
+    )
+
+    assert code == 0
+    assert output.getvalue().count("error: unknown command:") == 3
+
+
 def test_pause_blocks_steps_until_resume_and_reset_preserves_pause():
     sim = FakeSim()
     paused, _, _ = mujoco_cli.dispatch_command(sim, "pause")

@@ -154,38 +154,18 @@ XYZ/RPY 中按 `F8` 切换世界坐标与工具坐标。末端控制使用阻尼
 平移/旋转目标，求解成功后蓝色半透明幽灵机械臂显示目标姿态，实体机械臂通过
 POS_VEL 控制跟踪。绿色目标本身没有质量和碰撞，不会给物理世界施加额外外力。
 
-Viewer 默认进入简洁的 `Overview` 页面。`F6` 按 Overview → Joints → Trajectory
-循环切换：Joints 显示六轴实际/目标/误差/速度，Trajectory 显示录制与回放误差；
+Viewer 默认进入简洁的 `Overview` 页面。`F6` 按 Overview → Joints 循环切换：
+Joints 显示六轴实际/目标/误差/速度；
 `F7` 单独显示/隐藏完整按键帮助。`F9` 按 OFF → TRACKING → EFFORT 循环，一次仅显示
 一张当前关节曲线；Tracking 包含实际/目标/误差/速度，Effort 包含请求/施加力矩和
-最大接触力。打开曲线时会隐藏右侧文字页，避免相互遮挡。`F10` 开始/停止轨迹录制，`F11` 开始/
-暂停/继续回放，`F12` 清空内存轨迹。项目不复用 MuJoCo 原生 `F1–F5`（帮助、信息、
-性能、传感器、全屏），从而避免控制操作弹出原生面板或改变窗口。也可在 Viewer 终端中输入：
+最大接触力。打开曲线时会隐藏右侧文字页，避免相互遮挡。项目不复用 MuJoCo 原生
+`F1–F5`（帮助、信息、性能、传感器、全屏），从而避免控制操作弹出原生面板或改变窗口。
 
-```text
-record start
-record stop
-trajectory state
-trajectory save "logs/demo trajectory.json"
-trajectory load "logs/demo trajectory.json"
-replay start
-replay pause
-replay resume
-replay stop
-trajectory compare
-trajectory report "logs/demo report.json"
-record clear
-```
-
-保存轨迹或比较报告时会自动创建尚不存在的父目录；路径含空格时保留双引号。
-
-轨迹 JSON 保存仿真时间、六轴目标/实际角和夹爪目标/实际宽度。回放结束或停止后自动
-进入 Hold；人工关节、末端或夹爪命令会停止正在进行的回放，防止两个输入源同时改目标。
-回放期间会同时计算：实际位置相对命令目标的跟踪误差，以及本次实际位置相对原始录制
-实际位置的重复性误差。报告包含六轴 RMSE/最大绝对误差、整机 RMSE/最大误差、夹爪
-跟踪/重复性误差和阈值通过结果；完成后按 `F6` 切到 Trajectory 页面查看整机
-Tracking RMSE、Repeatability RMSE 和 PASS/FAIL。默认通过阈值是关节 RMSE `0.03 rad`、最大误差
-`0.08 rad`、夹爪 RMSE `0.005 m`、最大误差 `0.012 m`。
+人工示教录制、轨迹文件管理、检查、滤波、重定时和安全回放统一使用项目网页中的
+`Teach Trajectory` 工作流，不在 MuJoCo Viewer 中维护第二套格式和快捷键。MuJoCo
+继续通过标准 `/rebotarm/joint_states` 和 `/rebotarm/follow_joint_trajectory` 接口支持
+网页录制与仿真回放。用于强化学习及 Sim2Real 批量实验的 JSONL 数据记录、确定性回放
+和比较工具保持独立，它们是实验数据管线，不是人工示教界面。
 
 `G` 进入重力补偿，`H` 捕获并保持当前位置，`P` 进入
 Position（内部仍为 POS_VEL→motor 力矩），`V` 显示/隐藏碰撞代理，空格暂停，

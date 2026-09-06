@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .mujoco_jog import jog_speed
+
 
 DASHBOARD_PAGES = ("overview", "joints", "trajectory")
 PLOT_PAGES = ("off", "tracking", "effort")
@@ -44,12 +46,10 @@ def selected_item(state) -> str:
 
 
 def _speed(state) -> str:
-    levels = ("PRECISION", "NORMAL", "FAST", "TURBO")
-    name = levels[state.jog_speed_index]
     if state.interaction_mode == "xyz":
-        value = state.gripper_jog_rate * (0.25, 1.0, 2.5, 5.0)[state.jog_speed_index]
+        name, value = jog_speed(state.jog_speed_index, state.gripper_jog_rate)
         return f"{name}  {value:.3f} m/s"
-    value = state.joint_jog_rate * (0.25, 1.0, 2.5, 5.0)[state.jog_speed_index]
+    name, value = jog_speed(state.jog_speed_index, state.joint_jog_rate)
     return f"{name}  {value:.2f} rad/s"
 
 

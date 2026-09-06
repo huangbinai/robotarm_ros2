@@ -221,7 +221,7 @@ def test_stop_key_cancels_all_jog_and_requests_hold():
     assert state.stop_jog is True
 
 
-def test_speed_keys_select_bounded_precision_normal_fast_and_turbo_gears():
+def test_speed_keys_select_bounded_precision_normal_fast_turbo_and_max_gears():
     state = mujoco_viewer.ViewerControlState()
     assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "NORMAL"
 
@@ -234,7 +234,15 @@ def test_speed_keys_select_bounded_precision_normal_fast_and_turbo_gears():
     assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "FAST"
     state = mujoco_viewer.reduce_key(state, "+")
     assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "TURBO"
-    assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 3
+    state = mujoco_viewer.reduce_key(state, "+")
+    assert mujoco_viewer.JOG_SPEED_LEVELS[state.jog_speed_index][0] == "MAX"
+    assert mujoco_viewer.reduce_key(state, "+").jog_speed_index == 4
+
+
+def test_max_gear_is_one_point_five_radians_per_second_in_dashboard():
+    state = mujoco_viewer.ViewerControlState(jog_speed_index=4, joint_jog_rate=0.20)
+    panel = compose_dashboard(state).top_left
+    assert "MAX  1.50 rad/s" in panel.right
 
 
 def test_keypad_plus_and_minus_control_speed_gears():

@@ -20,6 +20,7 @@ from .mujoco_dashboard import (
     PLOT_PAGES,
     compose_dashboard,
 )
+from .mujoco_jog import JOG_SPEED_LEVELS
 from .mujoco_session import MujocoSession
 from .mujoco_sim import ARM_JOINT_NAMES, RebotArmMujoco
 from .mujoco_telemetry import MujocoTelemetryHistory
@@ -31,12 +32,6 @@ HELP = (
     "-/+ speed | G gravity | H hold | P position | V collision | F6 page | F7 help\n"
     "F8 world/tool | F9 plots | F10 record | F11 replay | F12 clear | T home | Q quit\n"
     "Terminal: joints J1..J6 | joint NAME VALUE | gripper WIDTH | state"
-)
-JOG_SPEED_LEVELS = (
-    ("PRECISION", 0.25),
-    ("NORMAL", 1.0),
-    ("FAST", 2.5),
-    ("TURBO", 5.0),
 )
 TELEMETRY_SAMPLE_HZ = 50.0
 TELEMETRY_WINDOW_S = 10.0

@@ -1296,12 +1296,13 @@ def test_status_panel_teach_info_accepts_record_path_alias_and_skips_collapsed_p
 
 def test_status_panel_compacts_large_teach_replay_payloads_for_sse():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    payload_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_payload.py")
 
-    assert "def _compact_quality_payload" in panel_text
-    assert "events_total" in panel_text
-    assert "events_truncated" in panel_text
-    assert "anomalies_total" in panel_text
-    assert "result = self._compact_replay_payload(result)" in panel_text
+    assert "def compact_quality_payload" in payload_text
+    assert 'compact[f"{key}_total"]' in payload_text
+    assert 'compact[f"{key}_truncated"]' in payload_text
+    assert "anomalies_total" in payload_text
+    assert "result = compact_replay_payload(result)" in panel_text
     assert "self._store.update_teleop_status(\"replay\", result)" in panel_text
 
 

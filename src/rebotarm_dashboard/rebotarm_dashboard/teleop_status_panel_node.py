@@ -41,6 +41,7 @@ from rebotarm_teach.teach_record_client import TeachRecordClient
 from rebotarm_teach.teach_replay_coordinator import TeachReplayCoordinator, TeachReplayLimits
 from rebotarm_teach.teach_replay_session import TeachReplaySession
 from rebotarm_teach.teach_replay_parameters import declare_teach_replay_parameters
+from rebotarm_teach.teach_replay_payload import compact_replay_payload
 from rebotarm_teach.teach_replay_workflow import TeachReplayWorkflow
 from rebotarm_teach.teach_recording import (
     ReplayStartBand,
@@ -520,46 +521,7 @@ class TeleopStatusPanelNode(Node):
             payload["message"] = "start error requires MoveIt start alignment"
         payload["direct_threshold"] = float(self.get_parameter("direct_threshold").value)
         payload["align_threshold"] = float(self.get_parameter("align_threshold").value)
-        return self._compact_replay_payload(payload)
-
-    @staticmethod
-    def _compact_list(items, *, limit: int = 12) -> list:
-        values = list(items) if isinstance(items, (list, tuple)) else []
-        return values[: max(int(limit), 0)]
-
-    @classmethod
-    def _compact_quality_payload(cls, quality: dict, *, limit: int = 12) -> dict:
-        compact = dict(quality)
-        if isinstance(compact.get("events"), list):
-            compact["events_total"] = len(compact["events"])
-            compact["events"] = cls._compact_list(compact["events"], limit=limit)
-            compact["events_truncated"] = compact["events_total"] > len(compact["events"])
-        if isinstance(compact.get("anomalies"), list):
-            compact["anomalies_total"] = len(compact["anomalies"])
-            compact["anomalies"] = cls._compact_list(compact["anomalies"], limit=limit)
-            compact["anomalies_truncated"] = compact["anomalies_total"] > len(compact["anomalies"])
-        return compact
-
-    @classmethod
-    def _compact_replay_payload(cls, payload: dict, *, limit: int = 12) -> dict:
-        compact = dict(payload)
-        for key in (
-            "quality",
-            "before_quality",
-            "after_quality",
-            "raw_quality",
-            "filtered_quality",
-            "retimed_quality",
-        ):
-            if isinstance(compact.get(key), dict):
-                compact[key] = cls._compact_quality_payload(compact[key], limit=limit)
-        if isinstance(compact.get("anomalies"), list):
-            compact["anomalies_total"] = len(compact["anomalies"])
-            compact["anomalies"] = cls._compact_list(compact["anomalies"], limit=limit)
-            compact["anomalies_truncated"] = compact["anomalies_total"] > len(compact["anomalies"])
-        if isinstance(compact.get("prepared_replay"), dict):
-            compact["prepared_replay"] = cls._compact_replay_payload(compact["prepared_replay"], limit=limit)
-        return compact
+        return compact_replay_payload(payload)
 
     def _moveit_align_summary(self, info_payload: dict, samples=None, *, plan: bool = False) -> dict:
         return self._teach_replay_workflow.summarize_start_alignment(
@@ -706,7 +668,7 @@ class TeleopStatusPanelNode(Node):
             trajectory_points=trajectory_points,
             limits=self._teach_replay_limits(),
             target_runtime=self._target_runtime(),
-            compact_payload=self._compact_replay_payload,
+            compact_payload=compact_replay_payload,
         )
         self._last_teach_dry_run = result if result["accepted"] else None
         self._store.update_teleop_status("replay", result)
@@ -797,7 +759,7 @@ class TeleopStatusPanelNode(Node):
                 trajectory_points=0,
                 limits=self._teach_replay_limits(),
                 target_runtime=self._target_runtime(),
-                compact_payload=self._compact_replay_payload,
+                compact_payload=compact_replay_payload,
             )
             self._store.update_teleop_status("replay", result)
             return result
@@ -814,7 +776,7 @@ class TeleopStatusPanelNode(Node):
                 "prepared_replay": prepared_payload,
                 "dry_run": False,
             }
-            result = self._compact_replay_payload(result)
+            result = compact_replay_payload(result)
             self._store.update_teleop_status("replay", result)
             return result
         prepared_payload = getattr(self, "_last_teach_prepared_payload", prepared_payload)
@@ -837,7 +799,7 @@ class TeleopStatusPanelNode(Node):
             trajectory_points=len(trajectory.points),
             limits=self._teach_replay_limits(),
             target_runtime=self._target_runtime(),
-            compact_payload=self._compact_replay_payload,
+            compact_payload=compact_replay_payload,
         )
         self._store.update_teleop_status("replay", result)
         return result

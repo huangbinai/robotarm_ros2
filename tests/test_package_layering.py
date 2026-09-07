@@ -53,6 +53,7 @@ def test_teach_package_exports_core_modules() -> None:
     import rebotarm_teach.teach_replay_coordinator as teach_replay_coordinator
     import rebotarm_teach.teach_replay_parameter_adapter as teach_replay_parameter_adapter
     import rebotarm_teach.teach_replay_parameters as teach_replay_parameters
+    import rebotarm_teach.teach_replay_payload as teach_replay_payload
     import rebotarm_teach.teach_replay_settings as teach_replay_settings
     import rebotarm_teach.teach_replay_workflow as teach_replay_workflow
 
@@ -62,6 +63,7 @@ def test_teach_package_exports_core_modules() -> None:
     assert hasattr(teach_replay_coordinator, "TeachReplayCoordinator")
     assert hasattr(teach_replay_parameter_adapter, "TeachReplayParameterAdapter")
     assert hasattr(teach_replay_parameters, "declare_teach_replay_parameters")
+    assert hasattr(teach_replay_payload, "compact_replay_payload")
     assert hasattr(teach_replay_settings, "TeachReplaySettingsProvider")
     assert hasattr(teach_replay_workflow, "TeachReplayWorkflow")
 

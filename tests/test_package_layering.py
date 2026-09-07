@@ -30,6 +30,12 @@ def test_calibration_package_owns_calibration_algorithms() -> None:
     assert legacy_tcp_calibration.estimate_sample_offset is tcp_calibration.estimate_sample_offset
 
 
+def test_vision_package_exports_visual_grasp_parameter_adapter() -> None:
+    import rebotarm_vision.visual_grasp_parameter_adapter as parameter_adapter
+
+    assert hasattr(parameter_adapter, "VisualGraspParameterAdapter")
+
+
 def test_interactive_control_keeps_motion_compatibility_imports() -> None:
     import rebotarm_interactive_control.collision_precheck as legacy_collision_precheck
     import rebotarm_interactive_control.replay_runtime_monitor as legacy_replay_runtime_monitor

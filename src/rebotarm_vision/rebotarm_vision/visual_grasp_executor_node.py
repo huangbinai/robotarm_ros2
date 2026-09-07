@@ -16,30 +16,28 @@ from tf2_ros import Buffer, TransformListener
 from rebotarm_msgs.msg import ArmStatus, GraspCandidateArray, GraspPlan
 from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
 from .grasp_plan_store import GraspPlanStore
-from .grasp_retry_policy import RetryPolicyConfig
 from .grasp_preview_sender_node import (
     _transform_from_msg,
     apply_tcp_offset_to_pose,
     transform_pose_message,
 )
 from .gripper_quality import close_contact_success
-from .gripper_policy import GripperPolicyConfig, resolve_gripper_command
-from .place_task_policy import PlaceTaskConfig, build_place_stages
-from .retreat_policy import RetreatPolicyConfig
-from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage
+from .gripper_policy import resolve_gripper_command
+from .place_task_policy import build_place_stages
+from .trajectory_recovery_policy import recovery_decision_for_stage
 from .visual_failure_recovery import (
     FailureRecoveryOperations,
     VisualFailureRecovery,
 )
-from .visual_grasp_pose_policy import BaseAxisGraspPolicyConfig, build_base_axis_grasp_targets
+from .visual_grasp_parameter_adapter import VisualGraspParameterAdapter
+from .visual_grasp_pose_policy import build_base_axis_grasp_targets
 from .visual_grasp_sequence import (
     PoseTarget,
-    VisualGraspSequenceConfig,
     VisualGraspStage,
     append_visual_ready_return_stages,
     build_visual_grasp_sequence,
 )
-from .visual_servo_policy import VisualServoApproachConfig, build_visual_servo_step
+from .visual_servo_policy import build_visual_servo_step
 
 
 def pose_to_target(pose: Pose) -> PoseTarget:
@@ -157,12 +155,15 @@ class VisualGraspExecutorNode(Node):
         self.declare_parameter("failure_recovery_return_velocity_scaling", 0.04)
 
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
+        self._visual_grasp_config = VisualGraspParameterAdapter(self.get_parameter)
         self._input_topic = str(self.get_parameter("input_topic").value)
         self._candidates_topic = str(self.get_parameter("candidates_topic").value)
         self._target_frame = str(self.get_parameter("target_frame").value).strip()
         self._ee_frame_id = str(self.get_parameter("ee_frame_id").value).strip()
-        self._tcp_offset_xyz = self._tuple3("tcp_offset_xyz")
-        self._target_base_offset_xyz = self._tuple3("target_base_offset_xyz")
+        self._tcp_offset_xyz = self._visual_grasp_config.tuple3("tcp_offset_xyz")
+        self._target_base_offset_xyz = self._visual_grasp_config.tuple3(
+            "target_base_offset_xyz"
+        )
         self._grasp_base_z_offset_m = float(self.get_parameter("grasp_base_z_offset_m").value)
         self._service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
         self._motion_result_timeout_sec = float(self.get_parameter("motion_result_timeout_sec").value)
@@ -300,16 +301,6 @@ class VisualGraspExecutorNode(Node):
             f"input={self._input_topic}, namespace=/{self._arm_namespace}, target_frame={self._target_frame}, "
             "motion_execution=/motion_execution/execute_pose"
         )
-
-    def _tuple3(self, name: str) -> tuple[float, float, float]:
-        values = self._tuple_n(name, 3)
-        return (values[0], values[1], values[2])
-
-    def _tuple_n(self, name: str, expected_len: int) -> tuple[float, ...]:
-        values = list(self.get_parameter(name).value)
-        if len(values) != expected_len:
-            raise ValueError(f"{name} must contain exactly {expected_len} values")
-        return tuple(float(value) for value in values)
 
     def _on_plan(self, plan: GraspPlan) -> None:
         self._plan_store.update_plan(plan)
@@ -469,10 +460,7 @@ class VisualGraspExecutorNode(Node):
                     failed_stage,
                     attempt_index=attempt_index,
                     remaining_attempts=remaining_attempts,
-                    config=RecoveryConfig(
-                        auto_retry_enabled=bool(self.get_parameter("auto_retry_enabled").value),
-                        safe_retreat_before_retry=bool(self.get_parameter("safe_retreat_before_retry").value),
-                    ),
+                    config=self._visual_grasp_config.recovery(),
                 )
                 if decision.request_stop:
                     self._request_stop(
@@ -526,47 +514,11 @@ class VisualGraspExecutorNode(Node):
             jaw_width_m=self._detected_jaw_width(plan),
             object_length_m=self._detected_object_length(plan),
             class_name=str(getattr(plan.candidate, "class_name", "") or ""),
-            config=GripperPolicyConfig(
-                auto_width=bool(self.get_parameter("auto_gripper_width").value),
-                auto_effort=bool(self.get_parameter("auto_gripper_effort").value),
-                default_open_width_m=float(self.get_parameter("open_position_m").value),
-                default_close_width_m=float(self.get_parameter("close_position_m").value),
-                default_max_effort=float(self.get_parameter("close_max_effort").value),
-                open_clearance_m=float(self.get_parameter("open_clearance_m").value),
-                close_margin_m=float(self.get_parameter("close_margin_m").value),
-                min_open_width_m=float(self.get_parameter("min_open_position_m").value),
-                max_open_width_m=float(self.get_parameter("max_open_position_m").value),
-                min_close_width_m=float(self.get_parameter("min_close_position_m").value),
-                max_close_width_m=float(self.get_parameter("max_close_position_m").value),
-                min_effort=float(self.get_parameter("min_gripper_effort").value),
-                max_effort=float(self.get_parameter("max_gripper_effort").value),
-                max_allowed_width_m=float(self.get_parameter("max_allowed_grasp_width_m").value),
-            ),
+            config=self._visual_grasp_config.gripper_policy(),
         )
-        config = VisualGraspSequenceConfig(
-            open_before_approach=bool(self.get_parameter("open_before_approach").value),
-            open_position_m=float(self.get_parameter("open_position_m").value),
-            close_position_m=float(self.get_parameter("close_position_m").value),
-            close_max_effort=float(self.get_parameter("close_max_effort").value),
-            lift_z_m=float(self.get_parameter("lift_z_m").value),
-            min_grasp_z_m=float(self.get_parameter("min_grasp_z_m").value),
-            auto_gripper_width=bool(self.get_parameter("auto_gripper_width").value),
+        config = self._visual_grasp_config.sequence(
             detected_jaw_width_m=self._detected_jaw_width(plan),
-            open_clearance_m=float(self.get_parameter("open_clearance_m").value),
-            close_margin_m=float(self.get_parameter("close_margin_m").value),
-            min_open_position_m=float(self.get_parameter("min_open_position_m").value),
-            max_open_position_m=float(self.get_parameter("max_open_position_m").value),
-            min_close_position_m=float(self.get_parameter("min_close_position_m").value),
-            max_close_position_m=float(self.get_parameter("max_close_position_m").value),
             gripper_command=gripper_command,
-            retreat_policy=RetreatPolicyConfig(
-                enabled=bool(self.get_parameter("safe_retreat_enabled").value),
-                dynamic_retreat_enabled=bool(self.get_parameter("dynamic_retreat_enabled").value),
-                min_lift_z_m=float(self.get_parameter("safe_retreat_min_lift_z_m").value),
-                retreat_distance_m=float(self.get_parameter("safe_retreat_distance_m").value),
-                retreat_axis_xyz=self._tuple3("safe_retreat_axis_xyz"),
-            ),
-            include_safe_home=bool(self.get_parameter("safe_home_after_grasp").value),
         )
         return build_visual_grasp_sequence(pregrasp, grasp, config)
 
@@ -576,10 +528,7 @@ class VisualGraspExecutorNode(Node):
             candidates_max_age_sec=float(
                 self.get_parameter("candidates_max_age_sec").value
             ),
-            retry_config=RetryPolicyConfig(
-                enabled=bool(self.get_parameter("auto_retry_enabled").value),
-                max_attempts=int(self.get_parameter("auto_retry_max_attempts").value),
-            ),
+            retry_config=self._visual_grasp_config.retry(),
         )
 
     def _execute_stages(self, stages: list[VisualGraspStage]) -> tuple[bool, str, str]:
@@ -705,10 +654,7 @@ class VisualGraspExecutorNode(Node):
 
     def _run_visual_servo_approach(self, current: PoseTarget) -> tuple[bool, str]:
         max_iterations = max(1, int(self.get_parameter("approach_visual_servo_max_iterations").value))
-        config = VisualServoApproachConfig(
-            max_step_m=float(self.get_parameter("approach_visual_servo_max_step_m").value),
-            position_tolerance_m=float(self.get_parameter("approach_visual_servo_position_tolerance_m").value),
-        )
+        config = self._visual_grasp_config.visual_servo()
         last_error = 0.0
         require_fresh_plan = bool(self.get_parameter("approach_visual_servo_require_fresh_plan").value)
         for iteration in range(max_iterations):
@@ -741,16 +687,7 @@ class VisualGraspExecutorNode(Node):
         return False, f"not converged after {max_iterations} steps: error={last_error:.4f}"
 
     def _append_place_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
-        return stages + build_place_stages(
-            PlaceTaskConfig(
-                enabled=bool(self.get_parameter("place_after_grasp_enabled").value),
-                place_position_xyz=self._tuple3("place_position_xyz"),
-                place_orientation_xyzw=self._tuple_n("place_orientation_xyzw", 4),
-                open_position_m=float(self.get_parameter("place_open_position_m").value),
-                open_max_effort=float(self.get_parameter("place_open_max_effort").value),
-                retreat_z_m=float(self.get_parameter("place_retreat_z_m").value),
-            )
-        )
+        return stages + build_place_stages(self._visual_grasp_config.place())
 
     def _append_post_grasp_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
         with_place = self._append_place_stages(stages)
@@ -792,10 +729,7 @@ class VisualGraspExecutorNode(Node):
                 float(grasp_pose.position.y),
                 float(grasp_pose.position.z),
             ),
-            config=BaseAxisGraspPolicyConfig(
-                fixed_orientation_xyzw=self._tuple_n("fixed_grasp_orientation_xyzw", 4),
-                approach_axis_xyz=self._tuple3("base_approach_axis_xyz"),
-                pregrasp_distance_m=float(self.get_parameter("base_pregrasp_distance_m").value),
+            config=self._visual_grasp_config.base_axis_pose(
                 tcp_offset_xyz=self._tcp_offset_xyz,
                 target_base_offset_xyz=self._target_base_offset_xyz,
                 grasp_z_offset_m=self._grasp_base_z_offset_m,

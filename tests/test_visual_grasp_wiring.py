@@ -646,9 +646,11 @@ def test_visual_grasp_executor_refreshes_plan_after_pregrasp():
 
 def test_visual_grasp_executor_has_bounded_approach_visual_servo():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    adapter_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_parameter_adapter.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
 
-    assert "from .visual_servo_policy import VisualServoApproachConfig, build_visual_servo_step" in executor_text
+    assert "from .visual_servo_policy import build_visual_servo_step" in executor_text
+    assert "from .visual_servo_policy import VisualServoApproachConfig" in adapter_text
     assert 'self.declare_parameter("approach_visual_servo_enabled", False)' in executor_text
     assert 'self.declare_parameter("approach_visual_servo_max_iterations", 5)' in executor_text
     assert 'self.declare_parameter("approach_visual_servo_max_step_m", 0.02)' in executor_text
@@ -666,16 +668,19 @@ def test_visual_grasp_executor_has_bounded_approach_visual_servo():
 
 def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    adapter_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_parameter_adapter.py")
     plan_store_text = _read("src/rebotarm_vision/rebotarm_vision/grasp_plan_store.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     recovery_text = _read("src/rebotarm_vision/rebotarm_vision/trajectory_recovery_policy.py")
 
     assert "GraspCandidateArray, GraspPlan" in executor_text
     assert "from .grasp_plan_store import GraspPlanStore" in executor_text
-    assert "from .grasp_retry_policy import RetryPolicyConfig" in executor_text
+    assert "from .grasp_retry_policy import RetryPolicyConfig" in adapter_text
     assert "grasp_verification_policy" not in executor_text
-    assert "from .place_task_policy import PlaceTaskConfig, build_place_stages" in executor_text
-    assert "from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage" in executor_text
+    assert "from .place_task_policy import build_place_stages" in executor_text
+    assert "from .place_task_policy import PlaceTaskConfig" in adapter_text
+    assert "from .trajectory_recovery_policy import recovery_decision_for_stage" in executor_text
+    assert "from .trajectory_recovery_policy import RecoveryConfig" in adapter_text
     assert 'self.declare_parameter("candidates_topic", "/grasp/filtered_candidates")' in executor_text
     assert 'self.declare_parameter("auto_retry_enabled", False)' in executor_text
     assert 'self.declare_parameter("dynamic_retreat_enabled", True)' in executor_text

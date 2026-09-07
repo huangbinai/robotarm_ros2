@@ -160,6 +160,17 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
     assert "sys.path.insert" not in source
 
 
+def test_hardware_manager_delegates_feedback_topology_and_validation() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "return build_controller_groups(" in source
+    assert "validate_hardware_feedback_state(" in source
+    assert "return validated_gripper_feedback_values(" in source
+    assert "def add(controller" not in source
+
+
 def test_hardware_manager_delegates_gripper_runtime_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

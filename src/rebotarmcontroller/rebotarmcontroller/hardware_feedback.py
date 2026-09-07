@@ -16,6 +16,39 @@ ControllerGroup = tuple[object, list[tuple[str, object]]]
 FeedbackObservation = tuple[object, int]
 
 
+def build_controller_groups(
+    arm: Any,
+    *,
+    gripper_motor: object | None,
+    gripper_controller: object | None,
+) -> list[ControllerGroup]:
+    groups: list[ControllerGroup] = []
+
+    def add(controller: object, label: str, motor: object) -> None:
+        for existing, entries in groups:
+            if existing is controller:
+                entries.append((label, motor))
+                return
+        groups.append((controller, [(label, motor)]))
+
+    controller_map = getattr(arm, "_ctrl_map", {})
+    motor_map = getattr(arm, "_motor_map", {})
+    for joint in getattr(arm, "_joints", []):
+        label = str(joint.name)
+        controller = controller_map.get(getattr(joint, "vendor", None))
+        motor = motor_map.get(label)
+        if controller is None or motor is None:
+            raise RuntimeError(f"{label} feedback hardware unavailable")
+        add(controller, label, motor)
+    if gripper_motor is not None:
+        if gripper_controller is None:
+            raise RuntimeError("gripper feedback controller unavailable")
+        add(gripper_controller, "gripper", gripper_motor)
+    if not groups:
+        raise RuntimeError("hardware feedback controller map unavailable")
+    return groups
+
+
 class HardwareFeedbackCoordinator:
     """Owns feedback polling, sequence verification, caching, and freshness."""
 

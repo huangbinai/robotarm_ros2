@@ -24,7 +24,11 @@ from .gravity_compensation_state import (
     GravityCompensationField,
     GravityCompensationState,
 )
-from .hardware_feedback import HardwareFeedbackCoordinator
+from .hardware_feedback import HardwareFeedbackCoordinator, build_controller_groups
+from .hardware_feedback_validation import (
+    validate_feedback_state as validate_hardware_feedback_state,
+    validated_gripper_feedback_values,
+)
 from .hardware_lifecycle_state import (
     HardwareLifecycleField,
     HardwareLifecycleState,
@@ -855,64 +859,30 @@ class HardwareManager:
         return self._gravity_state.target_copy()
 
     def _feedback_controller_groups(self):
-        groups: list[tuple[object, list[tuple[str, object]]]] = []
-
-        def add(controller, label: str, motor) -> None:
-            for existing, entries in groups:
-                if existing is controller:
-                    entries.append((label, motor))
-                    return
-            groups.append((controller, [(label, motor)]))
-
-        controller_map = getattr(self._arm, "_ctrl_map", {})
-        motor_map = getattr(self._arm, "_motor_map", {})
-        for joint in getattr(self._arm, "_joints", []):
-            label = str(joint.name)
-            controller = controller_map.get(getattr(joint, "vendor", None))
-            motor = motor_map.get(label)
-            if controller is None or motor is None:
-                raise RuntimeError(f"{label} feedback hardware unavailable")
-            add(controller, label, motor)
-        if self._gripper_mot is not None:
-            if self._gripper_ctrl is None:
-                raise RuntimeError("gripper feedback controller unavailable")
-            add(self._gripper_ctrl, "gripper", self._gripper_mot)
-        if not groups:
-            raise RuntimeError("hardware feedback controller map unavailable")
-        return groups
+        return build_controller_groups(
+            self._arm,
+            gripper_motor=self._gripper_mot,
+            gripper_controller=self._gripper_ctrl,
+        )
 
     @staticmethod
     def _validated_gripper_feedback_values(state) -> tuple[float, float, float, int]:
-        if state is None:
-            raise RuntimeError("gripper feedback unavailable")
-        values = (float(state.pos), float(state.vel), float(state.torq))
-        if not all(np.isfinite(value) for value in values):
-            raise RuntimeError("gripper feedback contains non-finite values")
-        position, velocity, torque = values
-        if not (_G_ANGLE_OPEN - _G_COORDINATE_TOL_RAD <= position <= _G_CLOSED_FEEDBACK_TOL_RAD):
-            raise RuntimeError(
-                f"gripper coordinate invalid: {position:.6f} rad outside feedback range "
-                f"[{_G_ANGLE_OPEN:.6f}, {_G_CLOSED_FEEDBACK_TOL_RAD:.6f}]"
-            )
-        return position, velocity, torque, int(state.status_code)
+        return validated_gripper_feedback_values(
+            state,
+            open_angle_rad=_G_ANGLE_OPEN,
+            coordinate_tolerance_rad=_G_COORDINATE_TOL_RAD,
+            closed_feedback_tolerance_rad=_G_CLOSED_FEEDBACK_TOL_RAD,
+        )
 
     def _validate_feedback_state(self, label: str, state) -> None:
-        if label == "gripper":
-            self._validated_gripper_feedback_values(state)
-            return
-        if state is None:
-            raise RuntimeError(f"{label} feedback unavailable")
-        values = (float(state.pos), float(state.vel), float(state.torq))
-        if not all(np.isfinite(value) for value in values):
-            raise RuntimeError(f"{label} feedback contains non-finite values")
-        limits = _JOINT_FEEDBACK_LIMITS_RAD.get(label)
-        if limits is None:
-            raise RuntimeError(f"no feedback limit configured for {label}")
-        if not limits[0] <= values[0] <= limits[1]:
-            raise RuntimeError(
-                f"{label} position {values[0]:.6f} rad outside feedback range "
-                f"[{limits[0]:.6f}, {limits[1]:.6f}]"
-            )
+        validate_hardware_feedback_state(
+            label,
+            state,
+            joint_position_limits_rad=_JOINT_FEEDBACK_LIMITS_RAD,
+            gripper_open_angle_rad=_G_ANGLE_OPEN,
+            gripper_coordinate_tolerance_rad=_G_COORDINATE_TOL_RAD,
+            gripper_closed_feedback_tolerance_rad=_G_CLOSED_FEEDBACK_TOL_RAD,
+        )
 
     def _on_verified_feedback(
         self,

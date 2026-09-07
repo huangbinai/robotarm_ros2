@@ -1308,9 +1308,10 @@ def test_status_panel_compacts_large_teach_replay_payloads_for_sse():
 
 def test_status_panel_check_mode_is_read_only_for_teach_actions():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    config_text = _read("src/rebotarm_dashboard/rebotarm_dashboard/panel_config.py")
 
     assert 'self.declare_parameter("panel_mode", "control")' in panel_text
-    assert '"panel_mode": str(self.get_parameter("panel_mode").value)' in panel_text
+    assert '"panel_mode": str(value("panel_mode"))' in config_text
     assert "const isCheckMode = panelMode === 'check';" in panel_text
     assert "isCheckMode" in panel_text
     assert "panel_mode" in panel_text

@@ -138,10 +138,12 @@ def test_interactive_control_keeps_teleop_compatibility_imports() -> None:
 
 
 def test_dashboard_package_exports_status_panel_modules() -> None:
+    import rebotarm_dashboard.panel_config as panel_config
     import rebotarm_dashboard.status_panel_api as status_panel_api
     import rebotarm_dashboard.status_panel_http as status_panel_http
     import rebotarm_dashboard.status_panel_state as status_panel_state
 
+    assert hasattr(panel_config, "build_panel_config")
     assert hasattr(status_panel_api, "dispatch_post_request")
     assert hasattr(status_panel_http, "create_status_panel_server")
     assert hasattr(status_panel_state, "TeleopStatusStore")

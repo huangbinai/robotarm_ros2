@@ -31,6 +31,7 @@ from .arm_command_api import (
 from rebotarm_motion.collision_precheck import CollisionPrechecker
 from .parameter_helpers import build_joint_limits
 from .parameter_helpers import sensor_qos_kwargs
+from .panel_config import build_panel_config
 from .status_panel_http import create_status_panel_server
 from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
@@ -413,84 +414,14 @@ class TeleopStatusPanelNode(Node):
         )
 
     def _panel_config(self) -> dict:
-        return {
-            "joint_names": list(self._joint_names),
-            "joint_limits": {
-                name: [float(lower), float(upper)]
-                for name, (lower, upper) in self._joint_limits.items()
-            },
-            "joint_velocity_limits": {
-                name: float(limit)
-                for name, limit in self._joint_velocity_limits.items()
-            },
-            "gripper_limits": [float(self._gripper_limits[0]), float(self._gripper_limits[1])],
-            "web_execute": {
-                "enabled": bool(self.get_parameter("web_execute_enabled").value),
-                "max_delta_rad": float(self.get_parameter("web_execute_max_delta_rad").value),
-                "max_joint_speed_rad_s": float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
-                "min_duration": float(self.get_parameter("web_execute_min_duration").value),
-                "max_duration": float(self.get_parameter("web_execute_max_duration").value),
-            },
-            "web_keyboard": {
-                "step_rad": float(self.get_parameter("web_keyboard_default_step_rad").value),
-                "min_step_rad": float(self.get_parameter("web_keyboard_min_step_rad").value),
-                "max_step_rad": float(self.get_parameter("web_keyboard_max_step_rad").value),
-                "duration": float(self.get_parameter("web_keyboard_default_duration").value),
-                "min_duration": float(self.get_parameter("web_keyboard_min_duration").value),
-                "max_duration": float(self.get_parameter("web_keyboard_max_duration").value),
-                "max_joint_speed_rad_s": float(self.get_parameter("web_keyboard_default_speed_rad_s").value),
-            },
-            "web_gripper": {
-                "max_effort": float(self.get_parameter("web_gripper_max_effort").value),
-                "max_effort_limit": float(self.get_parameter("web_gripper_max_effort_limit").value),
-            },
-            "teach": {
-                "record_path": str(self.get_parameter("record_path").value),
-                "direct_threshold": float(self.get_parameter("direct_threshold").value),
-                "align_threshold": float(self.get_parameter("align_threshold").value),
-                "align_duration": float(self.get_parameter("align_duration").value),
-                "align_duration_auto": bool(self.get_parameter("align_duration_auto").value),
-                "align_target_speed_rad_s": float(self.get_parameter("align_target_speed_rad_s").value),
-                "align_min_duration": float(self.get_parameter("align_min_duration").value),
-                "align_max_duration": float(self.get_parameter("align_max_duration").value),
-                "align_steps": int(self.get_parameter("align_steps").value),
-                "replay_speed": float(self.get_parameter("replay_speed").value),
-                "green_jump_rad": float(self.get_parameter("green_jump_rad").value),
-                "yellow_jump_rad": float(self.get_parameter("yellow_jump_rad").value),
-                "yellow_max_speed": float(self.get_parameter("yellow_max_speed").value),
-                "max_replay_velocity_rad_s": float(self.get_parameter("max_replay_velocity_rad_s").value),
-                "max_replay_velocity_rad_s_by_joint": [
-                    float(value)
-                    for value in self.get_parameter("max_replay_velocity_rad_s_by_joint").value
-                ],
-                "max_replay_acceleration_rad_s2": float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-                "max_replay_jerk_rad_s3": float(self.get_parameter("max_replay_jerk_rad_s3").value),
-                "large_motion_span_rad": float(self.get_parameter("large_motion_span_rad").value),
-                "large_motion_total_rad": float(self.get_parameter("large_motion_total_rad").value),
-                "large_motion_max_speed": float(self.get_parameter("large_motion_max_speed").value),
-                "start_hold_sec": float(self.get_parameter("start_hold_sec").value),
-                "soft_start_duration": float(self.get_parameter("soft_start_duration").value),
-                "soft_start_steps": int(self.get_parameter("soft_start_steps").value),
-                "first_hold_sec": float(self.get_parameter("first_hold_sec").value),
-                "final_hold_sec": float(self.get_parameter("final_hold_sec").value),
-                "use_moveit_start_align": bool(self.get_parameter("use_moveit_start_align").value),
-                "moveit_start_skip_threshold": float(self.get_parameter("moveit_start_skip_threshold").value),
-                "collision_check_enabled": bool(self.get_parameter("collision_check_enabled").value),
-                "collision_check_max_samples": int(self.get_parameter("collision_check_max_samples").value),
-                "smoothing_enabled": bool(self.get_parameter("smoothing_enabled").value),
-                "smoothing_window": int(self.get_parameter("smoothing_window").value),
-                "filter_enabled": bool(self.get_parameter("filter_enabled").value),
-                "filter_cutoff_hz": float(self.get_parameter("filter_cutoff_hz").value),
-                "filter_sample_rate_hz": float(self.get_parameter("filter_sample_rate_hz").value),
-                "resample_enabled": bool(self.get_parameter("resample_enabled").value),
-                "resample_rate_hz": float(self.get_parameter("resample_rate_hz").value),
-                "time_parameterization_method": str(self.get_parameter("time_parameterization_method").value),
-                "max_prepared_jump_rad": float(self.get_parameter("max_prepared_jump_rad").value),
-                "use_hardware": bool(self.get_parameter("use_hardware").value) if self.has_parameter("use_hardware") else False,
-            },
-            "panel_mode": str(self.get_parameter("panel_mode").value),
-            "execution_mode": str(self.get_parameter("execution_mode").value),
-        }
+        return build_panel_config(
+            get_parameter=self.get_parameter,
+            has_parameter=self.has_parameter,
+            joint_names=self._joint_names,
+            joint_limits=self._joint_limits,
+            joint_velocity_limits=self._joint_velocity_limits,
+            gripper_limits=self._gripper_limits,
+        )
 
     def _teach_record_info(self, record_path: str | None = None) -> dict:
         snapshot = self._store.snapshot()

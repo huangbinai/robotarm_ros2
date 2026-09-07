@@ -23,6 +23,11 @@ from .gripper_motor_commands import (
     resolve_gripper_motor_command,
     send_safe_gripper_mit,
 )
+from .gripper_position import (
+    GripperPositionConfig,
+    GripperPositionCoordinator,
+    GripperPositionProgress,
+)
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_sdk_adapter import GripperSdkAdapter
 from .gravity_compensation_state import (
@@ -194,6 +199,18 @@ class HardwareManager:
         )
         self._gripper_command_cancel = threading.Event()
         self._gripper_lock = threading.RLock()
+        self._gripper_position = GripperPositionCoordinator(
+            self,
+            GripperPositionConfig(
+                coordinates=_GRIPPER_COORDINATES,
+                feedback_stale_timeout_sec=self._feedback_stale_timeout_sec,
+                default_effort_nm=_G_DEFAULT_FORCE,
+                torque_cap_nm=self._gripper_position_torque_cap_nm,
+                maximum_speed_rad_s=self._gripper_position_max_speed_rad_s,
+                timeout_margin_sec=self._gripper_position_timeout_margin_sec,
+                arrival_tolerance_rad=_G_ARRIVE_TOL,
+            ),
+        )
         self._gripper_grasp = GripperGraspCoordinator(
             self,
             GripperGraspConfig(
@@ -1091,33 +1108,7 @@ class HardwareManager:
             position_m,
             max_effort,
         )
-        sample = self._verified_feedback_sample("gripper")
-        if sample.is_stale(time.monotonic(), self._feedback_stale_timeout_sec):
-            raise RuntimeError("gripper feedback is stale before position command")
-        start_angle, _velocity, _torque, status = self._validated_gripper_feedback_values(
-            sample.state
-        )
-        if status != 1:
-            raise RuntimeError(f"gripper status_code={status}, expected 1")
-        target = _GRIPPER_COORDINATES.opening_to_angle(position)
-        effort = _G_DEFAULT_FORCE if effort_request <= 0.0 else effort_request
-        now = time.monotonic()
-        dynamic_timeout = (
-            abs(target - start_angle) / self._gripper_position_max_speed_rad_s
-            + self._gripper_position_timeout_margin_sec
-        )
-        with self._gripper_lock:
-            self._gripper_command_cancel.clear()
-            self._gripper_state.start_position(
-                start_angle=start_angle,
-                goal_angle=target,
-                target_effort=float(
-                    np.clip(effort, 0.05, self._gripper_position_torque_cap_nm)
-                ),
-                now=now,
-                timeout_sec=dynamic_timeout,
-            )
-        self._require_gripper_control_loop()
+        self._gripper_position.start(position, effort_request)
 
     def gripper_target_timeout_sec(self) -> float:
         with self._gripper_lock:
@@ -1129,27 +1120,7 @@ class HardwareManager:
             return self._gripper_state.command_error
 
     def wait_gripper_target(self, timeout: float | None = None) -> bool:
-        with self._gripper_lock:
-            owned_goal = self._gripper_state.goal_angle
-            deadline = self._gripper_state.target_deadline
-        if deadline is None:
-            return False
-        if timeout is not None:
-            explicit = time.monotonic() + max(float(timeout), 0.0)
-            deadline = min(deadline, explicit)
-        while time.monotonic() < deadline:
-            with self._gripper_lock:
-                if self._gripper_state.goal_angle != owned_goal:
-                    return False
-                if not self._gripper_state.active:
-                    return self._gripper_state.position_result == "succeeded"
-                if self._gripper_command_cancel.is_set():
-                    return False
-            time.sleep(0.02)
-        self.cancel_gripper_position_command(
-            f"gripper target timeout: goal={owned_goal:.6f}rad"
-        )
-        return False
+        return self._gripper_position.wait(timeout)
 
     def set_gripper_position(self, position_m: float, max_effort: float = 0.0) -> tuple[bool, float]:
         self.set_gripper_target(position_m, max_effort)
@@ -1194,8 +1165,45 @@ class HardwareManager:
         with self._gripper_lock:
             return self._gripper_state.velocity, self._gripper_state.torque
 
+    def gripper_validated_feedback_values(
+        self,
+        state,
+    ) -> tuple[float, float, float, int]:
+        return self._validated_gripper_feedback_values(state)
+
     def gripper_command_canceled(self) -> bool:
         return self._gripper_command_cancel.is_set()
+
+    def begin_gripper_position(
+        self,
+        *,
+        start_angle: float,
+        goal_angle: float,
+        target_effort: float,
+        now: float,
+        timeout_sec: float,
+    ) -> None:
+        with self._gripper_lock:
+            self._gripper_command_cancel.clear()
+            self._gripper_state.start_position(
+                start_angle=start_angle,
+                goal_angle=goal_angle,
+                target_effort=target_effort,
+                now=now,
+                timeout_sec=timeout_sec,
+            )
+        self._require_gripper_control_loop()
+
+    def gripper_position_progress(self) -> GripperPositionProgress:
+        with self._gripper_lock:
+            return GripperPositionProgress(
+                goal_angle_rad=self._gripper_state.goal_angle,
+                position_angle_rad=self._gripper_state.position,
+                deadline=self._gripper_state.target_deadline,
+                active=self._gripper_state.active,
+                result=self._gripper_state.position_result,
+                canceled=self._gripper_command_cancel.is_set(),
+            )
 
     def begin_gripper_grasp(self, close_force: float, hold_force: float) -> None:
         with self._gripper_lock:
@@ -1268,18 +1276,7 @@ class HardwareManager:
         return _GRIPPER_COORDINATES.angle_to_opening(position)
 
     def gripper_reached_target(self) -> bool:
-        with self._gripper_lock:
-            if self._gripper_state.position_result == "succeeded":
-                return True
-            if (
-                self._gripper_state.position_result == "failed"
-                or not self._gripper_state.active
-            ):
-                return False
-            return (
-                abs(self._gripper_state.position - self._gripper_state.goal_angle)
-                < _G_ARRIVE_TOL
-            )
+        return self._gripper_position.reached_target()
 
     def send_gripper_motor_cmd(self, cmd) -> None:
         self._require_enabled()

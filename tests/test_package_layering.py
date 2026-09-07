@@ -228,7 +228,6 @@ def test_hardware_manager_uses_shared_gripper_coordinate_model() -> None:
 
     assert "_GRIPPER_COORDINATES = DEFAULT_GRIPPER_COORDINATES" in source
     assert "_GRIPPER_COORDINATES.validate_position_request(" in source
-    assert "_GRIPPER_COORDINATES.opening_to_angle(position)" in source
     assert "_GRIPPER_COORDINATES.angle_to_opening(position)" in source
     assert "_G_MAX_DIST_M" not in source
     assert "_G_VERIFIED_OPEN_LIMIT_M" not in source
@@ -247,6 +246,22 @@ def test_hardware_manager_delegates_gripper_grasp_workflow() -> None:
     assert "return self._gripper_grasp.execute(" in grasp_source
     assert "while time.monotonic()" not in grasp_source
     assert "stable_contact_samples" not in grasp_source
+
+
+def test_hardware_manager_delegates_gripper_position_workflow() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+    position_source = source.split("    def set_gripper_target", 1)[1].split(
+        "    def grasp_gripper", 1
+    )[0]
+
+    assert "self._gripper_position = GripperPositionCoordinator(" in source
+    assert "self._gripper_position.start(position, effort_request)" in position_source
+    assert "return self._gripper_position.wait(timeout)" in position_source
+    assert "return self._gripper_position.reached_target()" in source
+    assert "while time.monotonic() < deadline" not in position_source
+    assert "dynamic_timeout" not in position_source
 
 
 def test_gripper_runs_only_from_unified_hardware_control_loop() -> None:

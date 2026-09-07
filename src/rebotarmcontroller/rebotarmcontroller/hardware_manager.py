@@ -14,10 +14,10 @@ from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
 from .gripper_motion_policy import (
     GripperMotionPolicyConfig,
-    GripperMotionSnapshot,
     GripperTickDecision,
     decide_gripper_tick,
 )
+from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_safety import is_gripper_contact_sample
 from .hardware_feedback import HardwareFeedbackCoordinator
 from .hardware_runtime_config import HardwareRuntimeConfig
@@ -106,6 +106,26 @@ def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
 class HardwareManager:
     """Owns the single RobotArm instance used by the ROS driver."""
 
+    _gripper_target_angle = GripperRuntimeField("target_angle")
+    _gripper_goal_angle = GripperRuntimeField("goal_angle")
+    _gripper_target_effort = GripperRuntimeField("target_effort")
+    _gripper_close_force = GripperRuntimeField("close_force")
+    _gripper_hold_force = GripperRuntimeField("hold_force")
+    _gripper_hold_angle = GripperRuntimeField("hold_angle")
+    _gripper_hold_deadline = GripperRuntimeField("hold_deadline")
+    _gripper_hold_release_reason = GripperRuntimeField("hold_release_reason")
+    _gripper_mode = GripperRuntimeField("mode")
+    _gripper_active = GripperRuntimeField("active")
+    _gripper_pos = GripperRuntimeField("position")
+    _gripper_vel = GripperRuntimeField("velocity")
+    _gripper_torque = GripperRuntimeField("torque")
+    _gripper_command_error = GripperRuntimeField("command_error")
+    _gripper_position_result = GripperRuntimeField("position_result")
+    _gripper_target_timeout_sec = GripperRuntimeField("target_timeout_sec")
+    _gripper_target_deadline_monotonic = GripperRuntimeField("target_deadline")
+    _gripper_last_tick_monotonic = GripperRuntimeField("last_tick")
+    _gripper_neutral_pending = GripperRuntimeField("neutral_pending")
+
     def __init__(
         self,
         arm_cfg: Optional[str] = None,
@@ -165,27 +185,13 @@ class HardwareManager:
         self._gripper_cfg = None
         self._gripper_mot = None
         self._gripper_ctrl = None
-        self._gripper_target_angle = 0.0
-        self._gripper_goal_angle = 0.0
-        self._gripper_target_effort = _G_DEFAULT_FORCE
-        self._gripper_close_force = _G_GRASP_CLOSE_FORCE_DEFAULT
-        self._gripper_hold_force = _G_GRASP_HOLD_FORCE_DEFAULT
-        self._gripper_hold_angle = 0.0
-        self._gripper_hold_deadline: float | None = None
-        self._gripper_hold_release_reason: str | None = None
-        self._gripper_mode = "idle"
-        self._gripper_active = False
-        self._gripper_pos = 0.0
-        self._gripper_vel = 0.0
-        self._gripper_torque = 0.0
+        self._gripper_state = GripperRuntimeState(
+            target_effort=_G_DEFAULT_FORCE,
+            close_force=_G_GRASP_CLOSE_FORCE_DEFAULT,
+            hold_force=_G_GRASP_HOLD_FORCE_DEFAULT,
+        )
         self._gripper_loop_stop = threading.Event()
         self._gripper_command_cancel = threading.Event()
-        self._gripper_command_error: str | None = None
-        self._gripper_position_result = "idle"
-        self._gripper_target_timeout_sec = 0.0
-        self._gripper_target_deadline_monotonic: float | None = None
-        self._gripper_last_tick_monotonic: float | None = None
-        self._gripper_neutral_pending: tuple[float, str, bool] | None = None
         self._gripper_loop_thread: threading.Thread | None = None
         self._gripper_loop_running = False
         self._gripper_lock = threading.RLock()
@@ -279,12 +285,12 @@ class HardwareManager:
     @property
     def gripper_active(self) -> bool:
         with self._gripper_lock:
-            return bool(self._gripper_active)
+            return bool(self._gripper_state.active)
 
     @property
     def gripper_mode(self) -> str:
         with self._gripper_lock:
-            return str(self._gripper_mode)
+            return str(self._gripper_state.mode)
 
     @property
     def error_codes(self) -> list[str]:
@@ -951,9 +957,7 @@ class HardwareManager:
         if label == "gripper":
             position, velocity, torque, _status = self._validated_gripper_feedback_values(state)
             with self._gripper_lock:
-                self._gripper_pos = position
-                self._gripper_vel = velocity
-                self._gripper_torque = torque
+                self._gripper_state.update_feedback(position, velocity, torque)
 
     def _verified_feedback_sample(self, label: str) -> VerifiedFeedbackSample:
         return self._feedback_coordinator.sample(label)
@@ -998,7 +1002,7 @@ class HardwareManager:
                 f"gripper feedback stale: age={age:.3f}s "
                 f"limit={self._feedback_stale_timeout_sec:.3f}s"
             )
-        position = float(self._gripper_pos)
+        position = float(self._gripper_state.position)
         if not np.isfinite(position) or not (
             _G_ANGLE_OPEN - _G_COORDINATE_TOL_RAD
             <= position
@@ -1246,34 +1250,30 @@ class HardwareManager:
         )
         with self._gripper_lock:
             self._gripper_command_cancel.clear()
-            self._gripper_target_angle = start_angle
-            self._gripper_goal_angle = target
-            self._gripper_target_effort = float(
-                np.clip(effort, 0.05, self._gripper_position_torque_cap_nm)
+            self._gripper_state.start_position(
+                start_angle=start_angle,
+                goal_angle=target,
+                target_effort=float(
+                    np.clip(effort, 0.05, self._gripper_position_torque_cap_nm)
+                ),
+                now=now,
+                timeout_sec=dynamic_timeout,
             )
-            self._gripper_mode = "position"
-            self._gripper_active = True
-            self._gripper_position_result = "active"
-            self._gripper_command_error = None
-            self._gripper_last_tick_monotonic = now
-            self._gripper_target_timeout_sec = dynamic_timeout
-            self._gripper_target_deadline_monotonic = now + dynamic_timeout
-            self._gripper_neutral_pending = None
         self._start_gripper_loop()
 
     def gripper_target_timeout_sec(self) -> float:
         with self._gripper_lock:
-            return float(self._gripper_target_timeout_sec)
+            return float(self._gripper_state.target_timeout_sec)
 
     @property
     def gripper_command_error(self) -> str | None:
         with self._gripper_lock:
-            return self._gripper_command_error
+            return self._gripper_state.command_error
 
     def wait_gripper_target(self, timeout: float | None = None) -> bool:
         with self._gripper_lock:
-            owned_goal = self._gripper_goal_angle
-            deadline = self._gripper_target_deadline_monotonic
+            owned_goal = self._gripper_state.goal_angle
+            deadline = self._gripper_state.target_deadline
         if deadline is None:
             return False
         if timeout is not None:
@@ -1281,10 +1281,10 @@ class HardwareManager:
             deadline = min(deadline, explicit)
         while time.monotonic() < deadline:
             with self._gripper_lock:
-                if self._gripper_goal_angle != owned_goal:
+                if self._gripper_state.goal_angle != owned_goal:
                     return False
-                if not self._gripper_active:
-                    return self._gripper_position_result == "succeeded"
+                if not self._gripper_state.active:
+                    return self._gripper_state.position_result == "succeeded"
                 if self._gripper_command_cancel.is_set():
                     return False
             time.sleep(0.02)
@@ -1352,14 +1352,10 @@ class HardwareManager:
 
         with self._gripper_lock:
             self._gripper_command_cancel.clear()
-            self._gripper_close_force = close_effort
-            self._gripper_hold_force = hold_effort
-            self._gripper_hold_deadline = None
-            self._gripper_hold_release_reason = None
-            self._gripper_command_error = None
-            self._gripper_neutral_pending = None
-            self._gripper_mode = "grasp_closing"
-            self._gripper_active = True
+            self._gripper_state.start_grasp(
+                close_force=close_effort,
+                hold_force=hold_effort,
+            )
         self._start_gripper_loop()
 
         while time.monotonic() - start < timeout:
@@ -1398,8 +1394,8 @@ class HardwareManager:
             contact_sample = elapsed >= min_time and is_gripper_contact_sample(
                 opening_m=reached_position_m,
                 closure_m=closure_m,
-                velocity_rad_s=self._gripper_vel,
-                torque_nm=self._gripper_torque,
+                velocity_rad_s=self._gripper_state.velocity,
+                torque_nm=self._gripper_state.torque,
                 min_opening_m=_G_GRASP_EMPTY_CLOSE_THRESHOLD_M,
                 min_closure_m=min_closure,
                 max_velocity_rad_s=velocity_limit,
@@ -1408,11 +1404,11 @@ class HardwareManager:
             stable_contact_samples = stable_contact_samples + 1 if contact_sample else 0
             if stable_contact_samples >= _G_GRASP_CONTACT_STABLE_SAMPLES:
                 with self._gripper_lock:
-                    self._gripper_hold_angle = float(self._gripper_pos)
-                    self._gripper_hold_force = hold_effort
-                    self._gripper_hold_deadline = time.monotonic() + hold_timeout
-                    self._gripper_mode = "grasp_holding"
-                    self._gripper_active = True
+                    self._gripper_state.start_hold(
+                        angle=self._gripper_state.position,
+                        force=hold_effort,
+                        deadline=time.monotonic() + hold_timeout,
+                    )
                 contact_position_m = self.gripper_position_m()
                 return (
                     True,
@@ -1438,34 +1434,31 @@ class HardwareManager:
         """Cancel the current task and queue a zero-torque command for the bus owner."""
         self._gripper_command_cancel.set()
         with self._gripper_lock:
-            self._gripper_command_error = str(reason)
-            self._gripper_position_result = "failed"
-            self._gripper_hold_deadline = None
-            self._gripper_neutral_pending = (float(self._gripper_pos), str(reason), False)
-            self._gripper_mode = "neutral_pending"
-            self._gripper_active = True
+            self._gripper_state.request_stop(reason)
 
     def cancel_gripper_position_command(self, reason: str = "position command canceled") -> bool:
         with self._gripper_lock:
-            if not self._gripper_active or self._gripper_mode != "position":
+            if not self._gripper_state.can_cancel_position():
                 return False
         self.stop_gripper_motion(reason)
         return True
 
     def release_grasp_hold(self, reason: str = "external release") -> bool:
         with self._gripper_lock:
-            if not self._gripper_active or self._gripper_mode not in (
-                "grasp_closing",
-                "grasp_holding",
-            ):
+            if not self._gripper_state.can_release_grasp():
                 return False
-            self._gripper_hold_release_reason = str(reason)
+            self._gripper_state.hold_release_reason = str(reason)
         self.stop_gripper_motion(f"grasp release: {reason}")
         return True
 
     def get_gripper_state(self) -> tuple[float, float, float, int]:
         if self._gripper_mot is None:
-            return self._gripper_pos, self._gripper_vel, self._gripper_torque, 255
+            return (
+                self._gripper_state.position,
+                self._gripper_state.velocity,
+                self._gripper_state.torque,
+                255,
+            )
         try:
             sample = self._verified_feedback_sample("gripper")
             position, velocity, torque, status = self._validated_gripper_feedback_values(
@@ -1475,11 +1468,16 @@ class HardwareManager:
                 status = 255
             return position, velocity, torque, status
         except Exception:
-            return self._gripper_pos, self._gripper_vel, self._gripper_torque, 255
+            return (
+                self._gripper_state.position,
+                self._gripper_state.velocity,
+                self._gripper_state.torque,
+                255,
+            )
 
     def gripper_position_m(self) -> float:
         with self._gripper_lock:
-            position = float(self._gripper_pos)
+            position = float(self._gripper_state.position)
             zero_error = getattr(self, "_gripper_zero_error", None)
         if zero_error is not None:
             return float("nan")
@@ -1494,12 +1492,17 @@ class HardwareManager:
 
     def gripper_reached_target(self) -> bool:
         with self._gripper_lock:
-            if self._gripper_position_result == "succeeded":
+            if self._gripper_state.position_result == "succeeded":
                 return True
-            if self._gripper_position_result == "failed" or not self._gripper_active:
+            if (
+                self._gripper_state.position_result == "failed"
+                or not self._gripper_state.active
+            ):
                 return False
-            target = self._gripper_goal_angle
-            return abs(self._gripper_pos - target) < _G_ARRIVE_TOL
+            return (
+                abs(self._gripper_state.position - self._gripper_state.goal_angle)
+                < _G_ARRIVE_TOL
+            )
 
     def send_gripper_motor_cmd(self, cmd) -> None:
         self._require_enabled()
@@ -1537,8 +1540,7 @@ class HardwareManager:
         else:
             raise ValueError(f"unsupported JointMotorCmd mode: {cmd.mode}")
         with self._gripper_lock:
-            self._gripper_active = False
-            self._gripper_mode = "idle"
+            self._gripper_state.set_idle()
 
     def _start_pos_vel_loop(self, target: np.ndarray | None = None) -> None:
         if self.control_loop_active:
@@ -1588,8 +1590,7 @@ class HardwareManager:
         self._endpos_ctrl._moving = False
         self._gravity_comp_active = False
         with self._gripper_lock:
-            self._gripper_active = False
-            self._gripper_mode = "idle"
+            self._gripper_state.set_idle()
         self._state_machine = "IDLE"
         self._set_lifecycle_state("DISABLING")
         errors: list[str] = []
@@ -1629,7 +1630,9 @@ class HardwareManager:
         if self._gripper_mot is None or self._gripper_ctrl is None:
             return
         pos_cmd = float(np.clip(pos, _G_OPEN_SOFT_LIMIT, 0.0))
-        pos_term = kp * (pos_cmd - self._gripper_pos) + kd * (-self._gripper_vel)
+        pos_term = kp * (pos_cmd - self._gripper_state.position) + kd * (
+            -self._gripper_state.velocity
+        )
         limit = float(np.clip(abs(tau_limit), 0.05, _G_TAU_MAX))
         tau_safe = float(np.clip(pos_term + tau_ff, -limit, limit)) - pos_term
         try:
@@ -1639,7 +1642,7 @@ class HardwareManager:
 
     def _gripper_tick(self) -> None:
         with self._gripper_lock:
-            snapshot = self._gripper_motion_snapshot_locked()
+            snapshot = self._gripper_state.snapshot()
             if snapshot.neutral_pending is not None:
                 decision = decide_gripper_tick(
                     snapshot,
@@ -1658,23 +1661,13 @@ class HardwareManager:
         now = time.monotonic()
         with self._gripper_lock:
             decision = decide_gripper_tick(
-                self._gripper_motion_snapshot_locked(),
+                self._gripper_state.snapshot(),
                 now=now,
                 config=self._gripper_motion_policy_config(),
             )
-            if decision.next_target_rad is not None:
-                self._gripper_target_angle = decision.next_target_rad
-                self._gripper_last_tick_monotonic = now
+            self._gripper_state.apply_tick_decision(decision, now=now)
             if decision.action == "queue_neutral":
-                self._gripper_neutral_pending = (
-                    decision.position_rad,
-                    decision.reason,
-                    decision.marks_success,
-                )
-                self._gripper_mode = "neutral_pending"
                 return
-            if decision.reason == "grasp release: hold timeout":
-                self._gripper_hold_release_reason = "hold timeout"
         if decision.action == "cancel":
             self.stop_gripper_motion(decision.reason)
             return
@@ -1687,23 +1680,6 @@ class HardwareManager:
                 decision.torque_ff_nm,
                 tau_limit=decision.torque_limit_nm,
             )
-
-    def _gripper_motion_snapshot_locked(self) -> GripperMotionSnapshot:
-        return GripperMotionSnapshot(
-            mode=self._gripper_mode,
-            active=self._gripper_active,
-            position_rad=self._gripper_pos,
-            target_rad=self._gripper_target_angle,
-            goal_rad=self._gripper_goal_angle,
-            target_effort_nm=self._gripper_target_effort,
-            close_force_nm=self._gripper_close_force,
-            hold_force_nm=self._gripper_hold_force,
-            hold_angle_rad=self._gripper_hold_angle,
-            hold_deadline=self._gripper_hold_deadline,
-            target_deadline=self._gripper_target_deadline_monotonic,
-            last_tick=self._gripper_last_tick_monotonic,
-            neutral_pending=self._gripper_neutral_pending,
-        )
 
     def _gripper_motion_policy_config(self) -> GripperMotionPolicyConfig:
         return GripperMotionPolicyConfig(
@@ -1727,12 +1703,7 @@ class HardwareManager:
             decision.torque_ff_nm,
             tau_limit=decision.torque_limit_nm,
         )
-        self._gripper_neutral_pending = None
-        self._gripper_active = False
-        self._gripper_mode = "idle"
-        if decision.marks_success:
-            self._gripper_position_result = "succeeded"
-            self._gripper_command_error = None
+        self._gripper_state.complete_neutral(decision)
 
     def _gripper_loop(self) -> None:
         dt = 1.0 / _G_CTRL_RATE

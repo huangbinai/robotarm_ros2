@@ -107,6 +107,18 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
     assert "sys.path.insert" not in source
 
 
+def test_hardware_manager_delegates_gripper_runtime_state() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._gripper_state = GripperRuntimeState(" in source
+    assert "self._gripper_state.start_position(" in source
+    assert "self._gripper_state.start_grasp(" in source
+    assert "self._gripper_state.start_hold(" in source
+    assert "self._gripper_state.request_stop(reason)" in source
+
+
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:
     import rebotarm_interactive_control.teach_recording as legacy_teach_recording
     import rebotarm_interactive_control.teach_replay_settings as legacy_teach_replay_settings

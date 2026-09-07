@@ -944,8 +944,8 @@ def test_low_level_controller_exports_grasp_gripper_service():
     assert 'self._service("gripper/grasp")' in controller_text
     assert "def grasp_gripper(self, request, response):" in controller_text
     assert "def grasp_gripper(" in hardware_text
-    assert "_gripper_mode = \"grasp_closing\"" in hardware_text
-    assert "_gripper_mode = \"grasp_holding\"" in hardware_text
+    assert "self._gripper_state.start_grasp(" in hardware_text
+    assert "self._gripper_state.start_hold(" in hardware_text
     assert "_G_GRASP_CLOSE_KP = 0.0" in hardware_text
     assert "_G_GRASP_CLOSE_KD = 0.5" in hardware_text
     assert "_G_GRASP_HOLD_KP = 5.0" in hardware_text

@@ -130,12 +130,16 @@ def test_hardware_sdk_runtime_uses_default_paths_and_defers_endpos(tmp_path) -> 
     def compute_generalized_gravity(*, q):
         return q
 
+    def compute_fk(model, positions):
+        return model, positions, "transform"
+
     pinocchio = object()
     modules = {
         "reBotArm_control_py.actuator": SimpleNamespace(RobotArm=FakeArm),
         "reBotArm_control_py.controllers": SimpleNamespace(ArmEndPos=create_endpos),
         "reBotArm_control_py.kinematics": SimpleNamespace(
-            load_robot_model=load_robot_model
+            load_robot_model=load_robot_model,
+            compute_fk=compute_fk,
         ),
         "reBotArm_control_py.dynamics": SimpleNamespace(
             compute_generalized_gravity=compute_generalized_gravity
@@ -165,6 +169,11 @@ def test_hardware_sdk_runtime_uses_default_paths_and_defers_endpos(tmp_path) -> 
         is compute_generalized_gravity
     )
     assert runtime.gravity_dynamics.pinocchio is pinocchio
+    assert runtime.forward_kinematics("model", "positions") == (
+        "model",
+        "positions",
+        "transform",
+    )
     assert [event[0] for event in events] == ["arm", "load_model", "create_data", "frame"]
 
     endpos = runtime.create_endpos_controller()
@@ -212,7 +221,8 @@ def test_hardware_sdk_runtime_prefers_explicit_configs_and_channel_override(
         "reBotArm_control_py.actuator": SimpleNamespace(RobotArm=FakeArm),
         "reBotArm_control_py.controllers": SimpleNamespace(ArmEndPos=lambda arm: arm),
         "reBotArm_control_py.kinematics": SimpleNamespace(
-            load_robot_model=FakeModel
+            load_robot_model=FakeModel,
+            compute_fk=lambda model, positions: (model, positions, None),
         ),
         "reBotArm_control_py.dynamics": SimpleNamespace(
             compute_generalized_gravity=lambda **kwargs: kwargs

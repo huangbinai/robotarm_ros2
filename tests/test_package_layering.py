@@ -163,6 +163,7 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
     assert "from reBotArm_control_py.actuator import RobotArm" not in source
     assert "from reBotArm_control_py.controllers import ArmEndPos" not in source
     assert "from reBotArm_control_py.dynamics" not in source
+    assert "from reBotArm_control_py.kinematics" not in source
     assert "import pinocchio" not in source
     assert "load_robot_model" not in source
 
@@ -330,6 +331,16 @@ def test_hardware_manager_delegates_sdk_gravity_dynamics() -> None:
     assert "_gc_data" not in source
     assert "_gc_ee_frame_id" not in source
     assert "_gc_pin" not in source
+
+
+def test_hardware_manager_delegates_sdk_forward_kinematics() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._forward_kinematics = sdk_runtime.forward_kinematics" in source
+    assert "position, rotation, _ = self._forward_kinematics(" in source
+    assert "compute_fk" not in source
 
 
 def test_visual_grasp_executor_delegates_execution_state() -> None:

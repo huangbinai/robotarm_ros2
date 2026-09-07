@@ -188,6 +188,7 @@ class HardwareManager:
         self._sdk_root = sdk_runtime.sdk_root
         self._arm = sdk_runtime.arm
         self._gravity_dynamics = sdk_runtime.gravity_dynamics
+        self._forward_kinematics = sdk_runtime.forward_kinematics
         self._gripper_cfg_path = sdk_runtime.gripper_config_path
         self._gripper_cfg = None
         self._gripper_mot = None
@@ -1067,10 +1068,11 @@ class HardwareManager:
         )
 
     def current_pose(self):
-        from reBotArm_control_py.kinematics import compute_fk
-
         q, _, _ = self.get_joint_state()
-        position, rotation, _ = compute_fk(self._endpos_ctrl._model, q)
+        position, rotation, _ = self._forward_kinematics(
+            self._endpos_ctrl._model,
+            q,
+        )
         return fk_to_pose(position, rotation)
 
     def get_joint_status_codes(self) -> list[int]:

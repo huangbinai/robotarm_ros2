@@ -21,12 +21,16 @@ class HardwareSdkRuntime:
     arm: Any
     gripper_config_path: Path
     gravity_dynamics: GravityDynamicsAdapter
+    _forward_kinematics: Callable[..., Any] = field(repr=False)
     _endpos_controller_factory: Callable[[Any], Any] = field(repr=False)
 
     def create_endpos_controller(self) -> Any:
         """Create the controller only when manager initialization reaches that stage."""
 
         return self._endpos_controller_factory(self.arm)
+
+    def forward_kinematics(self, model: Any, positions: Any) -> Any:
+        return self._forward_kinematics(model, positions)
 
 
 def create_hardware_sdk_runtime(
@@ -76,5 +80,6 @@ def create_hardware_sdk_runtime(
         arm=arm,
         gripper_config_path=gripper_config_path,
         gravity_dynamics=gravity_dynamics,
+        _forward_kinematics=kinematics_module.compute_fk,
         _endpos_controller_factory=controllers_module.ArmEndPos,
     )

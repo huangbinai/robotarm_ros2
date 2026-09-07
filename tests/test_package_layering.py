@@ -41,12 +41,16 @@ def test_interactive_control_keeps_motion_compatibility_imports() -> None:
 
 
 def test_teach_package_exports_core_modules() -> None:
+    import rebotarm_teach.teach_record_repository as teach_record_repository
+    import rebotarm_teach.teach_record_types as teach_record_types
     import rebotarm_teach.teach_recording as teach_recording
     import rebotarm_teach.teach_replay_coordinator as teach_replay_coordinator
     import rebotarm_teach.teach_replay_settings as teach_replay_settings
     import rebotarm_teach.teach_replay_workflow as teach_replay_workflow
 
     assert hasattr(teach_recording, "TeachSample")
+    assert teach_recording.TeachSample is teach_record_types.TeachSample
+    assert teach_recording.load_teach_samples is teach_record_repository.load_teach_samples
     assert hasattr(teach_replay_coordinator, "TeachReplayCoordinator")
     assert hasattr(teach_replay_settings, "TeachReplaySettingsProvider")
     assert hasattr(teach_replay_workflow, "TeachReplayWorkflow")

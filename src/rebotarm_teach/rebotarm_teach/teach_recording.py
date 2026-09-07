@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 from rebotarm_motion.trajectory_time_parameterization import parameterize_teach_samples
@@ -13,219 +10,29 @@ from rebotarm_motion.teach_sample_processing import (
     retime_teach_samples,
     smooth_teach_samples,
 )
-
-
-@dataclass(frozen=True)
-class TeachSample:
-    stamp: float
-    joint_names: tuple[str, ...]
-    positions: tuple[float, ...]
-    velocities: tuple[float, ...]
-    efforts: tuple[float, ...]
-    motor_status: dict[str, int]
-    arm_state: str
-
-
-@dataclass(frozen=True)
-class TeachTrajectoryEvent:
-    sample: int
-    joint_name: str
-    level: str
-    message: str
-    delta_rad: float
-    velocity_rad_s: float | None
-    acceleration_rad_s2: float | None = None
-    jerk_rad_s3: float | None = None
-
-
-@dataclass(frozen=True)
-class TeachTrajectoryQuality:
-    risk_level: str
-    replay_policy: str
-    allow_real_replay: bool
-    requires_safe_retiming: bool
-    max_jump_rad: float
-    max_velocity_rad_s: float
-    max_acceleration_rad_s2: float
-    worst_joint: str
-    worst_sample: int
-    anomalies: tuple[str, ...]
-    events: tuple[TeachTrajectoryEvent, ...]
-    green_jump_rad: float
-    yellow_jump_rad: float
-    velocity_limit_rad_s: float
-    acceleration_limit_rad_s2: float
-    max_jerk_rad_s3: float = 0.0
-    jerk_limit_rad_s3: float = 999.0
-
-
-@dataclass(frozen=True)
-class PreparedTeachReplay:
-    samples: list[TeachSample]
-    raw_quality: TeachTrajectoryQuality
-    filtered_quality: TeachTrajectoryQuality
-    retimed_quality: TeachTrajectoryQuality
-    smoothing_applied: bool
-    filter_applied: bool
-    resample_applied: bool
-    retime_applied: bool
-    smoothing_window: int
-    filter_cutoff_hz: float
-    filter_sample_rate_hz: float
-    resample_rate_hz: float
-    retimed_points: list[RetimedTeachPoint]
-    large_motion: bool = False
-    max_joint_span_rad: float = 0.0
-    total_joint_motion_rad: float = 0.0
-    requested_replay_speed: float = 1.0
-    effective_replay_speed: float = 1.0
-    large_motion_max_speed: float = 1.0
-    time_parameterization_requested_method: str = "auto"
-    time_parameterization_used_method: str = "current_jerk_retime"
-    time_parameterization_message: str = ""
-
-    @property
-    def before_quality(self) -> TeachTrajectoryQuality:
-        return self.raw_quality
-
-    @property
-    def after_quality(self) -> TeachTrajectoryQuality:
-        return self.retimed_quality
+from .teach_record_repository import (
+    decode_teach_sample,
+    encode_teach_sample,
+    load_teach_samples,
+    prepared_record_path,
+    write_prepared_teach_record,
+)
+from .teach_record_types import (
+    PreparedTeachReplay,
+    ReplayStartBand,
+    ReplayStartDecision,
+    TeachDryRunDecision,
+    TeachRecordInfo,
+    TeachSample,
+    TeachTrajectoryEvent,
+    TeachTrajectoryQuality,
+)
 
 
 def is_quit_key(key: str | None, *, quit_key: str = "q") -> bool:
     if key is None:
         return False
     return str(key).strip().lower() == str(quit_key).strip().lower()
-
-
-def encode_teach_sample(sample: TeachSample) -> str:
-    return json.dumps(
-        {
-            "stamp": sample.stamp,
-            "joint_names": list(sample.joint_names),
-            "positions": list(sample.positions),
-            "velocities": list(sample.velocities),
-            "efforts": list(sample.efforts),
-            "motor_status": sample.motor_status,
-            "arm_state": sample.arm_state,
-        },
-        separators=(",", ":"),
-    )
-
-
-def decode_teach_sample(payload: str) -> TeachSample:
-    data = json.loads(payload)
-    return TeachSample(
-        stamp=float(data["stamp"]),
-        joint_names=tuple(str(v) for v in data["joint_names"]),
-        positions=tuple(float(v) for v in data["positions"]),
-        velocities=tuple(float(v) for v in data.get("velocities", [])),
-        efforts=tuple(float(v) for v in data.get("efforts", [])),
-        motor_status={str(k): int(v) for k, v in data.get("motor_status", {}).items()},
-        arm_state=str(data.get("arm_state", "")),
-    )
-
-
-def load_teach_samples(path: str | Path) -> list[TeachSample]:
-    samples: list[TeachSample] = []
-    with Path(path).open("r", encoding="utf-8-sig") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                samples.append(decode_teach_sample(line))
-    return samples
-
-
-def prepared_record_path(raw_path: str | Path) -> Path:
-    path = Path(raw_path)
-    if path.suffix:
-        return path.with_name(f"{path.stem}.prepared{path.suffix}")
-    return path.with_name(f"{path.name}.prepared.jsonl")
-
-
-def write_prepared_teach_record(
-    raw_path: str | Path,
-    prepared: PreparedTeachReplay,
-    *,
-    output_path: str | Path | None = None,
-) -> Path:
-    target = Path(output_path) if output_path is not None else prepared_record_path(raw_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    samples: list[TeachSample]
-    if prepared.retimed_points:
-        joint_names = prepared.samples[0].joint_names if prepared.samples else ()
-        samples = [
-            TeachSample(
-                stamp=float(point.time_from_start),
-                joint_names=joint_names,
-                positions=point.positions,
-                velocities=point.velocities,
-                efforts=(),
-                motor_status={},
-                arm_state="PREPARED_REPLAY",
-            )
-            for point in prepared.retimed_points
-        ]
-    else:
-        samples = [
-            TeachSample(
-                stamp=float(index) / max(float(prepared.resample_rate_hz), 1.0),
-                joint_names=sample.joint_names,
-                positions=sample.positions,
-                velocities=sample.velocities,
-                efforts=sample.efforts,
-                motor_status=sample.motor_status,
-                arm_state="PREPARED_REPLAY",
-            )
-            for index, sample in enumerate(prepared.samples)
-        ]
-    with target.open("w", encoding="utf-8") as handle:
-        for sample in samples:
-            handle.write(encode_teach_sample(sample) + "\n")
-    return target
-
-
-class ReplayStartBand(str, Enum):
-    DIRECT = "direct"
-    ALIGN = "align"
-    MOVEIT_ALIGN = "moveit_align"
-    REJECT = "reject"
-
-
-@dataclass(frozen=True)
-class ReplayStartDecision:
-    band: ReplayStartBand
-    max_error: float
-    per_joint_error: tuple[float, ...]
-    allow_replay: bool
-    allow_auto_align: bool
-    message: str
-
-
-@dataclass(frozen=True)
-class TeachRecordInfo:
-    path: str
-    exists: bool
-    samples: int
-    duration_sec: float
-    joint_names: tuple[str, ...]
-    start_positions: tuple[float, ...]
-    end_positions: tuple[float, ...]
-    start_band: str
-    max_error: float | None
-    worst_joint: str
-    per_joint_error: dict[str, float]
-    anomalies: tuple[str, ...]
-    message: str
-    quality: TeachTrajectoryQuality | None = None
-
-
-@dataclass(frozen=True)
-class TeachDryRunDecision:
-    accepted: bool
-    state: str
-    message: str
 
 
 def classify_replay_start(

@@ -178,6 +178,18 @@ def test_hardware_manager_delegates_lifecycle_state() -> None:
     assert "self._lifecycle.require_enabled()" in source
 
 
+def test_hardware_manager_delegates_gravity_compensation_state() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._gravity_state = GravityCompensationState()" in source
+    assert "self._gravity_state.start(target)" in source
+    assert "self._gravity_state.finish()" in source
+    assert "self._gravity_state.accumulate_error(" in source
+    assert "self._gravity_state.observe_motion(" in source
+
+
 def test_visual_grasp_executor_delegates_execution_state() -> None:
     source = (
         ROOT / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py"

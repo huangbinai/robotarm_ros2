@@ -19,6 +19,10 @@ from .gripper_motion_policy import (
 )
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_safety import is_gripper_contact_sample
+from .gravity_compensation_state import (
+    GravityCompensationField,
+    GravityCompensationState,
+)
 from .hardware_feedback import HardwareFeedbackCoordinator
 from .hardware_lifecycle_state import (
     HardwareLifecycleField,
@@ -104,6 +108,11 @@ class HardwareManager:
     _enabled = HardwareLifecycleField("enabled")
     _lifecycle_state = HardwareLifecycleField("lifecycle_state")
     _state_machine = HardwareLifecycleField("state_machine")
+    _gravity_comp_active = GravityCompensationField("active")
+    _gravity_comp_q_target = GravityCompensationField("target")
+    _gravity_comp_integral = GravityCompensationField("integral")
+    _gravity_comp_lock_counter = GravityCompensationField("lock_counter")
+    _gravity_comp_q_last = GravityCompensationField("last_position")
 
     _gripper_target_angle = GripperRuntimeField("target_angle")
     _gripper_goal_angle = GripperRuntimeField("goal_angle")
@@ -213,11 +222,7 @@ class HardwareManager:
         self._lifecycle = HardwareLifecycleState()
         self.command_arbiter = CommandArbiter()
         self._error_codes: list[str] = []
-        self._gravity_comp_active = False
-        self._gravity_comp_q_target: np.ndarray | None = None
-        self._gravity_comp_integral: np.ndarray | None = None
-        self._gravity_comp_lock_counter = 0
-        self._gravity_comp_q_last: np.ndarray | None = None
+        self._gravity_state = GravityCompensationState()
 
         self._mode_transition_config = mode_transition_config or ModeTransitionConfig()
         self._mode_transition = ModeTransitionCoordinator(
@@ -776,20 +781,12 @@ class HardwareManager:
         )
 
     def start_gravity_loop(self, target: np.ndarray) -> None:
-        self._gravity_comp_q_target = np.asarray(target, dtype=np.float64).copy()
-        self._gravity_comp_q_last = self._gravity_comp_q_target.copy()
-        self._gravity_comp_integral = np.zeros_like(self._gravity_comp_q_target)
-        self._gravity_comp_lock_counter = 0
-        self._gravity_comp_active = True
+        self._gravity_state.start(target)
         self._gravity_hardware_tick(self._arm, 1.0 / float(self._arm._rate))
         self._arm.start_control_loop(self._gravity_hardware_tick, rate=self._arm._rate)
 
     def finish_gravity_compensation(self) -> None:
-        self._gravity_comp_active = False
-        self._gravity_comp_q_target = None
-        self._gravity_comp_integral = None
-        self._gravity_comp_lock_counter = 0
-        self._gravity_comp_q_last = None
+        self._gravity_state.finish()
 
     def start_position_hold(
         self,
@@ -851,12 +848,10 @@ class HardwareManager:
             self.set_state_machine("MODE_TRANSITION")
 
     def gravity_compensation_active(self) -> bool:
-        return self._gravity_comp_active
+        return self._gravity_state.active
 
     def gravity_compensation_target(self) -> np.ndarray | None:
-        if self._gravity_comp_q_target is None:
-            return None
-        return self._gravity_comp_q_target.copy()
+        return self._gravity_state.target_copy()
 
     def _feedback_controller_groups(self):
         groups: list[tuple[object, list[tuple[str, object]]]] = []
@@ -1086,15 +1081,14 @@ class HardwareManager:
         if request:
             self.refresh_feedback_if_due(force=True)
         q, _velocity, _torque = self.get_cached_joint_state()
-        ref = reference if reference is not None else self._gravity_comp_q_last
+        ref = reference if reference is not None else self._gravity_state.last_position
         if ref is not None:
             q = self._angles_near_reference(q, ref)
-        self._gravity_comp_q_last = np.array(q, dtype=np.float64, copy=True)
-        return self._gravity_comp_q_last.copy()
+        return self._gravity_state.remember_position(q)
 
     def _gravity_comp_tick(self, arm, dt: float) -> None:
         del dt
-        if not self._gravity_comp_active or self._gravity_comp_q_target is None:
+        if not self._gravity_state.active or self._gravity_state.target is None:
             return
 
         q = self._read_gravity_comp_positions()
@@ -1102,11 +1096,8 @@ class HardwareManager:
         tau_g = self._gc_compute_generalized_gravity(q=q)
         tau_g = apply_gravity_compensation_tau_scale(tau_g)
 
-        q_error = self._gravity_comp_q_target - q
-        if self._gravity_comp_integral is None:
-            self._gravity_comp_integral = np.zeros_like(q)
-        self._gravity_comp_integral += q_error * 1.0
-        np.clip(self._gravity_comp_integral, -0.5, 0.5, out=self._gravity_comp_integral)
+        q_error = self._gravity_state.target - q
+        integral = self._gravity_state.accumulate_error(q_error, template=q)
 
         self._gc_pin.computeJointJacobians(self._gc_model, self._gc_data, q)
         self._gc_pin.updateFramePlacements(self._gc_model, self._gc_data)
@@ -1120,19 +1111,20 @@ class HardwareManager:
         linear_speed = float(np.linalg.norm(spatial_velocity[:3]))
         angular_speed = float(np.linalg.norm(spatial_velocity[3:]))
 
-        if linear_speed > _GC_VEL_THRESHOLD or angular_speed > _GC_W_VEL_THRESHOLD:
-            self._gravity_comp_q_target = q.copy()
-            self._gravity_comp_lock_counter = 0
-            self._gravity_comp_integral *= 0.9
-        else:
-            self._gravity_comp_lock_counter += 1
+        self._gravity_state.observe_motion(
+            q,
+            moving=(
+                linear_speed > _GC_VEL_THRESHOLD
+                or angular_speed > _GC_W_VEL_THRESHOLD
+            ),
+        )
 
         arm.mit(
-            pos=self._gravity_comp_q_target,
+            pos=self._gravity_state.target,
             vel=np.zeros(arm.num_joints),
             kp=np.full(arm.num_joints, _GC_KP),
             kd=np.full(arm.num_joints, _GC_KD),
-            tau=tau_g + self._gravity_comp_integral,
+            tau=tau_g + integral,
             request_feedback=False,
         )
 
@@ -1558,7 +1550,7 @@ class HardwareManager:
         self._endpos_ctrl._running = False
         self._endpos_ctrl._stop_send.set()
         self._endpos_ctrl._moving = False
-        self._gravity_comp_active = False
+        self._gravity_state.deactivate()
         with self._gripper_lock:
             self._gripper_state.set_idle()
         self._state_machine = "IDLE"

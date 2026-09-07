@@ -8,11 +8,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from .bus_synchronization import (
-    patch_arm_bus_lock,
-    patch_controller_bus,
-    wrap_motor_bus,
-)
+from .bus_synchronization import patch_arm_bus_lock
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
@@ -23,6 +19,7 @@ from .gripper_motion_policy import (
 )
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_safety import is_gripper_contact_sample
+from .gripper_sdk_adapter import GripperSdkAdapter
 from .gravity_compensation_state import (
     GravityCompensationField,
     GravityCompensationState,
@@ -1152,32 +1149,12 @@ class HardwareManager:
         return codes
 
     def init_gripper(self, cfg_path: str) -> None:
-        from reBotArm_control_py.actuator.gripper import load_cfg as load_gripper_cfg
-
-        gcfg = load_gripper_cfg(cfg_path)
-        gc = gcfg["gripper"]
-        self._gripper_cfg = gc
-
-        vendor = gc.vendor
-        if vendor not in self._arm._ctrl_map:
-            raise RuntimeError(
-                f"gripper vendor={vendor!r} cannot share the arm Controller"
-            )
-        ctrl = self._arm._ctrl_map[vendor]
-
-        if vendor == "damiao":
-            self._gripper_mot = ctrl.add_damiao_motor(gc.motor_id, gc.feedback_id, gc.model)
-        elif vendor == "myactuator":
-            self._gripper_mot = ctrl.add_myactuator_motor(gc.motor_id, gc.feedback_id, gc.model)
-        elif vendor == "robstride":
-            self._gripper_mot = ctrl.add_robstride_motor(gc.motor_id, gc.feedback_id, gc.model)
-        else:
-            raise ValueError(f"unsupported gripper vendor: {vendor!r}")
-
-        self._gripper_ctrl = ctrl
-
-        patch_controller_bus(ctrl)
-        wrap_motor_bus(self._gripper_mot, ctrl._bus_lock)
+        adapter = GripperSdkAdapter(self._arm)
+        self._gripper_cfg = adapter.load_config(cfg_path)
+        controller = adapter.controller_for(self._gripper_cfg)
+        self._gripper_mot = adapter.create_motor(controller, self._gripper_cfg)
+        self._gripper_ctrl = controller
+        adapter.share_controller_bus(controller, self._gripper_mot)
         # Connection only discovers hardware.  Mode selection, enabling, and
         # command-loop startup belong to the explicit enable transition.
 

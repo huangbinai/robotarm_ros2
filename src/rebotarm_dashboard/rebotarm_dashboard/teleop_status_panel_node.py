@@ -35,7 +35,7 @@ from .panel_config import build_panel_config
 from .status_panel_http import create_status_panel_server
 from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
-from .teach_replay_config import TeachReplayParameterAdapter
+from rebotarm_teach.teach_replay_parameter_adapter import TeachReplayParameterAdapter
 from .web_command_gateway import WebCommandGateway, WebCommandRequest
 from rebotarm_teleop.web_keyboard_client import (
     WebKeyboardClient,

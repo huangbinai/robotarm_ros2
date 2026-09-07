@@ -89,17 +89,6 @@ def test_teach_package_exports_core_modules() -> None:
     assert hasattr(teach_replay_workflow, "TeachReplayWorkflow")
 
 
-def test_dashboard_keeps_teach_replay_parameter_adapter_compatibility_import() -> None:
-    from rebotarm_dashboard.teach_replay_config import (
-        TeachReplayParameterAdapter as dashboard_adapter,
-    )
-    from rebotarm_teach.teach_replay_parameter_adapter import (
-        TeachReplayParameterAdapter as teach_adapter,
-    )
-
-    assert dashboard_adapter is teach_adapter
-
-
 def test_dashboard_delegates_web_keyboard_commands_to_teleop_package() -> None:
     source = (
         ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"

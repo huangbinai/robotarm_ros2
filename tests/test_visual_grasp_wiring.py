@@ -537,12 +537,14 @@ def test_visual_grasp_executor_keeps_stop_paths_wired():
 
 def test_visual_grasp_executor_wires_failure_recovery_policy():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    recovery_text = _read("src/rebotarm_vision/rebotarm_vision/visual_failure_recovery.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
 
     assert 'self.declare_parameter("failure_recovery_mode", "hold")' in executor_text
     assert 'f"/{self._arm_namespace}/arm_status"' in executor_text
     assert 'f"/{self._arm_namespace}/disable"' in executor_text
-    assert 'name="failure_return_to_start"' in executor_text
+    assert "VisualFailureRecovery(" in executor_text
+    assert 'name="failure_return_to_start"' in recovery_text
     assert 'DeclareLaunchArgument(\n                "failure_recovery_mode"' in launch_text
     assert 'default_value="hold"' in launch_text
     assert '"failure_recovery_mode": failure_recovery_mode' in launch_text

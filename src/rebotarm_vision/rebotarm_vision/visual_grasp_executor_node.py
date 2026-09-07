@@ -15,8 +15,6 @@ from tf2_ros import Buffer, TransformListener
 
 from rebotarm_msgs.msg import ArmStatus, GraspCandidateArray, GraspPlan
 from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
-from rebotarm_motion.real_failure_recovery import healthy_enabled_hold
-
 from .grasp_plan_store import GraspPlanStore
 from .grasp_retry_policy import RetryPolicyConfig
 from .grasp_preview_sender_node import (
@@ -29,6 +27,10 @@ from .gripper_policy import GripperPolicyConfig, resolve_gripper_command
 from .place_task_policy import PlaceTaskConfig, build_place_stages
 from .retreat_policy import RetreatPolicyConfig
 from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage
+from .visual_failure_recovery import (
+    FailureRecoveryOperations,
+    VisualFailureRecovery,
+)
 from .visual_grasp_pose_policy import BaseAxisGraspPolicyConfig, build_base_axis_grasp_targets
 from .visual_grasp_sequence import (
     PoseTarget,
@@ -376,85 +378,31 @@ class VisualGraspExecutorNode(Node):
         return None
 
     def _recover_task_failure(self, failed_stage: str, failure_message: str) -> str:
-        if not self._execution_enabled():
-            return "not_required_in_plan_only_mode"
-
-        stop_ok, stop_message = self._confirm_arm_stopped_for_recovery()
-        status_requested_at = time.monotonic()
-        status = self._wait_for_fresh_arm_status(after_monotonic=status_requested_at)
-        if status is None:
-            return (
-                "status_unavailable_leave_state_unchanged"
-                if stop_ok
-                else f"stop_failed_status_unavailable_leave_state_unchanged:{stop_message}"
+        recovery = VisualFailureRecovery(
+            FailureRecoveryOperations(
+                confirm_arm_stopped=self._confirm_arm_stopped_for_recovery,
+                wait_for_fresh_status=lambda: self._wait_for_fresh_arm_status(
+                    after_monotonic=time.monotonic()
+                ),
+                disable=lambda label: self._call_trigger_service(
+                    self._disable_client,
+                    label,
+                    self._service_timeout_sec,
+                ),
+                execute_pose=self._call_execute_pose,
+                request_stop=lambda stop_gripper: self._request_stop(
+                    stop_gripper=stop_gripper
+                ),
+                warn=self.get_logger().warn,
             )
-        if not bool(status.enabled) or not bool(status.control_loop_active):
-            return "controller_not_in_enabled_hold"
-        if not healthy_enabled_hold(status):
-            ok, message = self._call_trigger_service(
-                self._disable_client,
-                "protective disable",
-                self._service_timeout_sec,
-            )
-            return (
-                "critical_status_protective_disable"
-                if ok
-                else f"critical_status_protective_disable_failed:{message}"
-            )
-        if not stop_ok:
-            return (
-                "stop_failed_healthy_enabled_hold_requires_operator_recovery:"
-                f"{stop_message}"
-            )
-        if self._failure_recovery_mode == "hold":
-            return "healthy_enabled_hold_requires_operator_recovery"
-        if self._failure_recovery_start_pose is None:
-            return "start_pose_unavailable_healthy_enabled_hold"
-
-        self.get_logger().warn(
-            "task failure recovery returning to the run start pose: "
-            f"stage={failed_stage}, reason={failure_message}"
         )
-        return_stage = VisualGraspStage(
-            name="failure_return_to_start",
-            kind="move",
-            pose=self._failure_recovery_start_pose,
-        )
-        returned, return_message = self._call_execute_pose(return_stage)
-        if returned:
-            disabled, disable_message = self._call_trigger_service(
-                self._disable_client,
-                "disable after failure return",
-                self._service_timeout_sec,
-            )
-            return (
-                "returned_to_start_then_disabled"
-                if disabled
-                else f"returned_to_start_disable_failed:{disable_message}"
-            )
-
-        self._request_stop(stop_gripper=not self._last_grasp_contact_detected)
-        status_requested_at = time.monotonic()
-        status = self._wait_for_fresh_arm_status(after_monotonic=status_requested_at)
-        if status is None:
-            return (
-                "return_failed_status_unavailable_leave_state_unchanged:"
-                f"{return_message}"
-            )
-        if not bool(status.enabled) or not bool(status.control_loop_active):
-            return f"return_failed_controller_not_in_enabled_hold:{return_message}"
-        if healthy_enabled_hold(status):
-            return f"return_failed_healthy_enabled_hold:{return_message}"
-        disabled, disable_message = self._call_trigger_service(
-            self._disable_client,
-            "protective disable after failed return",
-            self._service_timeout_sec,
-        )
-        return (
-            f"return_failed_critical_status_protective_disable:{return_message}"
-            if disabled
-            else "return_failed_critical_status_protective_disable_failed:"
-            f"{disable_message}; return={return_message}"
+        return recovery.recover(
+            execution_enabled=self._execution_enabled(),
+            recovery_mode=self._failure_recovery_mode,
+            start_pose=self._failure_recovery_start_pose,
+            grasp_contact_detected=self._last_grasp_contact_detected,
+            failed_stage=failed_stage,
+            failure_message=failure_message,
         )
 
     def _confirm_arm_stopped_for_recovery(self) -> tuple[bool, str]:

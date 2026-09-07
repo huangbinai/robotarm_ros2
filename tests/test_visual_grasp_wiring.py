@@ -954,14 +954,17 @@ def test_low_level_controller_exports_grasp_gripper_service():
 
 def test_visual_grasp_executor_uses_grasp_service_for_close_stage():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    gateway_text = _read("src/rebotarm_vision/rebotarm_vision/visual_gripper_gateway.py")
 
     assert "GraspGripper" in executor_text
     assert 'f"/{self._arm_namespace}/gripper/grasp"' in executor_text
     assert "gripper_grasp_enabled" in executor_text
     assert "def _call_grasp_gripper" in executor_text
     assert 'stage.name == "close_gripper"' in executor_text
-    assert 'request.close_force = max(float(self.get_parameter("gripper_grasp_close_force").value), 0.0)' in executor_text
-    assert "request.hold_force = max(float(stage.gripper_max_effort), 0.0)" in executor_text
+    assert "self._gripper_gateway.grasp(" in executor_text
+    assert "request.close_force = max(float(close_force), 0.0)" in gateway_text
+    assert "hold_force=stage.gripper_max_effort" in executor_text
+    assert "request.hold_force = max(float(hold_force), 0.0)" in gateway_text
 
 
 def test_visual_grasp_launch_does_not_expose_hard_object_safety_params():

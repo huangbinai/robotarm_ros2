@@ -30,6 +30,7 @@ from .visual_failure_recovery import (
     VisualFailureRecovery,
 )
 from .visual_grasp_parameter_adapter import VisualGraspParameterAdapter
+from .visual_gripper_gateway import VisualGripperGateway
 from .visual_grasp_pose_policy import build_base_axis_grasp_targets
 from .visual_grasp_sequence import (
     PoseTarget,
@@ -286,6 +287,14 @@ class VisualGraspExecutorNode(Node):
             acceleration_scaling=lambda: float(
                 self.get_parameter("acceleration_scaling").value
             ),
+        )
+        self._gripper_gateway = VisualGripperGateway(
+            position_client=self._gripper_client,
+            grasp_client=self._gripper_grasp_client,
+            position_request_factory=SetGripper.Request,
+            grasp_request_factory=GraspGripper.Request,
+            wait_for_future=self._wait_for_future,
+            service_timeout_sec=self._service_timeout_sec,
         )
         self._disable_client = self.create_client(
             Trigger,
@@ -889,19 +898,14 @@ class VisualGraspExecutorNode(Node):
     def _call_gripper(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.gripper_position_m is None or stage.gripper_max_effort is None:
             return False, "missing gripper target"
-        if not self._gripper_client.wait_for_service(timeout_sec=self._service_timeout_sec):
-            return False, "gripper service unavailable"
-        request = SetGripper.Request()
-        request.position = float(stage.gripper_position_m)
-        request.max_effort = float(stage.gripper_max_effort)
-        future = self._gripper_client.call_async(request)
-        if not self._wait_for_future(future, self._service_timeout_sec):
-            return False, "gripper service call timed out"
-        result = future.result()
+        result, error = self._gripper_gateway.set_position(
+            position_m=stage.gripper_position_m,
+            max_effort=stage.gripper_max_effort,
+        )
         if result is None:
-            return False, "gripper service returned no result"
-        reached_position = float(result.reached_position)
-        command_success = bool(result.success)
+            return False, error
+        reached_position = result.reached_position
+        command_success = result.success
         if stage.name == "open_gripper" and command_success:
             self._last_gripper_reached_position = reached_position
         if stage.name == "open_gripper_at_place" and command_success:
@@ -938,22 +942,27 @@ class VisualGraspExecutorNode(Node):
     def _call_grasp_gripper(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.gripper_position_m is None or stage.gripper_max_effort is None:
             return False, "missing gripper grasp target"
-        if not self._gripper_grasp_client.wait_for_service(timeout_sec=self._service_timeout_sec):
-            return False, "gripper grasp service unavailable"
-        request = GraspGripper.Request()
-        request.close_force = max(float(self.get_parameter("gripper_grasp_close_force").value), 0.0)
-        request.hold_force = max(float(stage.gripper_max_effort), 0.0)
-        request.close_timeout_sec = float(self.get_parameter("gripper_grasp_timeout_sec").value)
-        request.min_close_time_sec = float(self.get_parameter("gripper_grasp_min_close_time_sec").value)
-        request.velocity_threshold = float(self.get_parameter("gripper_grasp_velocity_threshold").value)
-        request.min_closure_distance_m = float(self.get_parameter("gripper_grasp_min_closure_distance_m").value)
-        future = self._gripper_grasp_client.call_async(request)
-        if not self._wait_for_future(future, self._service_timeout_sec + request.close_timeout_sec):
-            return False, "gripper grasp service call timed out"
-        result = future.result()
+        result, error = self._gripper_gateway.grasp(
+            close_force=float(
+                self.get_parameter("gripper_grasp_close_force").value
+            ),
+            hold_force=stage.gripper_max_effort,
+            close_timeout_sec=float(
+                self.get_parameter("gripper_grasp_timeout_sec").value
+            ),
+            min_close_time_sec=float(
+                self.get_parameter("gripper_grasp_min_close_time_sec").value
+            ),
+            velocity_threshold=float(
+                self.get_parameter("gripper_grasp_velocity_threshold").value
+            ),
+            min_closure_distance_m=float(
+                self.get_parameter("gripper_grasp_min_closure_distance_m").value
+            ),
+        )
         if result is None:
-            return False, "gripper grasp service returned no result"
-        self._last_grasp_contact_detected = bool(result.contact_detected)
+            return False, error
+        self._last_grasp_contact_detected = result.contact_detected
         self._last_grasp_closure_distance_m = max(
             0.0,
             float(self._last_gripper_reached_position or 0.0) - float(result.reached_position),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from rebotarm_teleop.web_keyboard_client import (
     WebKeyboardClient,
     keyboard_decision_response,
@@ -30,13 +32,28 @@ class _Goal:
 
 
 class _Future:
+    def __init__(self, result=None, *, error: Exception | None = None) -> None:
+        self._result = result
+        self._error = error
+        self.callbacks = []
+
+    def result(self):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
     def add_done_callback(self, callback) -> None:
-        self.callback = callback
+        self.callbacks.append(callback)
+
+    def complete(self) -> None:
+        for callback in tuple(self.callbacks):
+            callback(self)
 
 
 class _ActionClient:
-    def __init__(self, *, available: bool = True) -> None:
+    def __init__(self, *, available: bool = True, goal_future=None) -> None:
         self.available = available
+        self.goal_future = goal_future
         self.goals = []
 
     def wait_for_server(self, timeout_sec: float) -> bool:
@@ -45,10 +62,10 @@ class _ActionClient:
 
     def send_goal_async(self, goal):
         self.goals.append(goal)
-        return _Future()
+        return self.goal_future or _Future()
 
 
-def _client(action_client=None) -> WebKeyboardClient:
+def _client(action_client=None, statuses=None) -> WebKeyboardClient:
     return WebKeyboardClient(
         action_client=action_client or _ActionClient(),
         joint_names=("joint1", "joint2"),
@@ -60,6 +77,7 @@ def _client(action_client=None) -> WebKeyboardClient:
         default_step_rad=0.02,
         default_duration=0.2,
         default_speed_rad_s=0.5,
+        status_sink=None if statuses is None else statuses.append,
     )
 
 
@@ -150,3 +168,57 @@ def test_send_reports_unavailable_action_server_without_goal() -> None:
         "goal_future": None,
     }
     assert action_client.goals == []
+
+
+def test_goal_response_lifecycle_reports_accepted_rejected_and_failure() -> None:
+    accepted_statuses = []
+    accepted_future = _Future(SimpleNamespace(accepted=True))
+    accepted_client = _client(
+        _ActionClient(goal_future=accepted_future),
+        accepted_statuses,
+    )
+    _enable(accepted_client)
+    _request, accepted_decision = _prepare(accepted_client)
+    accepted_dispatch = accepted_client.send(accepted_decision)
+    accepted_client.observe_result(accepted_dispatch, accepted_decision)
+    accepted_future.complete()
+
+    rejected_statuses = []
+    rejected_future = _Future(SimpleNamespace(accepted=False))
+    rejected_client = _client(
+        _ActionClient(goal_future=rejected_future),
+        rejected_statuses,
+    )
+    _enable(rejected_client)
+    _request, rejected_decision = _prepare(rejected_client)
+    rejected_dispatch = rejected_client.send(rejected_decision)
+    rejected_client.observe_result(rejected_dispatch, rejected_decision)
+    rejected_future.complete()
+
+    failed_statuses = []
+    failed_future = _Future(error=RuntimeError("goal failed"))
+    failed_client = _client(_ActionClient(goal_future=failed_future), failed_statuses)
+    _enable(failed_client)
+    _request, failed_decision = _prepare(failed_client)
+    failed_dispatch = failed_client.send(failed_decision)
+    failed_client.observe_result(failed_dispatch, failed_decision)
+    failed_future.complete()
+
+    assert accepted_statuses[0]["state"] == "accepted"
+    assert accepted_statuses[0]["joint_name"] == "joint1"
+    assert rejected_statuses == [
+        {
+            "source": "web_keyboard",
+            "state": "rejected",
+            "message": "keyboard trajectory goal rejected",
+            "last_key": "1",
+        }
+    ]
+    assert failed_statuses == [
+        {
+            "source": "web_keyboard",
+            "state": "failed",
+            "message": "goal failed",
+            "last_key": "1",
+        }
+    ]

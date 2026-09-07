@@ -96,7 +96,9 @@ def test_dashboard_delegates_web_keyboard_commands_to_teleop_package() -> None:
     assert "self._web_keyboard_client.enable(" in source
     assert "self._web_keyboard_client.prepare_command(" in source
     assert "self._web_keyboard_client.send(decision)" in source
+    assert "self._web_keyboard_client.observe_result(dispatch, decision)" in source
     assert "validate_web_keyboard_command(" not in source
+    assert "def _on_keyboard_goal_response" not in source
 
 
 def test_dashboard_delegates_web_gripper_action_lifecycle() -> None:

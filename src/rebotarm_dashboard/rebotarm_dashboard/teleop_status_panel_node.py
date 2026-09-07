@@ -329,6 +329,10 @@ class TeleopStatusPanelNode(Node):
             default_speed_rad_s=float(
                 self.get_parameter("web_keyboard_default_speed_rad_s").value
             ),
+            status_sink=lambda status: self._store.update_teleop_status(
+                "status",
+                status,
+            ),
         )
         self._web_execute_session = WebExecuteSession(
             client=self._web_teleop_client,
@@ -925,8 +929,7 @@ class TeleopStatusPanelNode(Node):
             message = dispatch["message"]
             self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "unavailable", "message": message, "last_key": decision.key})
             return {"accepted": False, "message": message}
-        future = dispatch["goal_future"]
-        future.add_done_callback(lambda fut: self._on_keyboard_goal_response(fut, decision))
+        self._web_keyboard_client.observe_result(dispatch, decision)
         result = keyboard_decision_response(decision)
         self._store.update_teleop_status(
             "status",
@@ -938,29 +941,6 @@ class TeleopStatusPanelNode(Node):
             },
         )
         return result
-
-    def _on_keyboard_goal_response(self, future, decision) -> None:
-        try:
-            goal_handle = future.result()
-        except Exception as exc:
-            self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "failed", "message": str(exc), "last_key": decision.key})
-            return
-        if goal_handle is None or not goal_handle.accepted:
-            self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "rejected", "message": "keyboard trajectory goal rejected", "last_key": decision.key})
-            return
-        self._store.update_teleop_status(
-            "status",
-            {
-                "source": "web_keyboard",
-                "state": "accepted",
-                "message": decision.message,
-                "last_key": decision.key,
-                "joint_name": decision.joint_name,
-                "step_rad": decision.step_rad,
-                "duration": decision.duration,
-                "max_joint_speed_rad_s": decision.max_joint_speed_rad_s,
-            },
-        )
 
     def _handle_execute_preview(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):

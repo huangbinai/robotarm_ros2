@@ -51,6 +51,7 @@ class WebKeyboardClient:
         default_step_rad: float,
         default_duration: float,
         default_speed_rad_s: float,
+        status_sink: Callable[[dict], None] | None = None,
     ) -> None:
         self._action_client = action_client
         self._joint_names = tuple(joint_names)
@@ -64,6 +65,7 @@ class WebKeyboardClient:
         self._step_rad = float(default_step_rad)
         self._duration = float(default_duration)
         self._speed_rad_s = float(default_speed_rad_s)
+        self._status_sink = status_sink
 
     def enable(
         self,
@@ -168,3 +170,61 @@ class WebKeyboardClient:
             "goal_future": self._action_client.send_goal_async(goal),
             "trajectory": trajectory,
         }
+
+    def observe_result(
+        self,
+        dispatch: dict,
+        decision: WebKeyboardCommandDecision,
+    ) -> None:
+        if self._status_sink is None or not dispatch.get("accepted"):
+            return
+        future = dispatch.get("goal_future")
+        if future is None:
+            return
+        future.add_done_callback(
+            lambda completed: self._on_goal_response(completed, decision)
+        )
+
+    def _on_goal_response(
+        self,
+        future: Any,
+        decision: WebKeyboardCommandDecision,
+    ) -> None:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self._publish_status(
+                {
+                    "source": "web_keyboard",
+                    "state": "failed",
+                    "message": str(exc),
+                    "last_key": decision.key,
+                }
+            )
+            return
+        if goal_handle is None or not goal_handle.accepted:
+            self._publish_status(
+                {
+                    "source": "web_keyboard",
+                    "state": "rejected",
+                    "message": "keyboard trajectory goal rejected",
+                    "last_key": decision.key,
+                }
+            )
+            return
+        self._publish_status(
+            {
+                "source": "web_keyboard",
+                "state": "accepted",
+                "message": decision.message,
+                "last_key": decision.key,
+                "joint_name": decision.joint_name,
+                "step_rad": decision.step_rad,
+                "duration": decision.duration,
+                "max_joint_speed_rad_s": decision.max_joint_speed_rad_s,
+            }
+        )
+
+    def _publish_status(self, status: dict) -> None:
+        if self._status_sink is not None:
+            self._status_sink(status)

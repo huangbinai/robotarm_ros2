@@ -615,13 +615,15 @@ def test_visual_grasp_system_disables_extra_fake_joint_state_sources():
 def test_visual_grasp_executor_consumes_grasp_plan_by_default():
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    builder_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_plan_builder.py")
 
     assert 'DeclareLaunchArgument("executor_input_topic", default_value="/grasp/filtered_plan")' in launch_text
     assert 'executor_input_topic = LaunchConfiguration("executor_input_topic")' in launch_text
     assert '"input_topic": executor_input_topic' in launch_text
-    assert 'if str(getattr(plan, "source", "")).strip() == "candidate_ik_filter":' in executor_text
-    assert "return self._build_motion_targets_from_filtered_plan(plan)" in executor_text
-    assert "def _build_motion_targets_from_filtered_plan" in executor_text
+    assert "self._plan_builder = VisualGraspPlanBuilder(" in executor_text
+    assert "self._plan_builder.build_sequence(plan)" in executor_text
+    assert 'if str(getattr(plan, "source", "")).strip() == "candidate_ik_filter":' in builder_text
+    assert "return self._build_filtered_motion_targets(plan)" in builder_text
 
 
 def test_visual_grasp_executor_refreshes_plan_after_pregrasp():
@@ -668,6 +670,7 @@ def test_visual_grasp_executor_has_bounded_approach_visual_servo():
 
 def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    builder_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_plan_builder.py")
     adapter_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_parameter_adapter.py")
     plan_store_text = _read("src/rebotarm_vision/rebotarm_vision/grasp_plan_store.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
@@ -677,7 +680,7 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert "from .grasp_plan_store import GraspPlanStore" in executor_text
     assert "from .grasp_retry_policy import RetryPolicyConfig" in adapter_text
     assert "grasp_verification_policy" not in executor_text
-    assert "from .place_task_policy import build_place_stages" in executor_text
+    assert "from .place_task_policy import build_place_stages" in builder_text
     assert "from .place_task_policy import PlaceTaskConfig" in adapter_text
     assert "from .trajectory_recovery_policy import recovery_decision_for_stage" in executor_text
     assert "from .trajectory_recovery_policy import RecoveryConfig" in adapter_text
@@ -700,7 +703,7 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert "attempts = [(-1, deepcopy(self._latest_plan))]" in plan_store_text
     assert "if index == int(candidates.best_index):" in plan_store_text
     assert "def _verify_after_lift" not in executor_text
-    assert "def _append_place_stages" in executor_text
+    assert "self._plan_builder.append_place_stages(" in executor_text
     assert "def _precheck_execute_pose" in executor_text
     assert 'name="retry_safe_retreat"' in executor_text
     assert "self._execution_state.remember_retry_retreat(stage)" in executor_text

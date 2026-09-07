@@ -18,12 +18,9 @@ from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
 from .grasp_plan_store import GraspPlanStore
 from .grasp_preview_sender_node import (
     _transform_from_msg,
-    apply_tcp_offset_to_pose,
     transform_pose_message,
 )
 from .gripper_quality import close_contact_success
-from .gripper_policy import resolve_gripper_command
-from .place_task_policy import build_place_stages
 from .trajectory_recovery_policy import recovery_decision_for_stage
 from .visual_failure_recovery import (
     FailureRecoveryOperations,
@@ -34,29 +31,15 @@ from .visual_grasp_execution_state import (
     VisualGraspExecutionState,
 )
 from .visual_grasp_parameter_adapter import VisualGraspParameterAdapter
-from .visual_gripper_gateway import VisualGripperGateway
-from .visual_grasp_pose_policy import build_base_axis_grasp_targets
-from .visual_grasp_sequence import (
-    PoseTarget,
-    VisualGraspStage,
-    append_visual_ready_return_stages,
-    build_visual_grasp_sequence,
+from .visual_grasp_plan_builder import (
+    VisualGraspPlanBuilder,
+    VisualGraspTargetConfig,
 )
+from .visual_gripper_gateway import VisualGripperGateway
+from .visual_grasp_sequence import PoseTarget, VisualGraspStage
 from .visual_motion_gateway import VisualMotionGateway
 from .visual_servo_policy import build_visual_servo_step
 from .visual_trigger_gateway import VisualTriggerGateway
-
-
-def pose_to_target(pose: Pose) -> PoseTarget:
-    return PoseTarget(
-        position=(float(pose.position.x), float(pose.position.y), float(pose.position.z)),
-        orientation=(
-            float(pose.orientation.x),
-            float(pose.orientation.y),
-            float(pose.orientation.z),
-            float(pose.orientation.w),
-        ),
-    )
 
 
 def target_to_pose_stamped(target: PoseTarget, frame_id: str) -> PoseStamped:
@@ -245,6 +228,16 @@ class VisualGraspExecutorNode(Node):
         self._latest_arm_status_monotonic: float | None = None
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
+        self._plan_builder = VisualGraspPlanBuilder(
+            parameters=self._visual_grasp_config,
+            target_config=VisualGraspTargetConfig(
+                tcp_offset_xyz=self._tcp_offset_xyz,
+                target_base_offset_xyz=self._target_base_offset_xyz,
+                grasp_base_z_offset_m=self._grasp_base_z_offset_m,
+            ),
+            pose_policy=lambda: str(self.get_parameter("pose_policy").value),
+            transform_plan_pose=self._transform_plan_pose_to_target_frame,
+        )
 
         self._execute_pose_client = self.create_client(
             ExecutePose,
@@ -490,7 +483,15 @@ class VisualGraspExecutorNode(Node):
                     f"attempt={attempt_index + 1}/{len(attempts)}, candidate={candidate_index}"
                 )
                 self._log_plan_snapshot(plan)
-                stages = self._append_post_grasp_stages(self._build_sequence_from_plan(plan))
+                stages = self._plan_builder.append_post_grasp_stages(
+                    self._plan_builder.build_sequence(plan),
+                    return_visual_ready_enabled=bool(
+                        self.get_parameter("return_visual_ready_after_grasp").value
+                    ),
+                    place_after_grasp_enabled=bool(
+                        self.get_parameter("place_after_grasp_enabled").value
+                    ),
+                )
                 ok, message, failed_stage = self._execute_stages(stages)
                 if ok:
                     response.success = True
@@ -548,20 +549,6 @@ class VisualGraspExecutorNode(Node):
         )
         return response
 
-    def _build_sequence_from_plan(self, plan: GraspPlan) -> list[VisualGraspStage]:
-        pregrasp, grasp = self._build_motion_targets(plan)
-        gripper_command = resolve_gripper_command(
-            jaw_width_m=self._detected_jaw_width(plan),
-            object_length_m=self._detected_object_length(plan),
-            class_name=str(getattr(plan.candidate, "class_name", "") or ""),
-            config=self._visual_grasp_config.gripper_policy(),
-        )
-        config = self._visual_grasp_config.sequence(
-            detected_jaw_width_m=self._detected_jaw_width(plan),
-            gripper_command=gripper_command,
-        )
-        return build_visual_grasp_sequence(pregrasp, grasp, config)
-
     def _candidate_plans_for_attempts(self) -> list[tuple[int, GraspPlan]]:
         return self._plan_store.candidate_attempts(
             plan_max_age_sec=float(self.get_parameter("plan_max_age_sec").value),
@@ -589,7 +576,9 @@ class VisualGraspExecutorNode(Node):
                 ):
                     return False, "fresh grasp plan unavailable after pregrasp", stage.name
                 if refreshed_plan is not None:
-                    refreshed_stages = self._append_place_stages(self._build_sequence_from_plan(refreshed_plan))
+                    refreshed_stages = self._plan_builder.append_place_stages(
+                        self._plan_builder.build_sequence(refreshed_plan)
+                    )
                     stages = self._replace_remaining_after_pregrasp(stages, refreshed_stages, stage_index)
                 if self._approach_visual_servo_enabled() and stage.pose is not None:
                     ok, message = self._run_visual_servo_approach(stage.pose)
@@ -704,7 +693,7 @@ class VisualGraspExecutorNode(Node):
             )
             if plan is None:
                 return False, "no refreshed grasp plan available"
-            _, desired_grasp = self._build_motion_targets(plan)
+            _, desired_grasp = self._plan_builder.build_motion_targets(plan)
             step = build_visual_servo_step(current, desired_grasp, config)
             last_error = step.error_m
             if step.reached:
@@ -721,17 +710,6 @@ class VisualGraspExecutorNode(Node):
             )
         return False, f"not converged after {max_iterations} steps: error={last_error:.4f}"
 
-    def _append_place_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
-        return stages + build_place_stages(self._visual_grasp_config.place())
-
-    def _append_post_grasp_stages(self, stages: list[VisualGraspStage]) -> list[VisualGraspStage]:
-        with_place = self._append_place_stages(stages)
-        return append_visual_ready_return_stages(
-            with_place,
-            enabled=bool(self.get_parameter("return_visual_ready_after_grasp").value),
-            place_after_grasp_enabled=bool(self.get_parameter("place_after_grasp_enabled").value),
-        )
-
     def _request_retry_retreat(self) -> None:
         if self._retry_retreat_stage is None:
             self.get_logger().warn("safe retreat before retry requested, but no pregrasp retreat stage is available")
@@ -746,37 +724,6 @@ class VisualGraspExecutorNode(Node):
             self.get_logger().warn(f"retry safe retreat failed: {message}")
 
 
-    def _build_motion_targets(self, plan: GraspPlan) -> tuple[PoseTarget, PoseTarget]:
-        if str(getattr(plan, "source", "")).strip() == "candidate_ik_filter":
-            return self._build_motion_targets_from_filtered_plan(plan)
-        policy = str(self.get_parameter("pose_policy").value).strip().lower()
-        if policy in ("visual_pose", "source_pose", "legacy"):
-            return (
-                self._convert_plan_pose(plan, plan.pregrasp_pose, 0.0),
-                self._convert_plan_pose(plan, plan.grasp_pose, self._grasp_base_z_offset_m),
-            )
-        if policy != "base_axis":
-            raise ValueError(f"unsupported pose_policy: {policy}")
-        grasp_pose = self._transform_plan_pose_to_target_frame(plan, plan.grasp_pose)
-        return build_base_axis_grasp_targets(
-            grasp_position_xyz=(
-                float(grasp_pose.position.x),
-                float(grasp_pose.position.y),
-                float(grasp_pose.position.z),
-            ),
-            config=self._visual_grasp_config.base_axis_pose(
-                tcp_offset_xyz=self._tcp_offset_xyz,
-                target_base_offset_xyz=self._target_base_offset_xyz,
-                grasp_z_offset_m=self._grasp_base_z_offset_m,
-            ),
-        )
-
-    def _build_motion_targets_from_filtered_plan(self, plan: GraspPlan) -> tuple[PoseTarget, PoseTarget]:
-        return (
-            pose_to_target(self._transform_plan_pose_to_target_frame(plan, plan.pregrasp_pose)),
-            pose_to_target(self._transform_plan_pose_to_target_frame(plan, plan.grasp_pose)),
-        )
-
     def _transform_plan_pose_to_target_frame(self, plan: GraspPlan, pose: Pose) -> Pose:
         converted = deepcopy(pose)
         source_frame = str(plan.header.frame_id)
@@ -789,23 +736,6 @@ class VisualGraspExecutorNode(Node):
             )
             converted = transform_pose_message(converted, _transform_from_msg(tf_msg))
         return converted
-
-    def _convert_plan_pose(self, plan: GraspPlan, pose: Pose, z_offset_m: float) -> PoseTarget:
-        converted = deepcopy(pose)
-        source_frame = str(plan.header.frame_id)
-        if self._target_frame and source_frame and source_frame != self._target_frame:
-            tf_msg = self._tf_buffer.lookup_transform(
-                self._target_frame,
-                source_frame,
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=0.2),
-            )
-            converted = transform_pose_message(converted, _transform_from_msg(tf_msg))
-        converted = apply_tcp_offset_to_pose(converted, self._tcp_offset_xyz)
-        converted.position.x = round(float(converted.position.x) + self._target_base_offset_xyz[0], 6)
-        converted.position.y = round(float(converted.position.y) + self._target_base_offset_xyz[1], 6)
-        converted.position.z = round(float(converted.position.z) + self._target_base_offset_xyz[2] + z_offset_m, 6)
-        return pose_to_target(converted)
 
     def _run_stage(self, stage: VisualGraspStage) -> tuple[bool, str]:
         self._log_diagnostic(stage.name, "start")
@@ -886,14 +816,6 @@ class VisualGraspExecutorNode(Node):
 
     def _gripper_execution_enabled(self) -> bool:
         return self._execution_enabled() and bool(self.get_parameter("execute_gripper").value)
-
-    def _detected_jaw_width(self, plan: GraspPlan) -> float:
-        plan_width = float(getattr(plan, "jaw_width", 0.0) or 0.0)
-        candidate_width = float(getattr(plan.candidate, "jaw_width", 0.0) or 0.0)
-        return plan_width if plan_width > 0.0 else candidate_width
-
-    def _detected_object_length(self, plan: GraspPlan) -> float:
-        return float(getattr(plan.candidate, "object_length", 0.0) or 0.0)
 
     def _velocity_scaling_for_stage(self, name: str) -> float:
         if name == "failure_return_to_start":

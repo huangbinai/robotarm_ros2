@@ -354,6 +354,24 @@ def test_visual_grasp_executor_delegates_execution_state() -> None:
     assert "self._execution_state.remember_retry_retreat(stage)" in source
 
 
+def test_visual_grasp_executor_delegates_plan_and_stage_building() -> None:
+    source = (
+        ROOT
+        / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._plan_builder = VisualGraspPlanBuilder(" in source
+    assert "self._plan_builder.build_sequence(" in source
+    assert "self._plan_builder.build_motion_targets(" in source
+    assert "self._plan_builder.append_place_stages(" in source
+    assert "self._plan_builder.append_post_grasp_stages(" in source
+    assert "def _build_sequence_from_plan" not in source
+    assert "def _build_motion_targets" not in source
+    assert "resolve_gripper_command(" not in source
+    assert "build_base_axis_grasp_targets(" not in source
+    assert "build_place_stages(" not in source
+
+
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:
     import rebotarm_interactive_control.teach_recording as legacy_teach_recording
     import rebotarm_interactive_control.teach_replay_settings as legacy_teach_replay_settings

@@ -522,7 +522,10 @@ def test_filtered_plan_targets_are_used_without_reapplying_base_axis_policy():
 
     from geometry_msgs.msg import Pose
     from rebotarm_msgs.msg import GraspPlan
-    from rebotarm_vision.visual_grasp_executor_node import VisualGraspExecutorNode
+    from rebotarm_vision.visual_grasp_plan_builder import (
+        VisualGraspPlanBuilder,
+        VisualGraspTargetConfig,
+    )
 
     plan = GraspPlan()
     plan.header.frame_id = "base_link"
@@ -539,10 +542,18 @@ def test_filtered_plan_targets_are_used_without_reapplying_base_axis_policy():
     plan.grasp_pose.position.z = 0.18
     plan.grasp_pose.orientation.w = 1.0
 
-    node = object.__new__(VisualGraspExecutorNode)
-    node._target_frame = "base_link"
+    builder = VisualGraspPlanBuilder(
+        parameters=object(),
+        target_config=VisualGraspTargetConfig(
+            tcp_offset_xyz=(0.0, 0.0, 0.0),
+            target_base_offset_xyz=(0.0, 0.0, 0.0),
+            grasp_base_z_offset_m=0.0,
+        ),
+        pose_policy=lambda: "base_axis",
+        transform_plan_pose=lambda _plan, pose: pose,
+    )
 
-    pregrasp, grasp = VisualGraspExecutorNode._build_motion_targets_from_filtered_plan(node, plan)
+    pregrasp, grasp = builder.build_motion_targets(plan)
 
     assert pregrasp.position == pytest.approx((0.30, 0.10, 0.25))
     assert grasp.position == pytest.approx((0.38, 0.10, 0.18))

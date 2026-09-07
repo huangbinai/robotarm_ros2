@@ -28,6 +28,7 @@ from .arm_command_api import (
     status_state,
 )
 from rebotarm_motion.collision_precheck import CollisionPrechecker
+from rebotarm_motion.replay_start_policy import ReplayStartBand
 from .parameter_helpers import build_joint_limits
 from .parameter_helpers import sensor_qos_kwargs
 from .panel_config import build_panel_config
@@ -47,7 +48,6 @@ from rebotarm_teach.teach_replay_parameters import declare_teach_replay_paramete
 from rebotarm_teach.teach_replay_payload import compact_replay_payload
 from rebotarm_teach.teach_replay_workflow import TeachReplayWorkflow
 from rebotarm_teach.teach_recording import (
-    ReplayStartBand,
     inspect_teach_record,
     list_teach_record_files,
     teach_record_info_to_dict,

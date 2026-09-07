@@ -21,6 +21,11 @@ from rebotarm_motion.collision_precheck import (
     CollisionPrechecker,
 )
 from rebotarm_motion.moveit_planner import MoveItMotionPlanner
+from rebotarm_motion.replay_start_policy import (
+    ReplayStartBand,
+    classify_replay_start,
+    compute_auto_align_duration,
+)
 from rebotarm_motion.teach_replay_start_alignment import (
     MoveItStartAligner,
 )
@@ -31,10 +36,7 @@ from rebotarm_motion.trajectory_safety_monitor import evaluate_replay_tracking
 
 from .parameter_helpers import sensor_qos_kwargs
 from .teach_recording import (
-    ReplayStartBand,
     analyze_teach_trajectory,
-    classify_replay_start,
-    compute_auto_align_duration,
     load_teach_samples,
     prepared_teach_replay_to_dict,
     teach_trajectory_quality_to_dict,

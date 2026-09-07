@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .teach_recording import (
-    build_replay_start_soft_points,
-    retime_teach_samples,
-)
+from rebotarm_motion.replay_start_policy import build_replay_start_soft_points
+
+from .teach_recording import retime_teach_samples
 
 
 def set_duration(duration_msg: Any, seconds: float) -> None:

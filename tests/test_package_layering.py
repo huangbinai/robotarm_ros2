@@ -8,12 +8,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_motion_package_exports_core_modules() -> None:
     import rebotarm_motion.collision_precheck as collision_precheck
+    import rebotarm_motion.replay_start_policy as replay_start_policy
     import rebotarm_motion.replay_runtime_monitor as replay_runtime_monitor
     import rebotarm_motion.trajectory_safety_monitor as trajectory_safety_monitor
     import rebotarm_motion.trajectory_time_parameterization as trajectory_time_parameterization
     import rebotarm_motion.teach_sample_processing as teach_sample_processing
 
     assert hasattr(collision_precheck, "CollisionPrechecker")
+    assert hasattr(replay_start_policy, "classify_replay_start")
+    assert hasattr(replay_start_policy, "build_replay_start_soft_points")
     assert hasattr(replay_runtime_monitor, "ReplayRuntimeMonitor")
     assert hasattr(trajectory_safety_monitor, "evaluate_replay_tracking")
     assert hasattr(trajectory_time_parameterization, "parameterize_teach_samples")
@@ -55,6 +58,7 @@ def test_interactive_control_keeps_motion_compatibility_imports() -> None:
 
 
 def test_teach_package_exports_core_modules() -> None:
+    import rebotarm_motion.replay_start_policy as replay_start_policy
     import rebotarm_teach.teach_record_repository as teach_record_repository
     import rebotarm_teach.teach_record_types as teach_record_types
     import rebotarm_teach.teach_recording as teach_recording
@@ -68,6 +72,15 @@ def test_teach_package_exports_core_modules() -> None:
     assert hasattr(teach_recording, "TeachSample")
     assert teach_recording.TeachSample is teach_record_types.TeachSample
     assert teach_recording.load_teach_samples is teach_record_repository.load_teach_samples
+    assert teach_recording.ReplayStartBand is replay_start_policy.ReplayStartBand
+    assert (
+        teach_recording.classify_replay_start
+        is replay_start_policy.classify_replay_start
+    )
+    assert (
+        teach_recording.build_replay_start_soft_points
+        is replay_start_policy.build_replay_start_soft_points
+    )
     assert hasattr(teach_replay_coordinator, "TeachReplayCoordinator")
     assert hasattr(teach_replay_parameter_adapter, "TeachReplayParameterAdapter")
     assert hasattr(teach_replay_parameters, "declare_teach_replay_parameters")
@@ -140,6 +153,30 @@ def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
     assert "def _on_teach_replay_goal_response" not in source
     assert "def _on_teach_replay_result" not in source
     assert "def _check_active_replay_tracking" not in source
+
+
+def test_replay_start_alignment_policy_is_owned_by_motion_package() -> None:
+    teach_recording = (
+        ROOT / "src/rebotarm_teach/rebotarm_teach/teach_recording.py"
+    ).read_text(encoding="utf-8")
+    replay_node = (
+        ROOT / "src/rebotarm_teach/rebotarm_teach/teach_replay_node.py"
+    ).read_text(encoding="utf-8")
+    trajectory_builder = (
+        ROOT
+        / "src/rebotarm_teach/rebotarm_teach/teach_replay_trajectory_builder.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from rebotarm_motion.replay_start_policy import (" in teach_recording
+    assert "def classify_replay_start(" not in teach_recording
+    assert "def interpolate_joint_positions(" not in teach_recording
+    assert "def build_replay_start_soft_points(" not in teach_recording
+    assert "def compute_auto_align_duration(" not in teach_recording
+    assert "from rebotarm_motion.replay_start_policy import (" in replay_node
+    assert (
+        "from rebotarm_motion.replay_start_policy import build_replay_start_soft_points"
+        in trajectory_builder
+    )
 
 
 def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:

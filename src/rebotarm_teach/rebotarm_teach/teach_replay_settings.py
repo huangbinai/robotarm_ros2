@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .teach_recording import compute_auto_align_duration, normalize_teach_replay_settings
+from rebotarm_motion.replay_start_policy import compute_auto_align_duration
+
+from .teach_recording import normalize_teach_replay_settings
 
 
 @dataclass(frozen=True)

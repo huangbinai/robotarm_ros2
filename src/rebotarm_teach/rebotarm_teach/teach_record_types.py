@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
+from rebotarm_motion.replay_start_policy import ReplayStartBand, ReplayStartDecision
 from rebotarm_motion.teach_sample_processing import RetimedTeachPoint
 
 
@@ -82,23 +82,6 @@ class PreparedTeachReplay:
     @property
     def after_quality(self) -> TeachTrajectoryQuality:
         return self.retimed_quality
-
-
-class ReplayStartBand(str, Enum):
-    DIRECT = "direct"
-    ALIGN = "align"
-    MOVEIT_ALIGN = "moveit_align"
-    REJECT = "reject"
-
-
-@dataclass(frozen=True)
-class ReplayStartDecision:
-    band: ReplayStartBand
-    max_error: float
-    per_joint_error: tuple[float, ...]
-    allow_replay: bool
-    allow_auto_align: bool
-    message: str
 
 
 @dataclass(frozen=True)

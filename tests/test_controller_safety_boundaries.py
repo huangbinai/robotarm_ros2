@@ -170,14 +170,14 @@ def test_move_to_pose_rechecks_completion_and_requires_final_settle():
 
 
 def test_lifecycle_cleanup_and_visual_execution_are_guarded():
-    hardware = (ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py").read_text(
+    lifecycle = (ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_lifecycle_state.py").read_text(
         encoding="utf-8"
     )
     visual = (ROOT / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py").read_text(
         encoding="utf-8"
     )
 
-    assert 'self._lifecycle_state not in ("DISABLING", "DISCONNECTED")' in hardware
+    assert 'self.lifecycle_state not in ("DISABLING", "DISCONNECTED")' in lifecycle
     assert "self._execution_lock = threading.Lock()" in visual
     assert "with self._execution_lock:" in visual
 

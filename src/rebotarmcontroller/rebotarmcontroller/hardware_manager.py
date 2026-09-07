@@ -20,6 +20,10 @@ from .gripper_motion_policy import (
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_safety import is_gripper_contact_sample
 from .hardware_feedback import HardwareFeedbackCoordinator
+from .hardware_lifecycle_state import (
+    HardwareLifecycleField,
+    HardwareLifecycleState,
+)
 from .hardware_runtime_config import HardwareRuntimeConfig
 from .mode_transition import ModeTransitionCoordinator
 from .mode_transition_policy import (
@@ -86,16 +90,6 @@ _JOINT_FEEDBACK_LIMITS_RAD = {
     "joint6": (-3.14, 3.14),
 }
 
-_LIFECYCLE_STATES = {
-    "DISCONNECTED",
-    "CONNECTED_DISABLED",
-    "ENABLING",
-    "ENABLED_HOLD",
-    "TRAJECTORY_RUNNING",
-    "DISABLING",
-}
-
-
 def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
     scaled = np.array(tau, dtype=np.float64, copy=True)
     if scaled.shape == _GC_TAU_SCALE.shape:
@@ -105,6 +99,11 @@ def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
 
 class HardwareManager:
     """Owns the single RobotArm instance used by the ROS driver."""
+
+    _connected = HardwareLifecycleField("connected")
+    _enabled = HardwareLifecycleField("enabled")
+    _lifecycle_state = HardwareLifecycleField("lifecycle_state")
+    _state_machine = HardwareLifecycleField("state_machine")
 
     _gripper_target_angle = GripperRuntimeField("target_angle")
     _gripper_goal_angle = GripperRuntimeField("goal_angle")
@@ -211,10 +210,7 @@ class HardwareManager:
         self._motor_lifecycle_lock = threading.RLock()
 
         self._endpos_ctrl = ArmEndPos(self._arm)
-        self._connected = False
-        self._enabled = False
-        self._lifecycle_state = "DISCONNECTED"
-        self._state_machine = "IDLE"
+        self._lifecycle = HardwareLifecycleState()
         self.command_arbiter = CommandArbiter()
         self._error_codes: list[str] = []
         self._gravity_comp_active = False
@@ -251,11 +247,11 @@ class HardwareManager:
 
     @property
     def enabled(self) -> bool:
-        return self._enabled
+        return self._lifecycle.enabled
 
     @property
     def connected(self) -> bool:
-        return self._connected
+        return self._lifecycle.connected
 
     @property
     def control_loop_active(self) -> bool:
@@ -267,20 +263,16 @@ class HardwareManager:
 
     @property
     def state_machine(self) -> str:
-        return self._state_machine
+        return self._lifecycle.state_machine
 
     @property
     def lifecycle_state(self) -> str:
-        return self._lifecycle_state
+        return self._lifecycle.lifecycle_state
 
     @property
     def ready_for_motion(self) -> bool:
         """Return whether new arm or gripper motion goals may be accepted."""
-        return bool(
-            self._connected
-            and self._enabled
-            and self._lifecycle_state in ("ENABLED_HOLD", "TRAJECTORY_RUNNING")
-        )
+        return self._lifecycle.ready_for_motion
 
     @property
     def gripper_active(self) -> bool:
@@ -307,38 +299,16 @@ class HardwareManager:
         return codes
 
     def set_state_machine(self, state: str) -> None:
-        if state not in (
-            "IDLE",
-            "TRAJ_RUNNING",
-            "LOWLEVEL_STREAMING",
-            "GRAVITY_COMP",
-            "MODE_TRANSITION",
-        ):
-            raise ValueError(f"unsupported state machine value: {state}")
-        self._state_machine = state
-        lifecycle_can_move = bool(
-            self._connected
-            and self._enabled
-            and self._lifecycle_state not in ("DISABLING", "DISCONNECTED")
-        )
-        if state == "TRAJ_RUNNING" and lifecycle_can_move:
-            self._set_lifecycle_state("TRAJECTORY_RUNNING")
-        elif state == "IDLE" and lifecycle_can_move:
-            self._set_lifecycle_state("ENABLED_HOLD")
+        self._lifecycle.set_state_machine(state)
 
     def _set_lifecycle_state(self, state: str) -> None:
-        if state not in _LIFECYCLE_STATES:
-            raise ValueError(f"unsupported lifecycle state: {state}")
-        self._lifecycle_state = state
+        self._lifecycle.set_lifecycle_state(state)
 
     def _require_connected(self) -> None:
-        if not self._connected:
-            raise RuntimeError("hardware is not connected")
+        self._lifecycle.require_connected()
 
     def _require_enabled(self) -> None:
-        self._require_connected()
-        if not self._enabled:
-            raise RuntimeError("hardware is disabled; call explicit enable first")
+        self._lifecycle.require_enabled()
 
     def connect(self) -> None:
         if self._connected:

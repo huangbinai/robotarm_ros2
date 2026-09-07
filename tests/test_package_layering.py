@@ -166,6 +166,18 @@ def test_hardware_manager_delegates_gripper_runtime_state() -> None:
     assert "self._gripper_state.request_stop(reason)" in source
 
 
+def test_hardware_manager_delegates_lifecycle_state() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._lifecycle = HardwareLifecycleState()" in source
+    assert "self._lifecycle.set_state_machine(state)" in source
+    assert "self._lifecycle.set_lifecycle_state(state)" in source
+    assert "self._lifecycle.require_connected()" in source
+    assert "self._lifecycle.require_enabled()" in source
+
+
 def test_visual_grasp_executor_delegates_execution_state() -> None:
     source = (
         ROOT / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py"

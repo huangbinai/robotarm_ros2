@@ -242,6 +242,19 @@ def test_hardware_manager_delegates_gripper_grasp_workflow() -> None:
     assert "stable_contact_samples" not in grasp_source
 
 
+def test_gripper_runs_only_from_unified_hardware_control_loop() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._gripper_tick()" in source
+    assert "self._require_gripper_control_loop()" in source
+    assert "def _gripper_loop(" not in source
+    assert "_gripper_loop_thread" not in source
+    assert "_gripper_loop_running" not in source
+    assert "_G_CTRL_RATE" not in source
+
+
 def test_hardware_manager_delegates_lifecycle_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

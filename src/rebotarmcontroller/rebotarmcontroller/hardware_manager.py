@@ -81,7 +81,6 @@ _G_GRASP_HOLD_TIMEOUT_MAX_SEC = 120.0
 _G_GRASP_EMPTY_CLOSE_THRESHOLD_M = 0.003
 _G_GRASP_CONTACT_TORQUE_MIN = 0.0
 _G_GRASP_CONTACT_STABLE_SAMPLES = 3
-_G_CTRL_RATE = 500.0
 _HARDWARE_FEEDBACK_RATE_HZ = 50.0
 _FEEDBACK_REFRESH_RETRIES = 3
 _FEEDBACK_RETRY_INTERVAL_SEC = 0.005
@@ -206,10 +205,7 @@ class HardwareManager:
             close_force=_G_GRASP_CLOSE_FORCE_DEFAULT,
             hold_force=_G_GRASP_HOLD_FORCE_DEFAULT,
         )
-        self._gripper_loop_stop = threading.Event()
         self._gripper_command_cancel = threading.Event()
-        self._gripper_loop_thread: threading.Thread | None = None
-        self._gripper_loop_running = False
         self._gripper_lock = threading.RLock()
         self._gripper_grasp = GripperGraspCoordinator(
             self,
@@ -630,7 +626,6 @@ class HardwareManager:
     def _set_gripper_zero(self) -> bool:
         if self._gripper_mot is None:
             raise RuntimeError("gripper is not initialized")
-        self._stop_gripper_loop()
         self._validated_gripper_status(expected_status=0)
         with self._gripper_lock:
             self._gripper_zero_error = "gripper zero verification pending"
@@ -1157,7 +1152,7 @@ class HardwareManager:
                 now=now,
                 timeout_sec=dynamic_timeout,
             )
-        self._start_gripper_loop()
+        self._require_gripper_control_loop()
 
     def gripper_target_timeout_sec(self) -> float:
         with self._gripper_lock:
@@ -1244,7 +1239,7 @@ class HardwareManager:
                 close_force=close_force,
                 hold_force=hold_force,
             )
-        self._start_gripper_loop()
+        self._require_gripper_control_loop()
 
     def begin_gripper_hold(self, hold_force: float, deadline: float) -> None:
         with self._gripper_lock:
@@ -1506,20 +1501,6 @@ class HardwareManager:
         )
         self._gripper_state.complete_neutral(decision)
 
-    def _gripper_loop(self) -> None:
-        dt = 1.0 / _G_CTRL_RATE
-        last = time.perf_counter()
-        while not self._gripper_loop_stop.is_set():
-            now = time.perf_counter()
-            if now - last >= dt:
-                last += dt
-                self._gripper_tick()
-            else:
-                time.sleep(1e-4)
-
-    def _start_gripper_loop(self) -> None:
+    def _require_gripper_control_loop(self) -> None:
         if not self.control_loop_active:
             raise RuntimeError("gripper command requires the unified hardware control loop")
-
-    def _stop_gripper_loop(self) -> None:
-        self._gripper_loop_running = False

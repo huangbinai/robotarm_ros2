@@ -135,7 +135,6 @@ def _gripper_zero_manager():
     manager._state_machine = "IDLE"
     manager._motor_lifecycle_lock = threading.RLock()
     manager._stop_control_loop = lambda: None
-    manager._stop_gripper_loop = lambda: None
     manager._error_codes = []
     return manager, gripper
 
@@ -379,6 +378,14 @@ def test_gripper_position_command_rejects_out_of_range_request(position_m) -> No
 
     with pytest.raises(ValueError, match="gripper position must be within"):
         manager.set_gripper_target(position_m)
+
+
+def test_gripper_command_requires_unified_hardware_control_loop() -> None:
+    manager = object.__new__(HardwareManager)
+    manager._arm = SimpleNamespace(control_loop_active=False)
+
+    with pytest.raises(RuntimeError, match="unified hardware control loop"):
+        manager._require_gripper_control_loop()
 
 
 def test_unverified_emergency_disable_does_not_claim_disabled() -> None:

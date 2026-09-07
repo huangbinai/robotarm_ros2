@@ -468,7 +468,6 @@ def test_shutdown_still_disables_when_smooth_exit_fails():
         disconnect=lambda: calls.append("disconnect"),
     )
     manager._endpos_ctrl = SimpleNamespace(_running=False)
-    manager._stop_gripper_loop = lambda: calls.append("stop_gripper_loop")
     manager.stop_gravity_compensation = lambda: (_ for _ in ()).throw(
         RuntimeError("transition failed")
     )

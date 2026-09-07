@@ -32,6 +32,8 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from rebotarmcontroller.hardware_manager import apply_gravity_compensation_tau_scale  # type: ignore[import-not-found]
 from rebotarmcontroller.hardware_manager import HardwareManager
+from rebotarmcontroller.gravity_compensation_state import GravityCompensationState
+from rebotarmcontroller.hardware_lifecycle_state import HardwareLifecycleState
 from rebotarmcontroller.mode_transition import ModeTransitionResult
 
 
@@ -75,9 +77,8 @@ class GravityCompensationCoreTests(unittest.TestCase):
 
     def test_start_gravity_compensation_delegates_to_transition_coordinator(self) -> None:
         manager = HardwareManager.__new__(HardwareManager)
-        manager._connected = True
-        manager._enabled = True
-        manager._gravity_comp_active = False
+        manager._lifecycle = HardwareLifecycleState(connected=True, enabled=True)
+        manager._gravity_state = GravityCompensationState(active=False)
         manager._mode_transition = _FakeTransitionCoordinator()
 
         manager.start_gravity_compensation()
@@ -86,7 +87,7 @@ class GravityCompensationCoreTests(unittest.TestCase):
 
     def test_stop_gravity_compensation_delegates_to_transition_coordinator(self) -> None:
         manager = HardwareManager.__new__(HardwareManager)
-        manager._gravity_comp_active = True
+        manager._gravity_state = GravityCompensationState(active=True)
         manager._mode_transition = _FakeTransitionCoordinator()
 
         manager.stop_gravity_compensation()
@@ -95,9 +96,8 @@ class GravityCompensationCoreTests(unittest.TestCase):
 
     def test_transition_failure_is_returned_as_runtime_error(self) -> None:
         manager = HardwareManager.__new__(HardwareManager)
-        manager._connected = True
-        manager._enabled = True
-        manager._gravity_comp_active = False
+        manager._lifecycle = HardwareLifecycleState(connected=True, enabled=True)
+        manager._gravity_state = GravityCompensationState(active=False)
         manager._mode_transition = _FakeTransitionCoordinator(enter_success=False)
 
         with self.assertRaisesRegex(RuntimeError, "ENTERING_GRAVITY_COMP: enter failed"):

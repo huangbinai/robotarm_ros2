@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from rebotarmcontroller.gravity_compensation_state import (
-    GravityCompensationField,
-    GravityCompensationState,
-)
+from rebotarmcontroller.gravity_compensation_state import GravityCompensationState
 
 
 def test_start_and_finish_own_all_gravity_runtime_values() -> None:
@@ -59,14 +56,3 @@ def test_target_and_remembered_position_are_returned_as_copies() -> None:
 
     np.testing.assert_allclose(state.target, [0.1, 0.2])
     np.testing.assert_allclose(state.last_position, [0.3, 0.4])
-
-
-def test_legacy_private_field_descriptor_uses_gravity_state() -> None:
-    class Owner:
-        _gravity_comp_active = GravityCompensationField("active")
-
-    owner = Owner()
-    owner._gravity_comp_active = True
-
-    assert owner._gravity_comp_active is True
-    assert owner._gravity_state.active is True

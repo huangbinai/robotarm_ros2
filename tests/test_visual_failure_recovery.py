@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from rebotarm_vision.visual_grasp_executor_node import VisualGraspExecutorNode
+from rebotarm_vision.visual_grasp_execution_state import VisualGraspExecutionState
 from rebotarm_vision.visual_grasp_sequence import PoseTarget
 
 
@@ -21,11 +22,12 @@ def _node(*, mode: str = "hold") -> VisualGraspExecutorNode:
     node._failure_recovery_mode = mode
     node._failure_recovery_status_timeout_sec = 1.0
     node._failure_recovery_return_velocity_scaling = 0.04
-    node._failure_recovery_start_pose = PoseTarget(
-        position=(0.3, 0.0, 0.2),
-        orientation=(0.0, 0.0, 0.0, 1.0),
+    node._execution_state = VisualGraspExecutionState(
+        failure_recovery_start_pose=PoseTarget(
+            position=(0.3, 0.0, 0.2),
+            orientation=(0.0, 0.0, 0.0, 1.0),
+        )
     )
-    node._last_grasp_contact_detected = False
     node._disable_client = object()
     node._motion_stop_client = object()
     node._trajectory_stop_client = object()
@@ -78,7 +80,7 @@ def test_successful_controlled_return_disables_after_moveit_execution():
     assert outcome == "returned_to_start_then_disabled"
     assert len(stages) == 1
     assert stages[0].name == "failure_return_to_start"
-    assert stages[0].pose == node._failure_recovery_start_pose
+    assert stages[0].pose == node._execution_state.failure_recovery_start_pose
     assert disable_calls == [
         (node._disable_client, "disable after failure return", 1.0)
     ]

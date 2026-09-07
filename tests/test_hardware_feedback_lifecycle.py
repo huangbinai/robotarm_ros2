@@ -20,6 +20,8 @@ if "motorbridge" not in sys.modules:
 
 from rebotarmcontroller.hardware_manager import HardwareManager
 from rebotarmcontroller.hardware_feedback import HardwareFeedbackCoordinator
+from rebotarmcontroller.gravity_compensation_state import GravityCompensationState
+from rebotarmcontroller.hardware_lifecycle_state import HardwareLifecycleState
 
 
 @pytest.mark.parametrize(
@@ -37,9 +39,11 @@ def test_ready_for_motion_requires_enabled_motion_lifecycle(
     connected, enabled, lifecycle, expected
 ) -> None:
     manager = HardwareManager.__new__(HardwareManager)
-    manager._connected = connected
-    manager._enabled = enabled
-    manager._lifecycle_state = lifecycle
+    manager._lifecycle = HardwareLifecycleState(
+        connected=connected,
+        enabled=enabled,
+        lifecycle_state=lifecycle,
+    )
 
     assert manager.ready_for_motion is expected
 
@@ -129,10 +133,11 @@ def _gripper_zero_manager():
     manager._gripper_vel = 0.0
     manager._gripper_torque = 0.0
     manager._gripper_zero_error = None
-    manager._connected = True
-    manager._enabled = False
-    manager._lifecycle_state = "CONNECTED_DISABLED"
-    manager._state_machine = "IDLE"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=False,
+        lifecycle_state="CONNECTED_DISABLED",
+    )
     manager._motor_lifecycle_lock = threading.RLock()
     manager._stop_control_loop = lambda: None
     manager._error_codes = []
@@ -225,9 +230,7 @@ def test_hardware_tick_protects_on_confirmed_feedback_failure() -> None:
 def test_connect_does_not_enable_or_start_a_command_loop() -> None:
     manager = object.__new__(HardwareManager)
     events = []
-    manager._connected = False
-    manager._enabled = False
-    manager._lifecycle_state = "DISCONNECTED"
+    manager._lifecycle = HardwareLifecycleState()
     manager._gripper_cfg_path = "gripper.yaml"
     manager._gripper_mot = None
     manager._arm = SimpleNamespace(connect=lambda: events.append("connect"))
@@ -249,10 +252,10 @@ def test_enable_preloads_fresh_position_before_enabling() -> None:
     manager = object.__new__(HardwareManager)
     events = []
     positions = np.arange(6, dtype=np.float64) / 10.0
-    manager._connected = True
-    manager._enabled = False
-    manager._lifecycle_state = "CONNECTED_DISABLED"
-    manager._state_machine = "IDLE"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        lifecycle_state="CONNECTED_DISABLED",
+    )
     manager._motor_lifecycle_lock = threading.RLock()
     manager._gripper_mot = None
     manager._endpos_ctrl = SimpleNamespace(_q_target=np.zeros(6))
@@ -293,9 +296,11 @@ def test_gripper_positive_feedback_is_only_accepted_within_closed_tolerance() ->
 def test_protective_disable_is_finalised_only_by_fresh_disabled_status() -> None:
     manager = object.__new__(HardwareManager)
     manager._motor_lifecycle_lock = threading.RLock()
-    manager._connected = True
-    manager._enabled = True
-    manager._lifecycle_state = "DISABLING"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="DISABLING",
+    )
     manager._arm = SimpleNamespace(control_loop_active=False)
     manager.refresh_feedback_if_due = lambda: True
     values = (np.zeros(6), np.zeros(6), np.zeros(6), [0] * 6)
@@ -319,13 +324,15 @@ def test_unverified_protective_disable_does_not_claim_motors_are_disabled() -> N
         _stop_send=threading.Event(),
         _moving=True,
     )
-    manager._gravity_comp_active = True
+    manager._gravity_state = GravityCompensationState(active=True)
     manager._gripper_lock = threading.RLock()
     manager._gripper_active = False
     manager._gripper_mode = "idle"
-    manager._state_machine = "TRAJ_RUNNING"
-    manager._lifecycle_state = "TRAJECTORY_RUNNING"
-    manager._enabled = True
+    manager._lifecycle = HardwareLifecycleState(
+        enabled=True,
+        lifecycle_state="TRAJECTORY_RUNNING",
+        state_machine="TRAJ_RUNNING",
+    )
     manager._error_codes = []
 
     manager._protective_disable_from_hardware_loop("feedback lost")
@@ -337,10 +344,12 @@ def test_unverified_protective_disable_does_not_claim_motors_are_disabled() -> N
 
 def test_action_cleanup_cannot_overwrite_disabling_lifecycle() -> None:
     manager = object.__new__(HardwareManager)
-    manager._connected = True
-    manager._enabled = True
-    manager._state_machine = "TRAJ_RUNNING"
-    manager._lifecycle_state = "DISABLING"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="DISABLING",
+        state_machine="TRAJ_RUNNING",
+    )
 
     manager.set_state_machine("IDLE")
 
@@ -351,9 +360,11 @@ def test_action_cleanup_cannot_overwrite_disabling_lifecycle() -> None:
 
 def test_shutdown_reports_unverified_disable_without_claiming_disabled() -> None:
     manager = object.__new__(HardwareManager)
-    manager._connected = True
-    manager._enabled = True
-    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="ENABLED_HOLD",
+    )
     manager._error_codes = []
     manager.stop_gravity_compensation = lambda: None
     manager.disable_immediately = lambda: False
@@ -370,8 +381,7 @@ def test_shutdown_reports_unverified_disable_without_claiming_disabled() -> None
 @pytest.mark.parametrize("position_m", [-0.001, 0.085001, 1.0])
 def test_gripper_position_command_rejects_out_of_range_request(position_m) -> None:
     manager = object.__new__(HardwareManager)
-    manager._connected = True
-    manager._enabled = True
+    manager._lifecycle = HardwareLifecycleState(connected=True, enabled=True)
     manager._arm = SimpleNamespace(control_loop_active=True)
     manager._gripper_mot = object()
     manager._gripper_feedback_failure_reason = lambda: None
@@ -391,9 +401,11 @@ def test_gripper_command_requires_unified_hardware_control_loop() -> None:
 def test_unverified_emergency_disable_does_not_claim_disabled() -> None:
     manager = object.__new__(HardwareManager)
     manager._motor_lifecycle_lock = threading.RLock()
-    manager._connected = True
-    manager._enabled = True
-    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="ENABLED_HOLD",
+    )
     manager._error_codes = []
     manager._stop_control_loop = lambda: None
     manager._disable_all_motors = lambda: None
@@ -411,10 +423,12 @@ def test_unverified_emergency_disable_does_not_claim_disabled() -> None:
 def test_emergency_disable_requires_fresh_disabled_feedback_before_finalising() -> None:
     manager = object.__new__(HardwareManager)
     manager._motor_lifecycle_lock = threading.RLock()
-    manager._connected = True
-    manager._enabled = True
-    manager._lifecycle_state = "ENABLED_HOLD"
-    manager._state_machine = "MODE_TRANSITION"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="ENABLED_HOLD",
+        state_machine="MODE_TRANSITION",
+    )
     manager._error_codes = []
     manager._stop_control_loop = lambda: None
     manager._disable_all_motors = lambda: None
@@ -436,8 +450,8 @@ def test_gripper_zero_requires_disabled_lifecycle() -> None:
     manager, gripper = _gripper_zero_manager()
     writes = []
     gripper.set_zero_position = lambda: writes.append(True)
-    manager._enabled = True
-    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._lifecycle.enabled = True
+    manager._lifecycle.lifecycle_state = "ENABLED_HOLD"
 
     with pytest.raises(RuntimeError, match="CONNECTED_DISABLED"):
         manager.set_zero("gripper")
@@ -515,7 +529,7 @@ def test_gripper_feedback_metadata_is_read_before_gripper_lock() -> None:
     lock = TrackingLock()
     manager._gripper_lock = lock
     manager._feedback_coordinator = FeedbackCoordinator(lock)
-    manager._connected = True
+    manager._lifecycle = HardwareLifecycleState(connected=True)
     manager._gripper_mot = object()
     manager._gripper_zero_error = None
     manager._gripper_pos = -1.0

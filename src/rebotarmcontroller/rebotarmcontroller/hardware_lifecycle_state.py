@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-
 LIFECYCLE_STATES = frozenset(
     {
         "DISCONNECTED",
@@ -70,26 +67,3 @@ class HardwareLifecycleState:
         self.require_connected()
         if not self.enabled:
             raise RuntimeError("hardware is disabled; call explicit enable first")
-
-
-class HardwareLifecycleField:
-    """Compatibility descriptor for legacy private HardwareManager fields."""
-
-    def __init__(self, state_field: str) -> None:
-        self._state_field = state_field
-
-    @staticmethod
-    def _state(instance: Any) -> HardwareLifecycleState:
-        state = instance.__dict__.get("_lifecycle")
-        if state is None:
-            state = HardwareLifecycleState()
-            instance.__dict__["_lifecycle"] = state
-        return state
-
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
-            return self
-        return getattr(self._state(instance), self._state_field)
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        setattr(self._state(instance), self._state_field, value)

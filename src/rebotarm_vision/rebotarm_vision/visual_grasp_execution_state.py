@@ -84,26 +84,3 @@ class VisualGraspExecutionState:
             f"[candidate={self.current_candidate_index}]"
             f"[stage={stage}]"
         )
-
-
-class VisualGraspExecutionField:
-    """Compatibility descriptor for legacy executor private state fields."""
-
-    def __init__(self, state_field: str) -> None:
-        self._state_field = state_field
-
-    @staticmethod
-    def _state(instance: Any) -> VisualGraspExecutionState:
-        state = instance.__dict__.get("_execution_state")
-        if state is None:
-            state = VisualGraspExecutionState()
-            instance.__dict__["_execution_state"] = state
-        return state
-
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
-            return self
-        return getattr(self._state(instance), self._state_field)
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        setattr(self._state(instance), self._state_field, value)

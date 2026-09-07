@@ -6,10 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from rebotarm_vision.visual_grasp_executor_node import VisualGraspExecutorNode
-from rebotarm_vision.visual_grasp_execution_state import (
-    VisualGraspExecutionField,
-    VisualGraspExecutionState,
-)
+from rebotarm_vision.visual_grasp_execution_state import VisualGraspExecutionState
 
 
 def test_run_and_attempt_lifecycle_is_held_in_one_state_object() -> None:
@@ -76,17 +73,6 @@ def test_diagnostic_prefix_uses_current_run_attempt_and_candidate() -> None:
     assert state.diagnostic_prefix("lift") == (
         "[visual_grasp][run=3][attempt=2][candidate=5][stage=lift]"
     )
-
-
-def test_legacy_private_field_descriptor_uses_execution_state() -> None:
-    class Owner:
-        _running = VisualGraspExecutionField("running")
-
-    owner = Owner()
-    owner._running = True
-
-    assert owner._running is True
-    assert owner._execution_state.running is True
 
 
 def test_candidate_lookup_failure_does_not_leave_executor_running() -> None:

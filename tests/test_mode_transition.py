@@ -34,6 +34,9 @@ PACKAGE_ROOT = ROOT / "src" / "rebotarmcontroller"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from rebotarmcontroller.gravity_compensation_state import GravityCompensationState
+from rebotarmcontroller.hardware_lifecycle_state import HardwareLifecycleState
+
 
 class FakeClock:
     def __init__(self):
@@ -311,7 +314,7 @@ def test_hardware_manager_rejects_velocity_mode_by_default():
 
     manager = HardwareManager.__new__(HardwareManager)
     manager._arm = _ArmWithMode("pos_vel")
-    manager._gravity_comp_active = False
+    manager._gravity_state = GravityCompensationState(active=False)
     manager._mode_transition_config = _config(allow_velocity_mode=False)
     manager._mode_transition = _TransitionState()
 
@@ -328,7 +331,7 @@ def test_hardware_manager_rejects_direct_mit_mode_entry():
 
     manager = HardwareManager.__new__(HardwareManager)
     manager._arm = _ArmWithMode("pos_vel")
-    manager._gravity_comp_active = False
+    manager._gravity_state = GravityCompensationState(active=False)
     manager._mode_transition_config = _config()
     manager._mode_transition = _TransitionState()
 
@@ -397,14 +400,13 @@ def test_position_control_smoothly_exits_gravity_compensation_first():
     arm = SimpleNamespace(mode="mit", control_loop_active=False)
     manager = HardwareManager.__new__(HardwareManager)
     manager._arm = arm
-    manager._connected = True
-    manager._enabled = True
-    manager._gravity_comp_active = True
+    manager._lifecycle = HardwareLifecycleState(connected=True, enabled=True)
+    manager._gravity_state = GravityCompensationState(active=True)
     manager._mode_transition = _TransitionState()
 
     def stop_gravity_compensation():
         calls.append("stop_gravity_compensation")
-        manager._gravity_comp_active = False
+        manager._gravity_state.active = False
         arm.mode = "pos_vel"
 
     manager.stop_gravity_compensation = stop_gravity_compensation
@@ -423,11 +425,13 @@ def test_disable_still_disables_when_smooth_exit_fails():
     calls = []
     manager = HardwareManager.__new__(HardwareManager)
     manager._motor_lifecycle_lock = __import__("threading").RLock()
-    manager._connected = True
-    manager._lifecycle_state = "ENABLED_HOLD"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="ENABLED_HOLD",
+    )
     manager._gripper_mot = None
     manager._arm = SimpleNamespace(disable=lambda: calls.append("disable"))
-    manager._enabled = True
     manager.stop_gravity_compensation = lambda: (_ for _ in ()).throw(
         RuntimeError("transition failed")
     )
@@ -438,7 +442,6 @@ def test_disable_still_disables_when_smooth_exit_fails():
     )
     manager._validated_gripper_status = lambda **_kwargs: None
     manager._error_codes = []
-    manager._state_machine = "IDLE"
 
     try:
         manager.disable()
@@ -446,7 +449,7 @@ def test_disable_still_disables_when_smooth_exit_fails():
         assert "transition failed" in str(exc)
 
     assert "disable" in calls
-    assert manager._enabled is False
+    assert manager.enabled is False
 
 
 def test_shutdown_still_disables_when_smooth_exit_fails():
@@ -457,10 +460,11 @@ def test_shutdown_still_disables_when_smooth_exit_fails():
     calls = []
     manager = HardwareManager.__new__(HardwareManager)
     manager._motor_lifecycle_lock = threading.RLock()
-    manager._connected = True
-    manager._enabled = True
-    manager._lifecycle_state = "ENABLED_HOLD"
-    manager._state_machine = "IDLE"
+    manager._lifecycle = HardwareLifecycleState(
+        connected=True,
+        enabled=True,
+        lifecycle_state="ENABLED_HOLD",
+    )
     manager._error_codes = []
     manager._gripper_mot = None
     manager._arm = SimpleNamespace(
@@ -481,8 +485,8 @@ def test_shutdown_still_disables_when_smooth_exit_fails():
 
     assert "disable" in calls
     assert "disconnect" in calls
-    assert manager._connected is False
-    assert manager._enabled is False
+    assert manager.connected is False
+    assert manager.enabled is False
     assert manager.lifecycle_state == "DISCONNECTED"
     assert any(
         "SHUTDOWN_GRAVITY_STOP_FAILED" in code for code in manager._error_codes

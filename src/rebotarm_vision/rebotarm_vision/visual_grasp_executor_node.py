@@ -26,10 +26,7 @@ from .visual_failure_recovery import (
     FailureRecoveryOperations,
     VisualFailureRecovery,
 )
-from .visual_grasp_execution_state import (
-    VisualGraspExecutionField,
-    VisualGraspExecutionState,
-)
+from .visual_grasp_execution_state import VisualGraspExecutionState
 from .visual_grasp_parameter_adapter import VisualGraspParameterAdapter
 from .visual_grasp_plan_builder import (
     VisualGraspPlanBuilder,
@@ -57,26 +54,6 @@ def target_to_pose_stamped(target: PoseTarget, frame_id: str) -> PoseStamped:
 
 
 class VisualGraspExecutorNode(Node):
-    _last_gripper_reached_position = VisualGraspExecutionField(
-        "last_gripper_reached_position"
-    )
-    _last_grasp_contact_detected = VisualGraspExecutionField(
-        "last_grasp_contact_detected"
-    )
-    _last_grasp_closure_distance_m = VisualGraspExecutionField(
-        "last_grasp_closure_distance_m"
-    )
-    _retry_retreat_stage = VisualGraspExecutionField("retry_retreat_stage")
-    _run_counter = VisualGraspExecutionField("run_counter")
-    _current_run_id = VisualGraspExecutionField("current_run_id")
-    _current_attempt_index = VisualGraspExecutionField("current_attempt_index")
-    _current_candidate_index = VisualGraspExecutionField("current_candidate_index")
-    _current_attempt_plan = VisualGraspExecutionField("current_attempt_plan")
-    _running = VisualGraspExecutionField("running")
-    _failure_recovery_start_pose = VisualGraspExecutionField(
-        "failure_recovery_start_pose"
-    )
-
     def __init__(self) -> None:
         super().__init__("rebotarm_visual_grasp_executor")
         self._callback_group = ReentrantCallbackGroup()
@@ -428,8 +405,8 @@ class VisualGraspExecutorNode(Node):
         return recovery.recover(
             execution_enabled=self._execution_enabled(),
             recovery_mode=self._failure_recovery_mode,
-            start_pose=self._failure_recovery_start_pose,
-            grasp_contact_detected=self._last_grasp_contact_detected,
+            start_pose=self._execution_state.failure_recovery_start_pose,
+            grasp_contact_detected=self._execution_state.last_grasp_contact_detected,
             failed_stage=failed_stage,
             failure_message=failure_message,
         )
@@ -507,7 +484,7 @@ class VisualGraspExecutorNode(Node):
                 )
                 if decision.request_stop:
                     self._request_stop(
-                        stop_gripper=not self._last_grasp_contact_detected
+                        stop_gripper=not self._execution_state.last_grasp_contact_detected
                     )
                 if decision.request_safe_retreat:
                     self._request_retry_retreat()
@@ -526,7 +503,9 @@ class VisualGraspExecutorNode(Node):
             self._log_diagnostic("result", "success", response.message)
             return response
         except Exception as exc:
-            self._request_stop(stop_gripper=not self._last_grasp_contact_detected)
+            self._request_stop(
+                stop_gripper=not self._execution_state.last_grasp_contact_detected
+            )
             response.success = False
             recovery = self._recover_task_failure("executor", str(exc))
             response.message = f"visual grasp failed: {exc}; recovery={recovery}"
@@ -608,15 +587,16 @@ class VisualGraspExecutorNode(Node):
 
     def _log_failure_snapshot(self, failed_stage: str, message: str) -> None:
         self.get_logger().error(f"{self._diagnostic_prefix(failed_stage)} fail: {message}")
-        if self._current_attempt_plan is not None:
-            self._log_plan_snapshot(self._current_attempt_plan)
-        reached = "unknown" if self._last_gripper_reached_position is None else f"{self._last_gripper_reached_position:.4f}"
+        if self._execution_state.current_attempt_plan is not None:
+            self._log_plan_snapshot(self._execution_state.current_attempt_plan)
+        reached_position = self._execution_state.last_gripper_reached_position
+        reached = "unknown" if reached_position is None else f"{reached_position:.4f}"
         self.get_logger().error(
             f"{self._diagnostic_prefix('failure_summary')} "
             f"failed_stage={failed_stage}, message={message}, "
             f"last_gripper_reached_position={reached}, "
-            f"contact={self._last_grasp_contact_detected}, "
-            f"closure_distance={self._last_grasp_closure_distance_m:.4f}"
+            f"contact={self._execution_state.last_grasp_contact_detected}, "
+            f"closure_distance={self._execution_state.last_grasp_closure_distance_m:.4f}"
         )
 
     def _format_pose(self, pose: Pose) -> str:
@@ -634,7 +614,11 @@ class VisualGraspExecutorNode(Node):
             return None
         timeout_sec = float(self.get_parameter("refresh_plan_timeout_sec").value)
         deadline = time.monotonic() + max(0.0, timeout_sec)
-        while rclpy.ok() and self._running and time.monotonic() < deadline:
+        while (
+            rclpy.ok()
+            and self._execution_state.running
+            and time.monotonic() < deadline
+        ):
             refreshed = self._plan_store.refreshed_plan_after(min_revision)
             if refreshed is not None:
                 revision, plan = refreshed
@@ -711,13 +695,13 @@ class VisualGraspExecutorNode(Node):
         return False, f"not converged after {max_iterations} steps: error={last_error:.4f}"
 
     def _request_retry_retreat(self) -> None:
-        if self._retry_retreat_stage is None:
+        if self._execution_state.retry_retreat_stage is None:
             self.get_logger().warn("safe retreat before retry requested, but no pregrasp retreat stage is available")
             return
         retreat = VisualGraspStage(
             name="retry_safe_retreat",
             kind="move",
-            pose=self._retry_retreat_stage.pose,
+            pose=self._execution_state.retry_retreat_stage.pose,
         )
         ok, message = self._run_stage(retreat)
         if not ok:
@@ -774,7 +758,7 @@ class VisualGraspExecutorNode(Node):
         if not self._execution_enabled() and stage.kind == "move":
             wait_sec = max(wait_sec, float(self.get_parameter("plan_only_stage_pause_sec").value))
         time.sleep(max(0.0, wait_sec))
-        if not self._running:
+        if not self._execution_state.running:
             return False, "stopped"
         self._log_diagnostic(stage.name, "ok", message)
         return True, message
@@ -850,7 +834,9 @@ class VisualGraspExecutorNode(Node):
                 command_success=command_success,
                 target_position_m=float(stage.gripper_position_m),
                 reached_position_m=reached_position,
-                previous_open_position_m=self._last_gripper_reached_position,
+                previous_open_position_m=(
+                    self._execution_state.last_gripper_reached_position
+                ),
                 contact_margin_m=float(self.get_parameter("close_contact_margin_m").value),
                 min_closure_delta_m=float(self.get_parameter("close_contact_min_closure_delta_m").value),
             )
@@ -915,7 +901,7 @@ class VisualGraspExecutorNode(Node):
     def _wait_for_future(self, future, timeout_sec: float) -> bool:
         deadline = time.monotonic() + max(0.0, timeout_sec)
         while rclpy.ok() and not future.done() and time.monotonic() < deadline:
-            if not self._running:
+            if not self._execution_state.running:
                 return False
             time.sleep(0.02)
         return future.done()

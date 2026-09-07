@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rebotarmcontroller.hardware_lifecycle_state import (
-    HardwareLifecycleField,
-    HardwareLifecycleState,
-)
+from rebotarmcontroller.hardware_lifecycle_state import HardwareLifecycleState
 
 
 @pytest.mark.parametrize(
@@ -72,14 +69,3 @@ def test_connection_and_enable_guards_keep_existing_messages() -> None:
         disconnected.require_connected()
     with pytest.raises(RuntimeError, match="explicit enable"):
         disabled.require_enabled()
-
-
-def test_legacy_private_field_descriptor_uses_lifecycle_state() -> None:
-    class Owner:
-        _enabled = HardwareLifecycleField("enabled")
-
-    owner = Owner()
-    owner._enabled = True
-
-    assert owner._enabled is True
-    assert owner._lifecycle.enabled is True

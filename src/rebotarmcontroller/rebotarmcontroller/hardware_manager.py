@@ -30,10 +30,7 @@ from .gripper_position import (
 )
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_sdk_adapter import GripperSdkAdapter
-from .gravity_compensation_state import (
-    GravityCompensationField,
-    GravityCompensationState,
-)
+from .gravity_compensation_state import GravityCompensationState
 from .hardware_feedback import HardwareFeedbackCoordinator, build_controller_groups
 from .hardware_feedback_validation import (
     validate_feedback_state as validate_hardware_feedback_state,
@@ -43,10 +40,7 @@ from .hardware_disable import (
     attempt_verified_disable,
     disable_unique_controller_buses,
 )
-from .hardware_lifecycle_state import (
-    HardwareLifecycleField,
-    HardwareLifecycleState,
-)
+from .hardware_lifecycle_state import HardwareLifecycleState
 from .hardware_runtime_config import HardwareRuntimeConfig
 from .hardware_sdk_runtime import create_hardware_sdk_runtime
 from .joint_motor_commands import (
@@ -118,16 +112,6 @@ def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
 
 class HardwareManager:
     """Owns the single RobotArm instance used by the ROS driver."""
-
-    _connected = HardwareLifecycleField("connected")
-    _enabled = HardwareLifecycleField("enabled")
-    _lifecycle_state = HardwareLifecycleField("lifecycle_state")
-    _state_machine = HardwareLifecycleField("state_machine")
-    _gravity_comp_active = GravityCompensationField("active")
-    _gravity_comp_q_target = GravityCompensationField("target")
-    _gravity_comp_integral = GravityCompensationField("integral")
-    _gravity_comp_lock_counter = GravityCompensationField("lock_counter")
-    _gravity_comp_q_last = GravityCompensationField("last_position")
 
     _gripper_target_angle = GripperRuntimeField("target_angle")
     _gripper_goal_angle = GripperRuntimeField("goal_angle")
@@ -314,7 +298,7 @@ class HardwareManager:
     @property
     def error_codes(self) -> list[str]:
         codes = list(self._error_codes)
-        if not getattr(self, "_connected", False):
+        if not self._lifecycle.connected:
             return codes
         arm_failure = self._arm_feedback_failure_reason()
         if arm_failure is not None:
@@ -338,11 +322,11 @@ class HardwareManager:
         self._lifecycle.require_enabled()
 
     def connect(self) -> None:
-        if self._connected:
+        if self._lifecycle.connected:
             return
         try:
             self._arm.connect()
-            self._connected = True
+            self._lifecycle.connected = True
             self.init_gripper(str(self._gripper_cfg_path))
             _positions, _velocities, _torques, statuses = self._validated_joint_feedback()
             gripper_status = None
@@ -352,7 +336,7 @@ class HardwareManager:
                 self._disable_all_motors()
                 self._validated_joint_feedback(expected_status=0)
                 self._validated_gripper_status(expected_status=0)
-            self._enabled = False
+            self._lifecycle.enabled = False
             self._set_lifecycle_state("CONNECTED_DISABLED")
         except Exception:
             self._disconnect_after_failed_connect()
@@ -371,14 +355,14 @@ class HardwareManager:
             self._arm.disconnect()
         except Exception:
             pass
-        self._connected = False
-        self._enabled = False
+        self._lifecycle.connected = False
+        self._lifecycle.enabled = False
         self._set_lifecycle_state("DISCONNECTED")
 
     def shutdown(self) -> bool:
-        if not self._connected:
+        if not self._lifecycle.connected:
             return True
-        was_enabled = self._enabled
+        was_enabled = self._lifecycle.enabled
         disable_verified = False
         disable_error: Exception | None = None
         disconnect_error: Exception | None = None
@@ -408,15 +392,15 @@ class HardwareManager:
                 disconnect_error = exc
         finally:
             if disconnect_error is None:
-                self._connected = False
+                self._lifecycle.connected = False
                 # Preserve the last known enabled state when hard-disable could
                 # not be verified.  DISCONNECTED prevents new commands while
                 # the error code records that the physical state is unknown.
-                self._enabled = False if disable_verified else was_enabled
+                self._lifecycle.enabled = False if disable_verified else was_enabled
                 self._set_lifecycle_state("DISCONNECTED")
             else:
-                self._connected = True
-                self._enabled = False if disable_verified else was_enabled
+                self._lifecycle.connected = True
+                self._lifecycle.enabled = False if disable_verified else was_enabled
                 self._set_lifecycle_state(
                     "CONNECTED_DISABLED" if disable_verified else "DISABLING"
                 )
@@ -428,32 +412,32 @@ class HardwareManager:
 
     def get_joint_state(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         with self._motor_lifecycle_lock:
-            if not self._connected:
+            if not self._lifecycle.connected:
                 return self._arm.get_state()
             if not self.control_loop_active:
                 self.refresh_feedback_if_due()
-            if self._lifecycle_state == "DISABLING":
+            if self._lifecycle.lifecycle_state == "DISABLING":
                 positions, velocities, torques, statuses = self._validated_joint_feedback(
                     expected_status=None,
                     refresh=False,
                 )
                 gripper_status = self._cached_gripper_status()
                 if all(status == 0 for status in statuses) and gripper_status in (None, 0):
-                    self._enabled = False
+                    self._lifecycle.enabled = False
                     self._set_lifecycle_state("CONNECTED_DISABLED")
                 return positions, velocities, torques
             positions, velocities, torques, _statuses = self._validated_joint_feedback(
-                expected_status=1 if self._enabled else 0,
+                expected_status=1 if self._lifecycle.enabled else 0,
                 refresh=False,
             )
             return positions, velocities, torques
 
     def get_cached_joint_state(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         with self._motor_lifecycle_lock:
-            if not self._connected:
+            if not self._lifecycle.connected:
                 return self._arm.get_state()
             positions, velocities, torques, _statuses = self._validated_joint_feedback(
-                expected_status=1 if self._enabled else 0,
+                expected_status=1 if self._lifecycle.enabled else 0,
                 refresh=False,
             )
             return positions, velocities, torques
@@ -484,7 +468,7 @@ class HardwareManager:
 
         with self._motor_lifecycle_lock:
             self._require_connected()
-            if self._enabled:
+            if self._lifecycle.enabled:
                 self.hold_current_position()
                 self._set_lifecycle_state("ENABLED_HOLD")
                 return
@@ -507,7 +491,7 @@ class HardwareManager:
                     self._gripper_mot.enable()
                 self._validated_joint_feedback(expected_status=1)
                 self._validated_gripper_status(expected_status=1)
-                self._enabled = True
+                self._lifecycle.enabled = True
                 self._start_pos_vel_loop(target=positions)
                 self.set_state_machine("IDLE")
             except Exception as exc:
@@ -524,13 +508,13 @@ class HardwareManager:
             disable_all_motors=self._disable_all_motors,
             verify_disabled_feedback=self._verify_disabled_feedback,
         )
-        self._state_machine = "IDLE"
+        self._lifecycle.state_machine = "IDLE"
         if not attempt.verified:
-            self._enabled = True
+            self._lifecycle.enabled = True
             self._error_codes.append("ENABLE_ROLLBACK_FAILED")
             self._set_lifecycle_state("DISABLING")
             return attempt.error_detail
-        self._enabled = False
+        self._lifecycle.enabled = False
         self._set_lifecycle_state("CONNECTED_DISABLED")
         return None
 
@@ -538,7 +522,7 @@ class HardwareManager:
         with self._motor_lifecycle_lock:
             self._require_connected()
             self._set_lifecycle_state("DISABLING")
-            was_enabled = self._enabled
+            was_enabled = self._lifecycle.enabled
             transition_error: Exception | None = None
             try:
                 self.stop_gravity_compensation()
@@ -547,17 +531,17 @@ class HardwareManager:
                 # operator disable request from reaching the motors.
                 transition_error = exc
             self._stop_control_loop()
-            self._enabled = False
+            self._lifecycle.enabled = False
             try:
                 self._disable_all_motors()
                 self._verify_disabled_feedback()
             except Exception:
-                self._enabled = was_enabled
+                self._lifecycle.enabled = was_enabled
                 self._error_codes.append("DISABLE_VERIFICATION_FAILED")
                 raise
             else:
-                self._enabled = False
-                self._state_machine = "IDLE"
+                self._lifecycle.enabled = False
+                self._lifecycle.state_machine = "IDLE"
                 self._set_lifecycle_state("CONNECTED_DISABLED")
             if transition_error is not None:
                 raise RuntimeError(str(transition_error)) from transition_error
@@ -576,7 +560,7 @@ class HardwareManager:
         self.stop_gravity_compensation()
 
         if mode == self.mode:
-            if mode == "pos_vel" and self._enabled:
+            if mode == "pos_vel" and self._lifecycle.enabled:
                 if self.control_loop_active:
                     self.hold_current_position()
                 else:
@@ -589,7 +573,7 @@ class HardwareManager:
             ok = self._arm.mode_mit()
         elif mode == "pos_vel":
             ok = self._arm.mode_pos_vel()
-            if self._enabled:
+            if self._lifecycle.enabled:
                 self._start_pos_vel_loop()
         else:
             ok = self._arm.mode_vel()
@@ -599,7 +583,10 @@ class HardwareManager:
     def set_zero(self, joint_name: str = "") -> bool:
         with self._motor_lifecycle_lock:
             self._require_connected()
-            if self._enabled or self._lifecycle_state != "CONNECTED_DISABLED":
+            if (
+                self._lifecycle.enabled
+                or self._lifecycle.lifecycle_state != "CONNECTED_DISABLED"
+            ):
                 raise RuntimeError("set_zero requires CONNECTED_DISABLED state")
             self._stop_control_loop()
             normalized = str(joint_name).strip().lower()
@@ -612,7 +599,7 @@ class HardwareManager:
                 ok = True
             if ok:
                 self._validated_joint_feedback(expected_status=0)
-            self._enabled = False
+            self._lifecycle.enabled = False
             self._set_lifecycle_state("CONNECTED_DISABLED")
             self.set_state_machine("IDLE")
             return bool(ok)
@@ -646,7 +633,7 @@ class HardwareManager:
                 if consecutive >= _G_ZERO_VERIFY_SAMPLES:
                     with self._gripper_lock:
                         self._gripper_zero_error = None
-                    self._enabled = False
+                    self._lifecycle.enabled = False
                     self._set_lifecycle_state("CONNECTED_DISABLED")
                     self.set_state_machine("IDLE")
                     return True
@@ -666,7 +653,7 @@ class HardwareManager:
         if self._mode_transition.in_progress:
             raise RuntimeError("mode transition in progress")
         self._require_enabled()
-        if self._gravity_comp_active:
+        if self._gravity_state.active:
             self.stop_gravity_compensation()
         if self.mode != "pos_vel":
             validate_mode_transition(self.mode, "pos_vel", self._mode_transition_config)
@@ -708,7 +695,7 @@ class HardwareManager:
         self.set_state_machine("LOWLEVEL_STREAMING")
 
     def start_gravity_compensation(self) -> None:
-        if self._gravity_comp_active:
+        if self._gravity_state.active:
             return
         self._require_enabled()
         result = self._mode_transition.enter_gravity_compensation()
@@ -716,7 +703,7 @@ class HardwareManager:
             raise RuntimeError(f"{result.stage}: {result.failure_reason}")
 
     def stop_gravity_compensation(self) -> None:
-        if not self._gravity_comp_active:
+        if not self._gravity_state.active:
             return
         result = self._mode_transition.exit_gravity_compensation()
         if not result.success:
@@ -801,11 +788,11 @@ class HardwareManager:
     def disable_immediately(self) -> bool:
         """Best-effort emergency disable without claiming an unverified state."""
         with self._motor_lifecycle_lock:
-            if not self._connected:
-                self._enabled = False
+            if not self._lifecycle.connected:
+                self._lifecycle.enabled = False
                 self._set_lifecycle_state("DISCONNECTED")
                 return True
-            was_enabled = self._enabled
+            was_enabled = self._lifecycle.enabled
             self._set_lifecycle_state("DISABLING")
             attempt = attempt_verified_disable(
                 stop_control_loop=self._stop_control_loop,
@@ -813,13 +800,13 @@ class HardwareManager:
                 verify_disabled_feedback=self._verify_disabled_feedback,
             )
             if not attempt.verified:
-                self._enabled = was_enabled
+                self._lifecycle.enabled = was_enabled
                 message = "EMERGENCY_DISABLE_UNVERIFIED: " + attempt.error_detail
                 if message not in self._error_codes:
                     self._error_codes.append(message)
                 return False
-            self._enabled = False
-            self._state_machine = "IDLE"
+            self._lifecycle.enabled = False
+            self._lifecycle.state_machine = "IDLE"
             self._set_lifecycle_state("CONNECTED_DISABLED")
             return True
 
@@ -1076,7 +1063,10 @@ class HardwareManager:
         return fk_to_pose(position, rotation)
 
     def get_joint_status_codes(self) -> list[int]:
-        if self._connected and self._arm_feedback_failure_reason() is not None:
+        if (
+            self._lifecycle.connected
+            and self._arm_feedback_failure_reason() is not None
+        ):
             return [255] * len(self.joint_names)
         codes: list[int] = []
         for name in self.joint_names:
@@ -1348,7 +1338,7 @@ class HardwareManager:
         self._gravity_state.deactivate()
         with self._gripper_lock:
             self._gripper_state.set_idle()
-        self._state_machine = "IDLE"
+        self._lifecycle.state_machine = "IDLE"
         self._set_lifecycle_state("DISABLING")
         errors = disable_unique_controller_buses(
             getattr(self._arm, "_ctrl_map", {}).values()

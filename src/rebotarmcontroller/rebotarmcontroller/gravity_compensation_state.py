@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
 import numpy as np
 
 
@@ -62,26 +60,3 @@ class GravityCompensationState:
                 self.integral *= 0.9
             return
         self.lock_counter += 1
-
-
-class GravityCompensationField:
-    """Compatibility descriptor for legacy private HardwareManager fields."""
-
-    def __init__(self, state_field: str) -> None:
-        self._state_field = state_field
-
-    @staticmethod
-    def _state(instance: Any) -> GravityCompensationState:
-        state = instance.__dict__.get("_gravity_state")
-        if state is None:
-            state = GravityCompensationState()
-            instance.__dict__["_gravity_state"] = state
-        return state
-
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
-            return self
-        return getattr(self._state(instance), self._state_field)
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        setattr(self._state(instance), self._state_field, value)

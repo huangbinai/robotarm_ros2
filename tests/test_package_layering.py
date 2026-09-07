@@ -200,6 +200,20 @@ def test_hardware_manager_delegates_gripper_motor_command_policy() -> None:
     assert "unsupported JointMotorCmd mode" not in gripper_command_source
 
 
+def test_hardware_manager_delegates_joint_motor_command_policy() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+    joint_command_source = source.split(
+        "    def send_joint_motor_cmd", 1
+    )[1].split("    def start_gravity_compensation", 1)[0]
+
+    assert "motor_command = resolve_joint_motor_command(" in joint_command_source
+    assert "dispatch_joint_motor_command(" in joint_command_source
+    assert "joint motor command contains non-finite" not in joint_command_source
+    assert "unsupported JointMotorCmd mode" not in joint_command_source
+
+
 def test_hardware_manager_uses_shared_gripper_coordinate_model() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

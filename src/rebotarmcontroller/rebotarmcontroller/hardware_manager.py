@@ -40,6 +40,10 @@ from .hardware_lifecycle_state import (
     HardwareLifecycleState,
 )
 from .hardware_runtime_config import HardwareRuntimeConfig
+from .joint_motor_commands import (
+    dispatch_joint_motor_command,
+    resolve_joint_motor_command,
+)
 from .mode_transition import ModeTransitionCoordinator
 from .mode_transition_policy import (
     FeedbackSample,
@@ -697,39 +701,21 @@ class HardwareManager:
         if joint_name not in self._arm._motor_map:
             raise KeyError(f"unknown joint: {joint_name}")
 
-        mot = self._arm._motor_map[joint_name]
-        jc = next(j for j in self._arm._joints if j.name == joint_name)
+        motor = self._arm._motor_map[joint_name]
+        joint_config = next(j for j in self._arm._joints if j.name == joint_name)
         state = self._verified_feedback_sample(joint_name).state
-
-        pos = float(cmd.pos) if cmd.use_pos else float(state.pos if state is not None else 0.0)
-        vel = float(cmd.vel) if cmd.use_vel else float(state.vel if state is not None else 0.0)
-        kp = float(cmd.kp) if cmd.use_kp else float(jc.kp)
-        kd = float(cmd.kd) if cmd.use_kd else float(jc.kd)
-        tau = float(cmd.tau) if cmd.use_tau else 0.0
-        vlim = float(cmd.vlim) if cmd.use_vlim else float(jc.vlim)
-
-        values = {"pos": pos, "vel": vel, "kp": kp, "kd": kd, "tau": tau, "vlim": vlim}
-        invalid = [name for name, value in values.items() if not np.isfinite(value)]
-        if invalid:
-            raise ValueError("joint motor command contains non-finite " + ", ".join(invalid))
-        if kp < 0.0 or kd < 0.0 or vlim <= 0.0:
-            raise ValueError("joint motor kp/kd must be non-negative and vlim must be positive")
-        lower, upper = _JOINT_FEEDBACK_LIMITS_RAD[joint_name]
-        if cmd.use_pos and not lower <= pos <= upper:
-            raise ValueError(
-                f"{joint_name} position command {pos:.6f} outside [{lower:.6f}, {upper:.6f}]"
-            )
-
-        if int(cmd.mode) == 0:
-            mot.send_mit(pos, vel, kp, kd, tau)
-        elif int(cmd.mode) == 1:
-            mot.send_pos_vel(pos, vlim)
-        elif int(cmd.mode) == 2:
-            if not hasattr(mot, "send_vel"):
-                raise RuntimeError(f"{joint_name} does not support send_vel")
-            mot.send_vel(vel)
-        else:
-            raise ValueError(f"unsupported JointMotorCmd mode: {cmd.mode}")
+        motor_command = resolve_joint_motor_command(
+            joint_name,
+            cmd,
+            feedback_state=state,
+            config=joint_config,
+            position_limits_rad=_JOINT_FEEDBACK_LIMITS_RAD[joint_name],
+        )
+        dispatch_joint_motor_command(
+            motor,
+            motor_command,
+            joint_name=joint_name,
+        )
         self.set_state_machine("LOWLEVEL_STREAMING")
 
     def start_gravity_compensation(self) -> None:

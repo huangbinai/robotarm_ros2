@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from rebotarmcontroller.hardware_feedback import build_controller_groups
+from rebotarmcontroller.gripper_coordinates import DEFAULT_GRIPPER_COORDINATES
 from rebotarmcontroller.hardware_feedback_validation import (
     validate_feedback_state,
     validated_gripper_feedback_values,
@@ -58,15 +59,11 @@ def test_feedback_validation_preserves_joint_and_gripper_ranges() -> None:
         "joint2",
         SimpleNamespace(pos=0.02, vel=0.0, torq=0.0),
         joint_position_limits_rad={"joint2": (-3.14, 0.02)},
-        gripper_open_angle_rad=-5.0,
-        gripper_coordinate_tolerance_rad=0.001,
-        gripper_closed_feedback_tolerance_rad=0.056,
+        gripper_coordinates=DEFAULT_GRIPPER_COORDINATES,
     )
     values = validated_gripper_feedback_values(
         SimpleNamespace(pos=-5.0005, vel=0.1, torq=0.2, status_code=1),
-        open_angle_rad=-5.0,
-        coordinate_tolerance_rad=0.001,
-        closed_feedback_tolerance_rad=0.056,
+        coordinates=DEFAULT_GRIPPER_COORDINATES,
     )
 
     assert values == (-5.0005, 0.1, 0.2, 1)
@@ -90,7 +87,5 @@ def test_feedback_validation_rejects_invalid_joint_samples(
             label,
             state,
             joint_position_limits_rad={"joint2": (-3.14, 0.02)},
-            gripper_open_angle_rad=-5.0,
-            gripper_coordinate_tolerance_rad=0.001,
-            gripper_closed_feedback_tolerance_rad=0.056,
+            gripper_coordinates=DEFAULT_GRIPPER_COORDINATES,
         )

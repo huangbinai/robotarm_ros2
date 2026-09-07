@@ -200,6 +200,20 @@ def test_hardware_manager_delegates_gripper_motor_command_policy() -> None:
     assert "unsupported JointMotorCmd mode" not in gripper_command_source
 
 
+def test_hardware_manager_uses_shared_gripper_coordinate_model() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "_GRIPPER_COORDINATES = DEFAULT_GRIPPER_COORDINATES" in source
+    assert "_GRIPPER_COORDINATES.validate_position_request(" in source
+    assert "_GRIPPER_COORDINATES.opening_to_angle(position)" in source
+    assert "_GRIPPER_COORDINATES.angle_to_opening(position)" in source
+    assert "_G_MAX_DIST_M" not in source
+    assert "_G_VERIFIED_OPEN_LIMIT_M" not in source
+    assert "_G_CLOSED_FEEDBACK_TOL_RAD" not in source
+
+
 def test_hardware_manager_delegates_lifecycle_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

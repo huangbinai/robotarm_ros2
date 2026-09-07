@@ -12,6 +12,7 @@ from .bus_synchronization import patch_arm_bus_lock
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
+from .gripper_coordinates import DEFAULT_GRIPPER_COORDINATES
 from .gripper_motion_policy import (
     GripperMotionPolicyConfig,
     GripperTickDecision,
@@ -49,16 +50,9 @@ from .sdk_runtime import RebotSdkLocator
 
 _LOG = logging.getLogger(__name__)
 
-_G_MAX_DIST_M = 0.09
-_G_VERIFIED_OPEN_LIMIT_M = 0.085
-_G_ANGLE_OPEN = -5.0
-_G_COORDINATE_TOL_RAD = 2.0 * 25.0 / 65535.0
-# One millimetre at the closed end is accepted only when validating feedback.
-# It does not move the zero, enlarge the requested range, or change command clamping.
-_G_CLOSED_FEEDBACK_TOL_RAD = 0.001 * abs(_G_ANGLE_OPEN) / _G_MAX_DIST_M
+_GRIPPER_COORDINATES = DEFAULT_GRIPPER_COORDINATES
 _G_ZERO_VERIFY_TIMEOUT_SEC = 0.5
 _G_ZERO_VERIFY_SAMPLES = 3
-_G_OPEN_SOFT_LIMIT = -4.9
 _G_ARRIVE_TOL = 0.12
 _G_TAU_MAX = 1.5
 _G_POSITION_TORQUE_CAP_NM = 1.0
@@ -640,7 +634,7 @@ class HardwareManager:
                     )
                 consecutive = (
                     consecutive + 1
-                    if abs(position) <= _G_COORDINATE_TOL_RAD
+                    if abs(position) <= _GRIPPER_COORDINATES.coordinate_tolerance_rad
                     else 0
                 )
                 if consecutive >= _G_ZERO_VERIFY_SAMPLES:
@@ -654,7 +648,7 @@ class HardwareManager:
             raise TimeoutError(
                 f"zero verification timed out: raw={position:.6f} rad; "
                 f"need {_G_ZERO_VERIFY_SAMPLES} fresh disabled samples within "
-                f"+/-{_G_COORDINATE_TOL_RAD:.6f} rad"
+                f"+/-{_GRIPPER_COORDINATES.coordinate_tolerance_rad:.6f} rad"
             )
         except Exception as exc:
             message = f"gripper set_zero failed: {exc}"
@@ -874,9 +868,7 @@ class HardwareManager:
     def _validated_gripper_feedback_values(state) -> tuple[float, float, float, int]:
         return validated_gripper_feedback_values(
             state,
-            open_angle_rad=_G_ANGLE_OPEN,
-            coordinate_tolerance_rad=_G_COORDINATE_TOL_RAD,
-            closed_feedback_tolerance_rad=_G_CLOSED_FEEDBACK_TOL_RAD,
+            coordinates=_GRIPPER_COORDINATES,
         )
 
     def _validate_feedback_state(self, label: str, state) -> None:
@@ -884,9 +876,7 @@ class HardwareManager:
             label,
             state,
             joint_position_limits_rad=_JOINT_FEEDBACK_LIMITS_RAD,
-            gripper_open_angle_rad=_G_ANGLE_OPEN,
-            gripper_coordinate_tolerance_rad=_G_COORDINATE_TOL_RAD,
-            gripper_closed_feedback_tolerance_rad=_G_CLOSED_FEEDBACK_TOL_RAD,
+            gripper_coordinates=_GRIPPER_COORDINATES,
         )
 
     def _on_verified_feedback(
@@ -944,15 +934,11 @@ class HardwareManager:
                 f"limit={self._feedback_stale_timeout_sec:.3f}s"
             )
         position = float(self._gripper_state.position)
-        if not np.isfinite(position) or not (
-            _G_ANGLE_OPEN - _G_COORDINATE_TOL_RAD
-            <= position
-            <= _G_CLOSED_FEEDBACK_TOL_RAD
-        ):
+        if not _GRIPPER_COORDINATES.accepts_feedback_angle(position):
             return (
                 f"gripper coordinate invalid: raw={position:.6f} rad outside "
-                f"[{_G_ANGLE_OPEN - _G_COORDINATE_TOL_RAD:.6f}, "
-                f"{_G_CLOSED_FEEDBACK_TOL_RAD:.6f}]"
+                f"[{_GRIPPER_COORDINATES.feedback_lower_rad:.6f}, "
+                f"{_GRIPPER_COORDINATES.feedback_upper_rad:.6f}]"
             )
         return None
 
@@ -1142,15 +1128,10 @@ class HardwareManager:
         gripper_failure = self._gripper_feedback_failure_reason()
         if gripper_failure is not None:
             raise RuntimeError(gripper_failure)
-        position = float(position_m)
-        effort_request = float(max_effort)
-        if not np.isfinite(position) or not np.isfinite(effort_request):
-            raise ValueError("gripper position and effort must be finite")
-        if not 0.0 <= position <= _G_VERIFIED_OPEN_LIMIT_M:
-            raise ValueError(
-                "gripper position must be within "
-                f"[0.0, {_G_VERIFIED_OPEN_LIMIT_M:g}] m"
-            )
+        position, effort_request = _GRIPPER_COORDINATES.validate_position_request(
+            position_m,
+            max_effort,
+        )
         sample = self._verified_feedback_sample("gripper")
         if sample.is_stale(time.monotonic(), self._feedback_stale_timeout_sec):
             raise RuntimeError("gripper feedback is stale before position command")
@@ -1159,7 +1140,7 @@ class HardwareManager:
         )
         if status != 1:
             raise RuntimeError(f"gripper status_code={status}, expected 1")
-        target = max((position / _G_MAX_DIST_M) * _G_ANGLE_OPEN, _G_OPEN_SOFT_LIMIT)
+        target = _GRIPPER_COORDINATES.opening_to_angle(position)
         effort = _G_DEFAULT_FORCE if effort_request <= 0.0 else effort_request
         now = time.monotonic()
         dynamic_timeout = (
@@ -1399,14 +1380,7 @@ class HardwareManager:
             zero_error = getattr(self, "_gripper_zero_error", None)
         if zero_error is not None:
             return float("nan")
-        if not np.isfinite(position) or not (
-            _G_ANGLE_OPEN - _G_COORDINATE_TOL_RAD
-            <= position
-            <= _G_CLOSED_FEEDBACK_TOL_RAD
-        ):
-            return float("nan")
-        distance = (position / _G_ANGLE_OPEN) * _G_MAX_DIST_M
-        return float(np.clip(distance, 0.0, _G_MAX_DIST_M))
+        return _GRIPPER_COORDINATES.angle_to_opening(position)
 
     def gripper_reached_target(self) -> bool:
         with self._gripper_lock:
@@ -1434,7 +1408,7 @@ class HardwareManager:
             cmd,
             feedback_state=state,
             config=self._gripper_cfg,
-            open_soft_limit_rad=_G_OPEN_SOFT_LIMIT,
+            open_soft_limit_rad=_GRIPPER_COORDINATES.open_soft_limit_rad,
             torque_limit_nm=_G_TAU_MAX,
         )
         dispatch_gripper_motor_command(self._gripper_mot, motor_command)
@@ -1538,7 +1512,7 @@ class HardwareManager:
             torque_limit_nm=tau_limit,
             current_position_rad=self._gripper_state.position,
             current_velocity_rad_s=self._gripper_state.velocity,
-            open_soft_limit_rad=_G_OPEN_SOFT_LIMIT,
+            open_soft_limit_rad=_GRIPPER_COORDINATES.open_soft_limit_rad,
             maximum_torque_nm=_G_TAU_MAX,
         )
 

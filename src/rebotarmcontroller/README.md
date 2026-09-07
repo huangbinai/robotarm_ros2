@@ -21,4 +21,6 @@
 
 上层包不得直接访问 SDK。控制器不负责网页、视觉、示教文件或 MoveIt 规划。夹爪命令范围为 `0–0.085 m`；硬件运行目标为 VMware/Ubuntu。
 
+外部 SDK 的定位与临时通道配置由 `sdk_runtime.py` 管理；六轴和夹爪共享总线的方法加锁由 `bus_synchronization.py` 管理。`HardwareManager` 只调用这些适配边界，不再直接修改导入路径或包装 SDK 方法。
+
 参数见[配置参考](../../docs/configuration_reference_zh.md)，接口见[ROS 2 接口参考](../../docs/ros_api_reference_zh.md)。

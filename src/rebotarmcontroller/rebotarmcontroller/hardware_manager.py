@@ -2,24 +2,25 @@ from __future__ import annotations
 
 import threading
 import time
-import sys
 import logging
 from pathlib import Path
 from typing import Optional, Sequence
 
 import numpy as np
-import yaml
 
+from .bus_synchronization import patch_arm_bus_lock
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample, sequence_advanced, validate_sequence
 from .gripper_safety import is_gripper_contact_sample
+from .hardware_runtime_config import HardwareRuntimeConfig
 from .mode_transition import ModeTransitionCoordinator
 from .mode_transition_policy import (
     FeedbackSample,
     ModeTransitionConfig,
     validate_mode_transition,
 )
+from .sdk_runtime import RebotSdkLocator
 
 _LOG = logging.getLogger(__name__)
 
@@ -59,12 +60,9 @@ _G_GRASP_CONTACT_TORQUE_MIN = 0.0
 _G_GRASP_CONTACT_STABLE_SAMPLES = 3
 _G_CTRL_RATE = 500.0
 _HARDWARE_FEEDBACK_RATE_HZ = 50.0
-_HARDWARE_FEEDBACK_RATE_MIN_HZ = 20.0
-_HARDWARE_FEEDBACK_RATE_MAX_HZ = 100.0
 _FEEDBACK_REFRESH_RETRIES = 3
 _FEEDBACK_RETRY_INTERVAL_SEC = 0.005
 _FEEDBACK_STALE_TIMEOUT_SEC = 0.15
-_FEEDBACK_STALE_TIMEOUT_MAX_SEC = 2.0
 _GC_VEL_THRESHOLD = 0.04
 _GC_W_VEL_THRESHOLD = 0.08
 _GC_EE_FRAME = "end_link"
@@ -115,52 +113,24 @@ class HardwareManager:
         grasp_hold_timeout_sec: float = _G_GRASP_HOLD_TIMEOUT_SEC,
         gripper_contact_torque_min_nm: float = _G_GRASP_CONTACT_TORQUE_MIN,
     ) -> None:
-        feedback_rate = float(hardware_feedback_rate_hz)
-        if not np.isfinite(feedback_rate) or not (
-            _HARDWARE_FEEDBACK_RATE_MIN_HZ
-            <= feedback_rate
-            <= _HARDWARE_FEEDBACK_RATE_MAX_HZ
-        ):
-            raise ValueError(
-                "hardware_feedback_rate_hz must be finite and within "
-                f"[{_HARDWARE_FEEDBACK_RATE_MIN_HZ:g}, "
-                f"{_HARDWARE_FEEDBACK_RATE_MAX_HZ:g}] Hz"
-            )
-        stale_timeout = float(feedback_stale_timeout_sec)
-        if not np.isfinite(stale_timeout) or not (
-            0.05 <= stale_timeout <= _FEEDBACK_STALE_TIMEOUT_MAX_SEC
-        ):
-            raise ValueError(
-                "feedback_stale_timeout_sec must be finite and within "
-                f"[0.05, {_FEEDBACK_STALE_TIMEOUT_MAX_SEC:g}] s"
-            )
-        self._hardware_feedback_period_sec = 1.0 / feedback_rate
-        self._feedback_stale_timeout_sec = stale_timeout
-        torque_cap = float(gripper_position_torque_cap_nm)
-        if not np.isfinite(torque_cap) or not 0.05 <= torque_cap <= _G_TAU_MAX:
-            raise ValueError("gripper_position_torque_cap_nm must be within [0.05, 1.5]")
-        position_speed = float(gripper_position_max_speed_rad_s)
-        if not np.isfinite(position_speed) or not 0.05 <= position_speed <= 3.0:
-            raise ValueError(
-                "gripper_position_max_speed_rad_s must be within [0.05, 3.0]"
-            )
-        timeout_margin = float(gripper_position_timeout_margin_sec)
-        if not np.isfinite(timeout_margin) or not 0.1 <= timeout_margin <= 10.0:
-            raise ValueError(
-                "gripper_position_timeout_margin_sec must be within [0.1, 10.0]"
-            )
-        hold_timeout = float(grasp_hold_timeout_sec)
-        if not np.isfinite(hold_timeout) or not 0.1 <= hold_timeout <= _G_GRASP_HOLD_TIMEOUT_MAX_SEC:
-            raise ValueError("grasp_hold_timeout_sec must be within [0.1, 120.0]")
-        self._gripper_position_torque_cap_nm = torque_cap
-        self._gripper_position_max_speed_rad_s = position_speed
-        self._gripper_position_timeout_margin_sec = timeout_margin
-        self._grasp_hold_timeout_sec = hold_timeout
-        contact_torque = float(gripper_contact_torque_min_nm)
-        if not np.isfinite(contact_torque) or not 0.0 <= contact_torque <= _G_TAU_MAX:
-            raise ValueError("gripper_contact_torque_min_nm must be within [0.0, 1.5]")
-        self._gripper_contact_torque_min_nm = contact_torque
-        self._sdk_root = self._ensure_rebot_sdk_in_syspath()
+        runtime_config = HardwareRuntimeConfig.validate(
+            hardware_feedback_rate_hz=hardware_feedback_rate_hz,
+            feedback_stale_timeout_sec=feedback_stale_timeout_sec,
+            gripper_position_torque_cap_nm=gripper_position_torque_cap_nm,
+            gripper_position_max_speed_rad_s=gripper_position_max_speed_rad_s,
+            gripper_position_timeout_margin_sec=gripper_position_timeout_margin_sec,
+            grasp_hold_timeout_sec=grasp_hold_timeout_sec,
+            gripper_contact_torque_min_nm=gripper_contact_torque_min_nm,
+        )
+        self._hardware_feedback_period_sec = runtime_config.hardware_feedback_period_sec
+        self._feedback_stale_timeout_sec = runtime_config.feedback_stale_timeout_sec
+        self._gripper_position_torque_cap_nm = runtime_config.gripper_position_torque_cap_nm
+        self._gripper_position_max_speed_rad_s = runtime_config.gripper_position_max_speed_rad_s
+        self._gripper_position_timeout_margin_sec = runtime_config.gripper_position_timeout_margin_sec
+        self._grasp_hold_timeout_sec = runtime_config.grasp_hold_timeout_sec
+        self._gripper_contact_torque_min_nm = runtime_config.gripper_contact_torque_min_nm
+        sdk_locator = RebotSdkLocator.for_module(__file__)
+        self._sdk_root = sdk_locator.ensure_importable()
 
         from reBotArm_control_py.actuator import RobotArm
         from reBotArm_control_py.controllers import ArmEndPos
@@ -168,8 +138,12 @@ class HardwareManager:
         from reBotArm_control_py.dynamics import compute_generalized_gravity
         import pinocchio as pin
 
-        cfg_path = Path(arm_cfg).expanduser() if arm_cfg else self.default_arm_cfg()
-        cfg_path = self._arm_cfg_with_channel(cfg_path, channel)
+        cfg_path = (
+            Path(arm_cfg).expanduser()
+            if arm_cfg
+            else sdk_locator.arm_config(self._sdk_root)
+        )
+        cfg_path = sdk_locator.with_channel_override(cfg_path, channel)
         self._arm = RobotArm(cfg_path=str(cfg_path))
         self._gc_model = load_robot_model()
         self._gc_data = self._gc_model.createData()
@@ -178,7 +152,9 @@ class HardwareManager:
         self._gc_pin = pin
 
         self._gripper_cfg_path = (
-            Path(gripper_cfg).expanduser() if gripper_cfg else self.default_gripper_cfg()
+            Path(gripper_cfg).expanduser()
+            if gripper_cfg
+            else sdk_locator.gripper_config(self._sdk_root)
         )
         self._gripper_cfg = None
         self._gripper_mot = None
@@ -242,60 +218,7 @@ class HardwareManager:
             on_stage=self._on_mode_transition_stage,
         )
 
-        self._patch_arm_bus_lock()
-
-    def default_arm_cfg(self) -> Path:
-        return self._sdk_root / "config" / "arm.yaml"
-
-    def default_gripper_cfg(self) -> Path:
-        return self._sdk_root / "config" / "gripper.yaml"
-
-    @staticmethod
-    def _workspace_root() -> Path:
-        return Path(__file__).resolve().parents[3]
-
-    @classmethod
-    def _sdk_candidates(cls) -> list[Path]:
-        workspace = cls._workspace_root()
-        return [
-            workspace / "third_party" / "reBotArm_control_py",
-            workspace / "third_party" / "reBotArm_control_py-main",
-            workspace / "sdk" / "reBotArm_control_py",
-            Path.cwd() / "third_party" / "reBotArm_control_py",
-            Path.cwd() / "sdk" / "reBotArm_control_py",
-            Path.home() / "robotarm_ros2" / "third_party" / "reBotArm_control_py",
-            Path.home() / "robotarm_ros2" / "sdk" / "reBotArm_control_py",
-            Path.home() / "seeed" / "cameraws" / "sdk" / "reBotArm_control_py",
-        ]
-
-    @classmethod
-    def _ensure_rebot_sdk_in_syspath(cls) -> Path:
-        for root in cls._sdk_candidates():
-            if (root / "reBotArm_control_py").is_dir():
-                root_str = str(root)
-                if root_str not in sys.path:
-                    sys.path.insert(0, root_str)
-                return root
-        candidates = "\n".join(f"  - {path}" for path in cls._sdk_candidates())
-        raise FileNotFoundError(
-            "Cannot find reBotArm_control_py. Clone it into one of:\n"
-            f"{candidates}"
-        )
-
-    @staticmethod
-    def _arm_cfg_with_channel(cfg_path: Path, channel: str) -> Path:
-        normalized_channel = str(channel or "").strip()
-        if not normalized_channel or normalized_channel.lower() == "auto":
-            return cfg_path
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        data["channel"] = normalized_channel
-        tmp_dir = Path("/tmp") / "rebotarm_ros2"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp_path = tmp_dir / "arm_channel_override.yaml"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False)
-        return tmp_path
+        patch_arm_bus_lock(self._arm)
 
     @property
     def arm(self):
@@ -1895,64 +1818,6 @@ class HardwareManager:
         with self._gripper_lock:
             self._gripper_active = False
             self._gripper_mode = "idle"
-
-    def _patch_arm_bus_lock(self) -> None:
-        for ctrl in self._arm._ctrl_map.values():
-            self._patch_controller_bus(ctrl)
-
-        if not hasattr(self._arm, "_bus_lock_patched"):
-            for jc in self._arm._joints:
-                mot = self._arm._motor_map[jc.name]
-                ctrl = self._arm._ctrl_map[jc.vendor]
-                self._wrap_motor_bus(mot, ctrl._bus_lock)
-            self._arm._bus_lock_patched = True
-
-    @staticmethod
-    def _patch_controller_bus(ctrl) -> None:
-        if not hasattr(ctrl, "_bus_lock"):
-            ctrl._bus_lock = threading.RLock()
-        if hasattr(ctrl, "_bus_lock_patched"):
-            return
-        lock = ctrl._bus_lock
-
-        def _wrap(fn, _lock=lock):
-            def _locked(*args, **kwargs):
-                with _lock:
-                    return fn(*args, **kwargs)
-
-            return _locked
-
-        for attr in ("poll_feedback_once", "enable_all", "disable_all"):
-            if hasattr(ctrl, attr):
-                wrapped = _wrap(getattr(ctrl, attr))
-                wrapped._rebotarm_locked = True
-                setattr(ctrl, attr, wrapped)
-        ctrl._bus_lock_patched = True
-
-    @staticmethod
-    def _wrap_motor_bus(mot, lock) -> None:
-        def _wrap(fn, _lock=lock):
-            def _locked(*args, **kwargs):
-                with _lock:
-                    return fn(*args, **kwargs)
-
-            return _locked
-
-        for attr in (
-            "send_pos_vel",
-            "send_mit",
-            "send_vel",
-            "request_feedback",
-            "enable",
-            "disable",
-            "ensure_mode",
-            "write_register_f32",
-            "set_zero_position",
-        ):
-            if hasattr(mot, attr) and not hasattr(getattr(mot, attr), "_rebotarm_locked"):
-                wrapped = _wrap(getattr(mot, attr))
-                wrapped._rebotarm_locked = True
-                setattr(mot, attr, wrapped)
 
     def _start_pos_vel_loop(self, target: np.ndarray | None = None) -> None:
         if self.control_loop_active:

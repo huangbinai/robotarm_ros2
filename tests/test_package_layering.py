@@ -68,6 +68,18 @@ def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
     assert "def _check_active_replay_tracking" not in source
 
 
+def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "RebotSdkLocator.for_module(__file__)" in source
+    assert "patch_arm_bus_lock(self._arm)" in source
+    assert "def _sdk_candidates" not in source
+    assert "def _patch_controller_bus" not in source
+    assert "sys.path.insert" not in source
+
+
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:
     import rebotarm_interactive_control.teach_recording as legacy_teach_recording
     import rebotarm_interactive_control.teach_replay_settings as legacy_teach_replay_settings

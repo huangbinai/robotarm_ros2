@@ -274,6 +274,20 @@ def test_hardware_manager_delegates_lifecycle_state() -> None:
     assert "self._lifecycle.require_enabled()" in source
 
 
+def test_hardware_manager_delegates_disable_mechanics() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "attempt = attempt_verified_disable(" in source
+    assert "errors = disable_unique_controller_buses(" in source
+    assert "def _verify_disabled_feedback(" in source
+    assert "if all(controller is not existing" not in source
+    assert 'errors.append(f"stop control loop:' not in source
+    assert 'errors.append(f"disable command:' not in source
+    assert 'errors.append(f"disabled feedback:' not in source
+
+
 def test_hardware_manager_delegates_gravity_compensation_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

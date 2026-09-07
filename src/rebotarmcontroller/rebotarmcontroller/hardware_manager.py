@@ -34,6 +34,10 @@ from .hardware_feedback_validation import (
     validate_feedback_state as validate_hardware_feedback_state,
     validated_gripper_feedback_values,
 )
+from .hardware_disable import (
+    attempt_verified_disable,
+    disable_unique_controller_buses,
+)
 from .hardware_lifecycle_state import (
     HardwareLifecycleField,
     HardwareLifecycleState,
@@ -497,27 +501,17 @@ class HardwareManager:
                 raise RuntimeError(f"enable failed and was rolled back: {exc}") from exc
 
     def _rollback_failed_enable(self) -> str | None:
-        errors: list[str] = []
-        try:
-            self._stop_control_loop()
-        except Exception as exc:
-            errors.append(f"stop control loop: {exc}")
-        try:
-            self._disable_all_motors()
-        except Exception as exc:
-            errors.append(f"disable command: {exc}")
-        if not errors:
-            try:
-                self._validated_joint_feedback(expected_status=0)
-                self._validated_gripper_status(expected_status=0)
-            except Exception as exc:
-                errors.append(f"disabled feedback: {exc}")
+        attempt = attempt_verified_disable(
+            stop_control_loop=self._stop_control_loop,
+            disable_all_motors=self._disable_all_motors,
+            verify_disabled_feedback=self._verify_disabled_feedback,
+        )
         self._state_machine = "IDLE"
-        if errors:
+        if not attempt.verified:
             self._enabled = True
             self._error_codes.append("ENABLE_ROLLBACK_FAILED")
             self._set_lifecycle_state("DISABLING")
-            return "; ".join(errors)
+            return attempt.error_detail
         self._enabled = False
         self._set_lifecycle_state("CONNECTED_DISABLED")
         return None
@@ -538,8 +532,7 @@ class HardwareManager:
             self._enabled = False
             try:
                 self._disable_all_motors()
-                self._validated_joint_feedback(expected_status=0)
-                self._validated_gripper_status(expected_status=0)
+                self._verify_disabled_feedback()
             except Exception:
                 self._enabled = was_enabled
                 self._error_codes.append("DISABLE_VERIFICATION_FAILED")
@@ -796,24 +789,14 @@ class HardwareManager:
                 return True
             was_enabled = self._enabled
             self._set_lifecycle_state("DISABLING")
-            errors: list[str] = []
-            try:
-                self._stop_control_loop()
-            except Exception as exc:
-                errors.append(f"stop control loop: {exc}")
-            try:
-                self._disable_all_motors()
-            except Exception as exc:
-                errors.append(f"disable command: {exc}")
-            if not errors:
-                try:
-                    self._validated_joint_feedback(expected_status=0)
-                    self._validated_gripper_status(expected_status=0)
-                except Exception as exc:
-                    errors.append(f"disabled feedback: {exc}")
-            if errors:
+            attempt = attempt_verified_disable(
+                stop_control_loop=self._stop_control_loop,
+                disable_all_motors=self._disable_all_motors,
+                verify_disabled_feedback=self._verify_disabled_feedback,
+            )
+            if not attempt.verified:
                 self._enabled = was_enabled
-                message = "EMERGENCY_DISABLE_UNVERIFIED: " + "; ".join(errors)
+                message = "EMERGENCY_DISABLE_UNVERIFIED: " + attempt.error_detail
                 if message not in self._error_codes:
                     self._error_codes.append(message)
                 return False
@@ -1003,6 +986,10 @@ class HardwareManager:
                 errors.append(f"gripper disable: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
+
+    def _verify_disabled_feedback(self) -> None:
+        self._validated_joint_feedback(expected_status=0)
+        self._validated_gripper_status(expected_status=0)
 
     def _refresh_arm_feedback(self) -> bool:
         return self.refresh_feedback_if_due(force=True)
@@ -1364,16 +1351,9 @@ class HardwareManager:
             self._gripper_state.set_idle()
         self._state_machine = "IDLE"
         self._set_lifecycle_state("DISABLING")
-        errors: list[str] = []
-        controllers: list[object] = []
-        for controller in getattr(self._arm, "_ctrl_map", {}).values():
-            if all(controller is not existing for existing in controllers):
-                controllers.append(controller)
-        for controller in controllers:
-            try:
-                controller.disable_all()
-            except Exception as exc:
-                errors.append(f"{type(controller).__name__}: {exc}")
+        errors = disable_unique_controller_buses(
+            getattr(self._arm, "_ctrl_map", {}).values()
+        )
         if errors:
             self._error_codes.append(
                 "FEEDBACK_PROTECTIVE_DISABLE_FAILED: " + "; ".join(errors)

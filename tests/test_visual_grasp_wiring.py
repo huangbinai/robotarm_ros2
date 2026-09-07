@@ -630,7 +630,8 @@ def test_visual_grasp_executor_refreshes_plan_after_pregrasp():
     assert 'self.declare_parameter("refresh_plan_at_pregrasp_enabled", True)' in executor_text
     assert 'self.declare_parameter("refresh_plan_at_pregrasp_required", True)' in executor_text
     assert 'self.declare_parameter("refresh_plan_timeout_sec", 1.0)' in executor_text
-    assert "self._plan_revision" in executor_text
+    assert "self._plan_store.revision" in executor_text
+    assert "self._plan_store.refreshed_plan_after(min_revision)" in executor_text
     assert "def _wait_for_refreshed_plan" in executor_text
     assert 'stage.name == "move_to_pregrasp"' in executor_text
     assert "fresh grasp plan unavailable after pregrasp" in executor_text
@@ -663,11 +664,13 @@ def test_visual_grasp_executor_has_bounded_approach_visual_servo():
 
 def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     executor_text = _read("src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py")
+    plan_store_text = _read("src/rebotarm_vision/rebotarm_vision/grasp_plan_store.py")
     launch_text = _read("src/rebotarm_bringup/launch/visual_grasp_system.launch.py")
     recovery_text = _read("src/rebotarm_vision/rebotarm_vision/trajectory_recovery_policy.py")
 
     assert "GraspCandidateArray, GraspPlan" in executor_text
-    assert "from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices" in executor_text
+    assert "from .grasp_plan_store import GraspPlanStore" in executor_text
+    assert "from .grasp_retry_policy import RetryPolicyConfig" in executor_text
     assert "grasp_verification_policy" not in executor_text
     assert "from .place_task_policy import PlaceTaskConfig, build_place_stages" in executor_text
     assert "from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage" in executor_text
@@ -684,9 +687,11 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert 'stage.name == "return_visual_ready"' in executor_text
     assert 'self.declare_parameter("trajectory_precheck_enabled", True)' in executor_text
     assert "def _candidate_plans_for_attempts" in executor_text
-    assert "attempts: list[tuple[int, GraspPlan]] = [(-1, deepcopy(self._latest_plan))]" in executor_text
-    assert "if index == int(candidates.best_index):" in executor_text
-    assert "continue" in executor_text
+    assert "self._plan_store.candidate_attempts(" in executor_text
+    assert "class GraspPlanStore:" in plan_store_text
+    assert "threading.RLock()" in plan_store_text
+    assert "attempts = [(-1, deepcopy(self._latest_plan))]" in plan_store_text
+    assert "if index == int(candidates.best_index):" in plan_store_text
     assert "def _verify_after_lift" not in executor_text
     assert "def _append_place_stages" in executor_text
     assert "def _precheck_execute_pose" in executor_text

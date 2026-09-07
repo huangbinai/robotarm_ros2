@@ -17,7 +17,8 @@ from rebotarm_msgs.msg import ArmStatus, GraspCandidateArray, GraspPlan
 from rebotarm_msgs.srv import ExecutePose, GraspGripper, SetGripper
 from rebotarm_motion.real_failure_recovery import healthy_enabled_hold
 
-from .grasp_retry_policy import RetryPolicyConfig, ordered_candidate_indices
+from .grasp_plan_store import GraspPlanStore
+from .grasp_retry_policy import RetryPolicyConfig
 from .grasp_preview_sender_node import (
     _transform_from_msg,
     apply_tcp_offset_to_pose,
@@ -25,7 +26,6 @@ from .grasp_preview_sender_node import (
 )
 from .gripper_quality import close_contact_success
 from .gripper_policy import GripperPolicyConfig, resolve_gripper_command
-from .freshness import FreshnessTracker
 from .place_task_policy import PlaceTaskConfig, build_place_stages
 from .retreat_policy import RetreatPolicyConfig
 from .trajectory_recovery_policy import RecoveryConfig, recovery_decision_for_stage
@@ -209,10 +209,7 @@ class VisualGraspExecutorNode(Node):
             "safe_retreat": float(self.get_parameter("lift_wait_sec").value),
         }
 
-        self._latest_plan: GraspPlan | None = None
-        self._latest_candidates: GraspCandidateArray | None = None
-        self._freshness = FreshnessTracker()
-        self._plan_revision = 0
+        self._plan_store = GraspPlanStore()
         self._last_gripper_reached_position: float | None = None
         self._last_grasp_contact_detected = False
         self._last_grasp_closure_distance_m = 0.0
@@ -313,21 +310,10 @@ class VisualGraspExecutorNode(Node):
         return tuple(float(value) for value in values)
 
     def _on_plan(self, plan: GraspPlan) -> None:
-        if plan.valid:
-            self._latest_plan = deepcopy(plan)
-            self._freshness.touch("plan")
-            self._plan_revision += 1
-        else:
-            self._latest_plan = None
-            self._freshness.invalidate("plan")
+        self._plan_store.update_plan(plan)
 
     def _on_candidates(self, candidates: GraspCandidateArray) -> None:
-        if candidates.candidates:
-            self._latest_candidates = deepcopy(candidates)
-            self._freshness.touch("candidates")
-        else:
-            self._latest_candidates = None
-            self._freshness.invalidate("candidates")
+        self._plan_store.update_candidates(candidates)
 
     def _on_arm_status(self, status: ArmStatus) -> None:
         self._latest_arm_status = status
@@ -495,11 +481,8 @@ class VisualGraspExecutorNode(Node):
                 response.success = False
                 response.message = "visual grasp already running"
                 return response
-            if self._latest_plan is None or not self._freshness.is_fresh(
-                "plan", float(self.get_parameter("plan_max_age_sec").value)
-            ):
-                self._latest_plan = None
-                self._latest_candidates = None
+            attempts = self._candidate_plans_for_attempts()
+            if not attempts:
                 response.success = False
                 response.message = "no fresh valid grasp plan received"
                 return response
@@ -508,13 +491,11 @@ class VisualGraspExecutorNode(Node):
         self._run_counter += 1
         self._current_run_id = self._run_counter
         try:
-            self._log_diagnostic("detect", "ok", f"input_topic={self._input_topic}, plan_revision={self._plan_revision}")
-            attempts = self._candidate_plans_for_attempts()
-            if not attempts:
-                response.success = False
-                response.message = "no candidate attempts available"
-                self._log_diagnostic("filter", "fail", response.message)
-                return response
+            self._log_diagnostic(
+                "detect",
+                "ok",
+                f"input_topic={self._input_topic}, plan_revision={self._plan_store.revision}",
+            )
             self._log_diagnostic("filter", "ok", f"attempts={len(attempts)}")
             for attempt_index, (candidate_index, plan) in enumerate(attempts):
                 self._current_attempt_index = attempt_index + 1
@@ -642,52 +623,22 @@ class VisualGraspExecutorNode(Node):
         return build_visual_grasp_sequence(pregrasp, grasp, config)
 
     def _candidate_plans_for_attempts(self) -> list[tuple[int, GraspPlan]]:
-        if self._latest_plan is None:
-            return []
-        attempts: list[tuple[int, GraspPlan]] = [(-1, deepcopy(self._latest_plan))]
-        candidates = self._latest_candidates
-        if (
-            candidates is None
-            or not candidates.candidates
-            or not self._freshness.is_fresh(
-                "candidates",
-                float(self.get_parameter("candidates_max_age_sec").value),
-            )
-        ):
-            return attempts
-        indices = ordered_candidate_indices(
-            candidate_count=len(candidates.candidates),
-            best_index=int(candidates.best_index),
-            failed_indices=set(),
-            config=RetryPolicyConfig(
+        return self._plan_store.candidate_attempts(
+            plan_max_age_sec=float(self.get_parameter("plan_max_age_sec").value),
+            candidates_max_age_sec=float(
+                self.get_parameter("candidates_max_age_sec").value
+            ),
+            retry_config=RetryPolicyConfig(
                 enabled=bool(self.get_parameter("auto_retry_enabled").value),
                 max_attempts=int(self.get_parameter("auto_retry_max_attempts").value),
             ),
         )
-        for index in indices:
-            if index == int(candidates.best_index):
-                continue
-            attempts.append((index, self._plan_from_candidate(candidates, index)))
-        return attempts
-
-    def _plan_from_candidate(self, candidates: GraspCandidateArray, index: int) -> GraspPlan:
-        candidate = candidates.candidates[int(index)]
-        plan = GraspPlan()
-        plan.header = candidates.header
-        plan.candidate = deepcopy(candidate)
-        plan.pregrasp_pose = deepcopy(candidate.pose)
-        plan.grasp_pose = deepcopy(candidate.pose)
-        plan.jaw_width = float(candidate.jaw_width)
-        plan.valid = True
-        plan.source = "visual_grasp_executor_retry"
-        plan.reason = ""
-        return plan
 
     def _execute_stages(self, stages: list[VisualGraspStage]) -> tuple[bool, str, str]:
         stage_index = 0
         while stage_index < len(stages):
             stage = stages[stage_index]
-            stage_start_revision = self._plan_revision
+            stage_start_revision = self._plan_store.revision
             ok, message = self._run_stage(stage)
             if not ok:
                 return False, message, stage.name
@@ -763,12 +714,14 @@ class VisualGraspExecutorNode(Node):
         timeout_sec = float(self.get_parameter("refresh_plan_timeout_sec").value)
         deadline = time.monotonic() + max(0.0, timeout_sec)
         while rclpy.ok() and self._running and time.monotonic() < deadline:
-            if self._plan_revision > min_revision and self._latest_plan is not None:
+            refreshed = self._plan_store.refreshed_plan_after(min_revision)
+            if refreshed is not None:
+                revision, plan = refreshed
                 self.get_logger().info(
                     "using refreshed grasp plan after pregrasp: "
-                    f"revision={self._plan_revision}, source={self._latest_plan.source}"
+                    f"revision={revision}, source={plan.source}"
                 )
-                return deepcopy(self._latest_plan)
+                return plan
             time.sleep(0.02)
         return None
 
@@ -811,11 +764,15 @@ class VisualGraspExecutorNode(Node):
         last_error = 0.0
         require_fresh_plan = bool(self.get_parameter("approach_visual_servo_require_fresh_plan").value)
         for iteration in range(max_iterations):
-            plan_revision = self._plan_revision
+            plan_revision = self._plan_store.revision
             refreshed_plan = self._wait_for_refreshed_plan(plan_revision)
             if require_fresh_plan and refreshed_plan is None:
                 return False, "fresh visual servo plan unavailable"
-            plan = refreshed_plan if refreshed_plan is not None else self._latest_plan
+            plan = (
+                refreshed_plan
+                if refreshed_plan is not None
+                else self._plan_store.latest_plan()
+            )
             if plan is None:
                 return False, "no refreshed grasp plan available"
             _, desired_grasp = self._build_motion_targets(plan)

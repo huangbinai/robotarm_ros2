@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from rebotarm_dashboard.teach_replay_config import TeachReplayParameterAdapter
 from rebotarm_motion.collision_precheck import CollisionPrecheckConfig
@@ -142,6 +143,30 @@ def test_prepared_record_is_reused_for_trajectory_build(tmp_path) -> None:
     assert builder.calls[0]["prepared"] is record.prepared
     assert aligner.calls == []
     assert record.prepared_path.endswith("record.prepared.jsonl")
+
+
+def test_loaded_record_can_be_prepared_without_reloading_source_file(tmp_path) -> None:
+    sample = TeachSample(
+        stamp=0.0,
+        joint_names=("joint1",),
+        positions=(0.1,),
+        velocities=(0.0,),
+        efforts=(),
+        motor_status={},
+        arm_state="RECORDING",
+    )
+    source_path = tmp_path / "already_loaded.jsonl"
+    workflow, _, _, _, _ = _workflow()
+
+    record = workflow.prepare_loaded_record(
+        source_path,
+        [sample],
+        config=_preparation_config(),
+    )
+
+    assert record.source_samples == [sample]
+    assert record.source_path == str(source_path)
+    assert Path(record.prepared_path).exists()
 
 
 def test_workflow_owns_alignment_and_collision_collaborators() -> None:

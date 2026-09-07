@@ -989,6 +989,44 @@ def test_moveit_start_aligner_appends_hold_plan_and_first_hold_with_joint_remap(
     assert trajectory.points[-1].velocities == [0.0, 0.0]
 
 
+def test_moveit_start_aligner_skips_duplicate_hold_timestamp_and_reports_message() -> None:
+    plan = _Trajectory()
+    plan.joint_names = ["joint1", "joint2"]
+    duplicate = _TrajectoryPoint()
+    duplicate.positions = [0.0, 0.0]
+    plan.points.append(duplicate)
+    later = _TrajectoryPoint()
+    later.positions = [0.2, -0.2]
+    later.time_from_start.sec = 1
+    plan.points.append(later)
+    messages = []
+    trajectory = _Trajectory()
+    trajectory.joint_names = ["joint1", "joint2"]
+    aligner = MoveItStartAligner(
+        planner=_Planner(plan),
+        trajectory_point_factory=_TrajectoryPoint,
+        message_sink=messages.append,
+    )
+
+    aligner.append(
+        trajectory,
+        current_positions=(0.0, 0.0),
+        first_positions=(0.2, -0.2),
+        config=MoveItStartAlignmentConfig(
+            start_hold_sec=0.5,
+            first_hold_sec=0.0,
+            skip_threshold=0.01,
+            joint_goal_tolerance=0.02,
+            velocity_scaling=0.4,
+            acceleration_scaling=0.3,
+        ),
+    )
+
+    assert len(trajectory.points) == 2
+    assert trajectory.points[-1].positions == [0.2, -0.2]
+    assert messages == ["planned"]
+
+
 def test_moveit_start_align_prechecker_reports_ready_without_planning() -> None:
     prechecker = MoveItStartAlignPrechecker(
         planner=_Planner(_Trajectory()),

@@ -1399,10 +1399,14 @@ def test_moveit_ompl_uses_ruckig_response_adapter_with_jerk_limits():
 
 def test_teach_replay_executes_prepared_retimed_points_directly():
     replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
+    workflow_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_workflow.py")
+    builder_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_trajectory_builder.py")
 
-    assert "def _append_prepared_replay_points(" in replay_node_text
-    assert "for retimed in self._prepared_replay.retimed_points:" in replay_node_text
-    assert "self._append_prepared_replay_points(trajectory, elapsed=elapsed)" in replay_node_text
+    assert "self._teach_replay_workflow.build_trajectory(" in replay_node_text
+    assert "def _append_prepared_replay_points(" not in replay_node_text
+    assert "result = self._trajectory_builder.build(" in workflow_text
+    assert "return result.trajectory" in workflow_text
+    assert "retimed_points = prepared.retimed_points" in builder_text
 
 
 def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():

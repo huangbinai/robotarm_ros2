@@ -84,6 +84,20 @@ class TeachReplayWorkflow:
     ) -> PreparedReplayRecord:
         source_path = str(record_path)
         source_samples = load_teach_samples(source_path)
+        return self.prepare_loaded_record(
+            source_path,
+            source_samples,
+            config=config,
+        )
+
+    def prepare_loaded_record(
+        self,
+        source_path: str | Path,
+        source_samples: list[TeachSample],
+        *,
+        config: PreparationConfigSource,
+    ) -> PreparedReplayRecord:
+        source_path = str(source_path)
         if not source_samples:
             raise ValueError("record contains no samples")
         joint_names = tuple(source_samples[0].joint_names)

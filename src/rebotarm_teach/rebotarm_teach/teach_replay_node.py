@@ -17,45 +17,39 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from rebotarm_motion.collision_precheck import (
+    CollisionPrecheckConfig,
+    CollisionPrechecker,
+)
+from rebotarm_motion.moveit_planner import MoveItMotionPlanner
+from rebotarm_motion.teach_replay_start_alignment import (
+    MoveItStartAligner,
+    MoveItStartAlignmentConfig,
+)
+from rebotarm_motion.teach_replay_start_align_precheck import (
+    MoveItStartAlignPrechecker,
+)
+from rebotarm_motion.trajectory_safety_monitor import evaluate_replay_tracking
+
 from .parameter_helpers import sensor_qos_kwargs
 from .teach_recording import (
     ReplayStartBand,
     analyze_teach_trajectory,
-    build_replay_start_soft_points,
     classify_replay_start,
     compute_auto_align_duration,
     load_teach_samples,
-    prepare_teach_replay_samples,
     prepared_teach_replay_to_dict,
-    retime_teach_samples,
     teach_trajectory_quality_to_dict,
-    write_prepared_teach_record,
 )
-from rebotarm_motion.trajectory_safety_monitor import evaluate_replay_tracking
-from rebotarm_motion.moveit_planner import MoveItMotionPlanner
-
-
-def _set_duration(duration_msg, seconds: float) -> None:
-    whole = int(seconds)
-    duration_msg.sec = whole
-    duration_msg.nanosec = int((float(seconds) - whole) * 1_000_000_000)
-
-
-def _select_collision_points(points: list[tuple[float, ...]], *, max_samples: int) -> list[tuple[int, tuple[float, ...]]]:
-    if not points:
-        return []
-    limit = max(int(max_samples), 1)
-    if len(points) <= limit:
-        return list(enumerate(points))
-    if limit == 1:
-        return [(0, points[0])]
-    indices = sorted(
-        {
-            round(index * (len(points) - 1) / (limit - 1))
-            for index in range(limit)
-        }
-    )
-    return [(index, points[index]) for index in indices]
+from .teach_replay_trajectory_builder import (
+    TeachReplayTrajectoryBuilder,
+    TeachReplayTrajectoryConfig,
+)
+from .teach_replay_workflow import (
+    PreparedReplayRecord,
+    TeachReplayPreparationConfig,
+    TeachReplayWorkflow,
+)
 
 
 class TeachReplayNode(Node):
@@ -135,6 +129,7 @@ class TeachReplayNode(Node):
         self._trajectory_points = 0
         self._quality = None
         self._prepared_replay = None
+        self._prepared_record: PreparedReplayRecord | None = None
         self._prepared_record_path: Path | None = None
         self._goal_handle = None
         self._active_replay_trajectory: JointTrajectory | None = None
@@ -171,6 +166,25 @@ class TeachReplayNode(Node):
             goal_position_tolerance=0.005,
             goal_orientation_tolerance=0.02,
         )
+        self._teach_replay_workflow = TeachReplayWorkflow(
+            trajectory_builder=TeachReplayTrajectoryBuilder(
+                trajectory_factory=JointTrajectory,
+                trajectory_point_factory=JointTrajectoryPoint,
+            ),
+            moveit_start_aligner=MoveItStartAligner(
+                planner=self._moveit_planner,
+                trajectory_point_factory=JointTrajectoryPoint,
+                message_sink=self._set_moveit_align_message,
+            ),
+            moveit_start_align_prechecker=MoveItStartAlignPrechecker(
+                planner=self._moveit_planner,
+                service_client=self._moveit_planner._client,  # noqa: SLF001
+            ),
+            collision_prechecker=CollisionPrechecker(
+                client=self._state_validity_client,
+                request_factory=GetStateValidity.Request,
+            ),
+        )
         self._status_pub = self.create_publisher(
             String,
             f"/{self._arm_namespace}/teleop/replay_status",
@@ -206,6 +220,116 @@ class TeachReplayNode(Node):
         if isinstance(values, (list, tuple)) and len(values) == len(joint_names):
             return tuple(float(value) for value in values)
         return scalar_limit
+
+    def _preparation_config(
+        self,
+        joint_names: tuple[str, ...],
+    ) -> TeachReplayPreparationConfig:
+        return TeachReplayPreparationConfig(
+            smoothing_enabled=bool(self.get_parameter("smoothing_enabled").value),
+            smoothing_window=int(self.get_parameter("smoothing_window").value),
+            filter_enabled=bool(self.get_parameter("filter_enabled").value),
+            filter_cutoff_hz=float(self.get_parameter("filter_cutoff_hz").value),
+            filter_sample_rate_hz=float(
+                self.get_parameter("filter_sample_rate_hz").value
+            ),
+            resample_enabled=bool(self.get_parameter("resample_enabled").value),
+            resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
+            replay_speed=float(self.get_parameter("speed").value),
+            max_velocity_rad_s=self._max_replay_velocity_limits(joint_names),
+            max_acceleration_rad_s2=float(
+                self.get_parameter("max_replay_acceleration_rad_s2").value
+            ),
+            max_jerk_rad_s3=float(
+                self.get_parameter("max_replay_jerk_rad_s3").value
+            ),
+            time_parameterization_method=str(
+                self.get_parameter("time_parameterization_method").value
+            ),
+            large_motion_span_rad=float(
+                self.get_parameter("large_motion_span_rad").value
+            ),
+            large_motion_total_rad=float(
+                self.get_parameter("large_motion_total_rad").value
+            ),
+            large_motion_max_speed=float(
+                self.get_parameter("large_motion_max_speed").value
+            ),
+        )
+
+    def _trajectory_config(
+        self,
+        joint_names: tuple[str, ...],
+    ) -> TeachReplayTrajectoryConfig:
+        return TeachReplayTrajectoryConfig(
+            use_moveit_start_align=bool(
+                self.get_parameter("use_moveit_start_align").value
+            ),
+            start_hold_sec=float(self.get_parameter("start_hold_sec").value),
+            soft_start_duration=float(
+                self.get_parameter("soft_start_duration").value
+            ),
+            soft_start_steps=int(self.get_parameter("soft_start_steps").value),
+            first_hold_sec=float(self.get_parameter("first_hold_sec").value),
+            yellow_max_speed=float(self.get_parameter("yellow_max_speed").value),
+            initial_replay_delay_sec=float(
+                self.get_parameter("initial_replay_delay_sec").value
+            ),
+            max_velocity_rad_s=self._max_replay_velocity_limits(joint_names),
+            max_acceleration_rad_s2=float(
+                self.get_parameter("max_replay_acceleration_rad_s2").value
+            ),
+            max_jerk_rad_s3=float(
+                self.get_parameter("max_replay_jerk_rad_s3").value
+            ),
+        )
+
+    def _alignment_config(self) -> MoveItStartAlignmentConfig:
+        return MoveItStartAlignmentConfig(
+            start_hold_sec=float(self.get_parameter("start_hold_sec").value),
+            first_hold_sec=float(self.get_parameter("first_hold_sec").value),
+            skip_threshold=float(
+                self.get_parameter("moveit_start_skip_threshold").value
+            ),
+            joint_goal_tolerance=float(
+                self.get_parameter("moveit_joint_goal_tolerance").value
+            ),
+            velocity_scaling=float(
+                self.get_parameter("moveit_velocity_scaling").value
+            ),
+            acceleration_scaling=float(
+                self.get_parameter("moveit_acceleration_scaling").value
+            ),
+        )
+
+    def _collision_config(self) -> CollisionPrecheckConfig:
+        group_name = str(self.get_parameter("collision_group_name").value)
+        defaults: tuple[tuple[str, float], ...] = ()
+        if group_name == "arm_with_gripper":
+            latest_positions = {}
+            if self._latest_joint_state is not None:
+                latest_positions = {
+                    str(name): float(self._latest_joint_state.position[index])
+                    for index, name in enumerate(self._latest_joint_state.name)
+                    if index < len(self._latest_joint_state.position)
+                }
+            defaults = (
+                ("left_finger_joint", latest_positions.get("left_finger_joint", 0.0)),
+                ("right_finger_joint", latest_positions.get("right_finger_joint", -0.0)),
+            )
+        return CollisionPrecheckConfig(
+            enabled=bool(self.get_parameter("collision_check_enabled").value),
+            service=str(self.get_parameter("collision_check_service").value),
+            group_name=group_name,
+            max_samples=int(self.get_parameter("collision_check_max_samples").value),
+            timeout_sec=float(
+                self.get_parameter("collision_check_timeout_sec").value
+            ),
+            default_joint_positions=defaults,
+        )
+
+    def _set_moveit_align_message(self, message: str) -> None:
+        self._moveit_align_message = str(message)
 
     def _auto_align_duration_for_positions(
         self,
@@ -282,36 +406,27 @@ class TeachReplayNode(Node):
             self._per_joint_error = decision.per_joint_error
         self._max_error = decision.max_error
         self._per_joint_error = decision.per_joint_error
+        self._prepared_record = self._teach_replay_workflow.prepare_loaded_record(
+            self._record_path,
+            self._samples,
+            config=self._preparation_config(tuple(first.joint_names)),
+        )
+        self._samples = self._prepared_record.source_samples
+        self._prepared_replay = self._prepared_record.prepared
+        self._prepared_record_path = Path(self._prepared_record.prepared_path)
         self._quality = analyze_teach_trajectory(
             self._samples,
             green_jump_rad=float(self.get_parameter("green_jump_rad").value),
             yellow_jump_rad=float(self.get_parameter("yellow_jump_rad").value),
-            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(self._samples[0].joint_names)),
-            max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-        )
-        self._prepared_replay = prepare_teach_replay_samples(
-            self._samples,
-            smoothing_enabled=bool(self.get_parameter("smoothing_enabled").value),
-            smoothing_window=int(self.get_parameter("smoothing_window").value),
-            filter_enabled=bool(self.get_parameter("filter_enabled").value),
-            filter_cutoff_hz=float(self.get_parameter("filter_cutoff_hz").value),
-            filter_sample_rate_hz=float(self.get_parameter("filter_sample_rate_hz").value),
-            resample_enabled=bool(self.get_parameter("resample_enabled").value),
-            resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
-            retime_enabled=True,
-            replay_speed=float(self.get_parameter("speed").value),
-            max_velocity_rad_s=self._max_replay_velocity_limits(tuple(self._samples[0].joint_names)),
-            max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-            max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-            time_parameterization_method=str(self.get_parameter("time_parameterization_method").value),
-            large_motion_span_rad=float(self.get_parameter("large_motion_span_rad").value),
-            large_motion_total_rad=float(self.get_parameter("large_motion_total_rad").value),
-            large_motion_max_speed=float(self.get_parameter("large_motion_max_speed").value),
-        )
-        self._prepared_record_path = write_prepared_teach_record(
-            self._record_path,
-            self._prepared_replay,
+            max_velocity_rad_s=self._max_replay_velocity_limits(
+                tuple(first.joint_names)
+            ),
+            max_acceleration_rad_s2=float(
+                self.get_parameter("max_replay_acceleration_rad_s2").value
+            ),
+            max_jerk_rad_s3=float(
+                self.get_parameter("max_replay_jerk_rad_s3").value
+            ),
         )
         speed = float(self.get_parameter("speed").value)
         yellow_max_speed = float(self.get_parameter("yellow_max_speed").value)
@@ -549,285 +664,51 @@ class TeachReplayNode(Node):
         current_positions: tuple[float, ...],
         start_band: ReplayStartBand,
     ) -> JointTrajectory:
-        first = self._samples[0]
-        trajectory = JointTrajectory()
-        trajectory.joint_names = list(first.joint_names)
-        elapsed = 0.0
-        if bool(self.get_parameter("use_moveit_start_align").value):
-            elapsed = self._append_moveit_start_alignment(
-                trajectory,
-                current_positions=current_positions,
-                first_positions=first.positions,
-            )
-        else:
-            start_points = build_replay_start_soft_points(
-                current_positions=current_positions,
-                first_positions=first.positions,
+        if self._prepared_record is None:
+            raise RuntimeError("prepared replay is unavailable")
+        joint_names = tuple(self._prepared_record.prepared.samples[0].joint_names)
+        current_by_name = {
+            name: float(position)
+            for name, position in zip(joint_names, current_positions)
+        }
+        settings = {
+            "align_duration": self._auto_align_duration_for_positions(
+                current_positions,
+                tuple(self._prepared_record.prepared.samples[0].positions),
+            ),
+            "align_steps": int(self.get_parameter("align_steps").value),
+            "final_hold_sec": float(self.get_parameter("final_hold_sec").value),
+        }
+        try:
+            return self._teach_replay_workflow.build_trajectory(
+                self._prepared_record,
+                current_positions=current_by_name,
                 start_band=start_band.value,
-                start_hold_sec=float(self.get_parameter("start_hold_sec").value),
-                soft_start_duration=float(self.get_parameter("soft_start_duration").value),
-                soft_start_steps=int(self.get_parameter("soft_start_steps").value),
-                align_duration=self._auto_align_duration_for_positions(current_positions, first.positions),
-                align_steps=int(self.get_parameter("align_steps").value),
-                first_hold_sec=float(self.get_parameter("first_hold_sec").value),
+                settings=settings,
+                trajectory_config=self._trajectory_config(joint_names),
+                alignment_config=self._alignment_config(),
             )
-            for start_point in start_points:
-                point = JointTrajectoryPoint()
-                point.positions = [float(v) for v in start_point.positions]
-                point.velocities = [0.0 for _ in start_point.positions]
-                _set_duration(point.time_from_start, start_point.time_from_start)
-                trajectory.points.append(point)
-            if start_points:
-                elapsed = start_points[-1].time_from_start
-        if self._prepared_replay is not None and self._prepared_replay.retimed_points:
-            self._append_prepared_replay_points(trajectory, elapsed=elapsed)
-        else:
-            speed = max(float(self.get_parameter("speed").value), 0.01)
-            if self._prepared_replay is not None:
-                speed = max(float(self._prepared_replay.effective_replay_speed), 0.01)
-            replay_quality = self._prepared_replay.after_quality if self._prepared_replay is not None else self._quality
-            if replay_quality is not None and replay_quality.risk_level == "yellow":
-                speed = min(speed, float(self.get_parameter("yellow_max_speed").value))
-            replay_samples = self._prepared_replay.samples if self._prepared_replay is not None else self._samples
-            for retimed in retime_teach_samples(
-                replay_samples,
-                replay_speed=speed,
-                max_velocity_rad_s=self._max_replay_velocity_limits(tuple(replay_samples[0].joint_names)),
-                max_acceleration_rad_s2=float(self.get_parameter("max_replay_acceleration_rad_s2").value),
-                max_jerk_rad_s3=float(self.get_parameter("max_replay_jerk_rad_s3").value),
-                initial_delay_sec=float(self.get_parameter("initial_replay_delay_sec").value),
-                boundary_zero_velocity=True,
-            ):
-                point = JointTrajectoryPoint()
-                point.positions = [float(v) for v in retimed.positions]
-                if retimed.velocities:
-                    point.velocities = [float(v) for v in retimed.velocities]
-                _set_duration(point.time_from_start, elapsed + retimed.time_from_start)
-                trajectory.points.append(point)
-        self._append_final_hold(trajectory)
-        return trajectory
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     def _check_trajectory_collision(self, trajectory: JointTrajectory) -> dict:
-        if not bool(self.get_parameter("collision_check_enabled").value):
-            return {"state": "disabled", "message": "collision precheck disabled"}
-        points = [
-            tuple(float(v) for v in point.positions)
-            for point in trajectory.points
-            if getattr(point, "positions", None)
-        ]
-        if not trajectory.joint_names or not points:
-            return {"state": "unknown", "message": "no trajectory points to collision check"}
-        try:
-            available = bool(self._state_validity_client.service_is_ready())
-            if not available:
-                available = bool(self._state_validity_client.wait_for_service(timeout_sec=0.0))
-        except Exception:
-            available = False
-        if not available:
-            return {
-                "state": "unknown",
-                "message": "MoveIt state validity service unavailable",
-                "service": str(self.get_parameter("collision_check_service").value),
-                "checked_samples": 0,
-            }
-        selected = _select_collision_points(
-            points,
-            max_samples=int(self.get_parameter("collision_check_max_samples").value),
+        result = self._teach_replay_workflow.check_trajectory(
+            trajectory,
+            config=self._collision_config(),
         )
-        collision_joint_names, selected = self._with_collision_default_joints(
-            tuple(trajectory.joint_names),
-            selected,
-        )
-        timeout_sec = max(float(self.get_parameter("collision_check_timeout_sec").value), 0.1)
-        deadline = time.monotonic() + timeout_sec
-        checked = 0
-        collisions = []
-        for point_index, positions in selected:
-            if time.monotonic() >= deadline:
-                return {
-                    "state": "unknown",
-                    "message": "collision precheck timed out",
-                    "checked_samples": checked,
-                    "requested_samples": len(selected),
-                    "collisions": collisions,
-                }
-            request = GetStateValidity.Request()
-            request.group_name = str(self.get_parameter("collision_group_name").value)
-            request.robot_state.joint_state.name = list(collision_joint_names)
-            request.robot_state.joint_state.position = [float(v) for v in positions]
-            future = self._state_validity_client.call_async(request)
-            while not future.done() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            if not future.done():
-                break
-            try:
-                response = future.result()
-            except Exception as exc:
-                return {
-                    "state": "unknown",
-                    "message": f"collision precheck failed: {exc}",
-                    "checked_samples": checked,
-                    "requested_samples": len(selected),
-                    "collisions": collisions,
-                }
-            checked += 1
-            if not bool(getattr(response, "valid", False)):
-                contacts = []
-                for contact in list(getattr(response, "contacts", []))[:5]:
-                    contacts.append(
-                        {
-                            "body_1": str(getattr(contact, "contact_body_1", "")),
-                            "body_2": str(getattr(contact, "contact_body_2", "")),
-                        }
-                    )
-                collisions.append({"point": point_index, "contacts": contacts})
-                break
-        if collisions:
-            return {
-                "state": "collision",
-                "message": "collision detected in replay trajectory",
-                "checked_samples": checked,
-                "requested_samples": len(selected),
-                "collisions": collisions,
-            }
-        if checked < len(selected):
-            return {
-                "state": "unknown",
-                "message": "collision precheck incomplete",
-                "checked_samples": checked,
-                "requested_samples": len(selected),
-                "collisions": [],
-            }
-        return {
-            "state": "pass",
-            "message": "no collision detected in sampled replay trajectory",
-            "checked_samples": checked,
-            "requested_samples": len(selected),
-            "collisions": [],
+        result.pop("added_default_joints", None)
+        messages = {
+            "no trajectory samples to check": "no trajectory points to collision check",
+            "collision detected in teach trajectory": "collision detected in replay trajectory",
+            "no collision detected in sampled teach trajectory": (
+                "no collision detected in sampled replay trajectory"
+            ),
         }
-
-    def _with_collision_default_joints(
-        self,
-        joint_names: tuple[str, ...],
-        selected: list[tuple[int, tuple[float, ...]]],
-    ) -> tuple[tuple[str, ...], list[tuple[int, tuple[float, ...]]]]:
-        if str(self.get_parameter("collision_group_name").value) != "arm_with_gripper":
-            return joint_names, selected
-        existing = set(joint_names)
-        defaults: list[tuple[str, float]] = []
-        latest = self._latest_joint_state
-        latest_positions = {}
-        if latest is not None:
-            latest_positions = {
-                str(name): float(latest.position[index])
-                for index, name in enumerate(latest.name)
-                if index < len(latest.position)
-            }
-        for name, fallback in (("left_finger_joint", 0.0), ("right_finger_joint", -0.0)):
-            if name not in existing:
-                defaults.append((name, float(latest_positions.get(name, fallback))))
-        if not defaults:
-            return joint_names, selected
-        added_names = tuple(name for name, _ in defaults)
-        added_positions = tuple(position for _, position in defaults)
-        return (
-            joint_names + added_names,
-            [(index, tuple(positions) + added_positions) for index, positions in selected],
-        )
-
-    def _append_final_hold(self, trajectory: JointTrajectory) -> None:
-        final_hold = max(float(self.get_parameter("final_hold_sec").value), 0.0)
-        if final_hold <= 0.0 or not trajectory.points:
-            return
-        last_point = trajectory.points[-1]
-        last_time = float(last_point.time_from_start.sec) + float(last_point.time_from_start.nanosec) * 1e-9
-        hold_point = JointTrajectoryPoint()
-        hold_point.positions = [float(v) for v in last_point.positions]
-        hold_point.velocities = [0.0 for _ in hold_point.positions]
-        _set_duration(hold_point.time_from_start, last_time + final_hold)
-        trajectory.points.append(hold_point)
-
-    def _append_prepared_replay_points(
-        self,
-        trajectory: JointTrajectory,
-        *,
-        elapsed: float,
-    ) -> None:
-        if self._prepared_replay is None:
-            return
-        initial_delay = max(float(self.get_parameter("initial_replay_delay_sec").value), 0.0)
-        for retimed in self._prepared_replay.retimed_points:
-            point = JointTrajectoryPoint()
-            point.positions = [float(v) for v in retimed.positions]
-            if retimed.velocities:
-                point.velocities = [float(v) for v in retimed.velocities]
-            else:
-                point.velocities = [0.0 for _ in point.positions]
-            _set_duration(point.time_from_start, elapsed + initial_delay + float(retimed.time_from_start))
-            trajectory.points.append(point)
-
-    def _append_moveit_start_alignment(
-        self,
-        trajectory: JointTrajectory,
-        *,
-        current_positions: tuple[float, ...],
-        first_positions: tuple[float, ...],
-    ) -> float:
-        elapsed = max(float(self.get_parameter("start_hold_sec").value), 0.0)
-        hold_point = JointTrajectoryPoint()
-        hold_point.positions = [float(v) for v in current_positions]
-        hold_point.velocities = [0.0 for _ in current_positions]
-        _set_duration(hold_point.time_from_start, elapsed)
-        trajectory.points.append(hold_point)
-        max_error = max(
-            (abs(float(a) - float(b)) for a, b in zip(current_positions, first_positions)),
-            default=0.0,
-        )
-        if max_error >= float(self.get_parameter("moveit_start_skip_threshold").value):
-            plan = self._moveit_planner.plan_joint_positions(
-                joint_names=tuple(trajectory.joint_names),
-                target_positions=first_positions,
-                tolerance=float(self.get_parameter("moveit_joint_goal_tolerance").value),
-                velocity_scaling=float(self.get_parameter("moveit_velocity_scaling").value),
-                acceleration_scaling=float(self.get_parameter("moveit_acceleration_scaling").value),
-            )
-            if not plan.success or plan.trajectory is None:
-                self._moveit_align_message = plan.message
-                raise RuntimeError(f"moveit start alignment failed: {plan.message}")
-            self._moveit_align_message = plan.message
-            source_names = list(getattr(plan.trajectory, "joint_names", []))
-            index_by_name = {name: index for index, name in enumerate(source_names)}
-            missing = [name for name in trajectory.joint_names if name not in index_by_name]
-            if missing:
-                raise RuntimeError(f"moveit start alignment missing joints: {', '.join(missing)}")
-            for source_point in getattr(plan.trajectory, "points", []):
-                source_time = float(source_point.time_from_start.sec) + float(source_point.time_from_start.nanosec) * 1e-9
-                point = JointTrajectoryPoint()
-                point.positions = [
-                    float(source_point.positions[index_by_name[name]])
-                    for name in trajectory.joint_names
-                ]
-                if getattr(source_point, "velocities", None):
-                    point.velocities = [
-                        float(source_point.velocities[index_by_name[name]])
-                        for name in trajectory.joint_names
-                    ]
-                _set_duration(point.time_from_start, elapsed + source_time)
-                if trajectory.points and point.time_from_start.sec == trajectory.points[-1].time_from_start.sec and point.time_from_start.nanosec == trajectory.points[-1].time_from_start.nanosec:
-                    continue
-                trajectory.points.append(point)
-            if trajectory.points:
-                last = trajectory.points[-1].time_from_start
-                elapsed = float(last.sec) + float(last.nanosec) * 1e-9
-        first_hold = max(float(self.get_parameter("first_hold_sec").value), 0.0)
-        if first_hold > 0.0:
-            elapsed += first_hold
-            first_point = JointTrajectoryPoint()
-            first_point.positions = [float(v) for v in first_positions]
-            first_point.velocities = [0.0 for _ in first_positions]
-            _set_duration(first_point.time_from_start, elapsed)
-            trajectory.points.append(first_point)
-        return elapsed
+        result["message"] = messages.get(result.get("message"), result.get("message"))
+        for collision in result.get("collisions", []):
+            if "sample" in collision:
+                collision["point"] = collision.pop("sample")
+        return result
 
     def _publish_status(
         self,

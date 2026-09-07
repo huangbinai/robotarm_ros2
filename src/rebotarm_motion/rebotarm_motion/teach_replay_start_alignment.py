@@ -28,9 +28,11 @@ class MoveItStartAligner:
         *,
         planner: Any,
         trajectory_point_factory: Callable[[], Any],
+        message_sink: Callable[[str], None] | None = None,
     ) -> None:
         self._planner = planner
         self._trajectory_point_factory = trajectory_point_factory
+        self._message_sink = message_sink
 
     def append(
         self,
@@ -82,6 +84,8 @@ class MoveItStartAligner:
             velocity_scaling=float(config.velocity_scaling),
             acceleration_scaling=float(config.acceleration_scaling),
         )
+        if self._message_sink is not None:
+            self._message_sink(str(plan.message))
         if not plan.success or plan.trajectory is None:
             raise ValueError(f"moveit start alignment failed: {plan.message}")
         source_names = list(getattr(plan.trajectory, "joint_names", []))
@@ -105,6 +109,14 @@ class MoveItStartAligner:
                     for name in trajectory.joint_names
                 ]
             set_duration(point.time_from_start, elapsed + source_time)
+            if trajectory.points:
+                previous = trajectory.points[-1].time_from_start
+                current = point.time_from_start
+                if (
+                    current.sec == previous.sec
+                    and current.nanosec == previous.nanosec
+                ):
+                    continue
             trajectory.points.append(point)
         if trajectory.points:
             last = trajectory.points[-1].time_from_start

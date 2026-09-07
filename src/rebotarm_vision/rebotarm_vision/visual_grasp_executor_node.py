@@ -37,6 +37,7 @@ from .visual_grasp_sequence import (
     append_visual_ready_return_stages,
     build_visual_grasp_sequence,
 )
+from .visual_motion_gateway import VisualMotionGateway
 from .visual_servo_policy import build_visual_servo_step
 
 
@@ -273,6 +274,18 @@ class VisualGraspExecutorNode(Node):
             Trigger,
             f"/{self._arm_namespace}/gripper/stop",
             callback_group=self._callback_group,
+        )
+        self._motion_gateway = VisualMotionGateway(
+            client=self._execute_pose_client,
+            request_factory=ExecutePose.Request,
+            target_message_factory=target_to_pose_stamped,
+            wait_for_future=self._wait_for_future,
+            target_frame=self._target_frame,
+            service_timeout_sec=self._service_timeout_sec,
+            motion_result_timeout_sec=self._motion_result_timeout_sec,
+            acceleration_scaling=lambda: float(
+                self.get_parameter("acceleration_scaling").value
+            ),
         )
         self._disable_client = self.create_client(
             Trigger,
@@ -828,7 +841,7 @@ class VisualGraspExecutorNode(Node):
     def _call_execute_pose(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.pose is None:
             return False, "missing move pose"
-        if not self._execute_pose_client.wait_for_service(timeout_sec=self._service_timeout_sec):
+        if not self._motion_gateway.service_available():
             return False, "motion execution service unavailable"
         if self._execution_enabled() and bool(self.get_parameter("trajectory_precheck_enabled").value):
             ok, message = self._precheck_execute_pose(stage)
@@ -840,21 +853,11 @@ class VisualGraspExecutorNode(Node):
         return self._send_execute_pose(stage, execute=False)
 
     def _send_execute_pose(self, stage: VisualGraspStage, *, execute: bool) -> tuple[bool, str]:
-        if stage.pose is None:
-            return False, "missing move pose"
-        request = ExecutePose.Request()
-        request.target_pose = target_to_pose_stamped(stage.pose, self._target_frame)
-        request.velocity_scaling = self._velocity_scaling_for_stage(stage.name)
-        request.acceleration_scaling = float(self.get_parameter("acceleration_scaling").value)
-        request.timeout_sec = self._motion_result_timeout_sec
-        request.execute = bool(execute)
-        future = self._execute_pose_client.call_async(request)
-        if not self._wait_for_future(future, self._service_timeout_sec + self._motion_result_timeout_sec):
-            return False, "motion execution service call timed out"
-        result = future.result()
-        if result is None:
-            return False, "motion execution returned no result"
-        return bool(result.success), f"{result.stage}: {result.message}"
+        return self._motion_gateway.send(
+            stage,
+            execute=execute,
+            velocity_scaling=self._velocity_scaling_for_stage(stage.name),
+        )
 
     def _execution_enabled(self) -> bool:
         return self._execution_mode in ("execute", "real")

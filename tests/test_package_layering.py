@@ -32,8 +32,10 @@ def test_calibration_package_owns_calibration_algorithms() -> None:
 
 def test_vision_package_exports_visual_grasp_parameter_adapter() -> None:
     import rebotarm_vision.visual_grasp_parameter_adapter as parameter_adapter
+    import rebotarm_vision.visual_motion_gateway as motion_gateway
 
     assert hasattr(parameter_adapter, "VisualGraspParameterAdapter")
+    assert hasattr(motion_gateway, "VisualMotionGateway")
 
 
 def test_interactive_control_keeps_motion_compatibility_imports() -> None:

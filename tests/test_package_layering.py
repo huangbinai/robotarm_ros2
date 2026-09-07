@@ -111,6 +111,19 @@ def test_dashboard_delegates_web_gripper_action_lifecycle() -> None:
     assert "def _on_gripper_result" not in source
 
 
+def test_dashboard_delegates_web_execute_action_lifecycle() -> None:
+    source = (
+        ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._web_execute_session = WebExecuteSession(" in source
+    assert "self._web_execute_session.observe_execution(execution)" in source
+    assert "return self._web_execute_session.stop()" in source
+    assert "def _on_execute_goal_response" not in source
+    assert "def _on_execute_result" not in source
+    assert "def _on_execute_cancel_response" not in source
+
+
 def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
     source = (
         ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"
@@ -177,12 +190,14 @@ def test_teleop_package_exports_command_adapters() -> None:
     import rebotarm_teleop.web_gripper_client as web_gripper_client
     import rebotarm_teleop.web_keyboard_client as web_keyboard_client
     import rebotarm_teleop.web_execute as web_execute
+    import rebotarm_teleop.web_execute_session as web_execute_session
     import rebotarm_teleop.web_teleop_client as web_teleop_client
 
     assert hasattr(teleop_core, "validate_web_keyboard_command")
     assert hasattr(web_gripper_client, "WebGripperClient")
     assert hasattr(web_keyboard_client, "WebKeyboardClient")
     assert hasattr(web_execute, "validate_web_execute_request")
+    assert hasattr(web_execute_session, "WebExecuteSession")
     assert hasattr(web_teleop_client, "WebTeleopClient")
 
 

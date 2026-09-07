@@ -68,6 +68,7 @@ from .web_robot_assets import (
     merge_joint_limits,
 )
 from rebotarm_teleop.web_execute import WebExecuteDecision
+from rebotarm_teleop.web_execute_session import WebExecuteSession
 from rebotarm_teleop.web_gripper_client import (
     WebGripperClient,
     gripper_decision_response,
@@ -329,8 +330,18 @@ class TeleopStatusPanelNode(Node):
                 self.get_parameter("web_keyboard_default_speed_rad_s").value
             ),
         )
-        self._execute_lock = threading.Lock()
-        self._execute_goal_handle = None
+        self._web_execute_session = WebExecuteSession(
+            client=self._web_teleop_client,
+            trajectory_stop_client=self._trajectory_stop_client,
+            status_sink=lambda status: self._store.update_teleop_status(
+                "web_execute",
+                status,
+            ),
+            max_joint_speed_source=lambda: float(
+                self.get_parameter("web_execute_max_joint_speed_rad_s").value
+            ),
+            successful_result_code=FollowJointTrajectory.Result.SUCCESSFUL,
+        )
         self._last_teach_dry_run: dict | None = None
         sensor_qos_spec = sensor_qos_kwargs()
         sensor_qos = QoSProfile(
@@ -772,8 +783,7 @@ class TeleopStatusPanelNode(Node):
             self._store.update_teleop_status("arm_command", gateway_result)
             return gateway_result
         if should_stop_trajectory_before_arm_command(command):
-            with self._execute_lock:
-                self._execute_goal_handle = None
+            self._web_execute_session.clear_goal_handle()
         result = self._arm_control_client.execute(command)
         result.setdefault("trajectory_stop_requested", False)
         if result["accepted"]:
@@ -981,9 +991,7 @@ class TeleopStatusPanelNode(Node):
         if not execution["accepted"]:
             self._store.update_teleop_status("web_execute", execution["status"])
             return execution["response"]
-        future = execution["goal_future"]
-        future.add_done_callback(lambda fut: self._on_execute_goal_response(fut, decision))
-        self._store.update_teleop_status("web_execute", execution["status"])
+        self._web_execute_session.observe_execution(execution)
         return decision_response(decision)
 
     def _handle_stop_execute(self) -> dict:
@@ -991,25 +999,7 @@ class TeleopStatusPanelNode(Node):
         if gateway_result is not None:
             self._store.update_teleop_status("web_execute", gateway_result)
             return gateway_result
-        with self._execute_lock:
-            goal_handle = self._execute_goal_handle
-        result = self._web_teleop_client.stop(
-            goal_handle,
-            trajectory_stop_client=self._trajectory_stop_client,
-        )
-        future = result.get("cancel_future")
-        if future is not None:
-            future.add_done_callback(self._on_execute_cancel_response)
-        self._store.update_teleop_status("web_execute", result["status"])
-        if result.get("clear_goal_handle"):
-            with self._execute_lock:
-                self._execute_goal_handle = None
-        return {
-            "accepted": bool(result["accepted"]),
-            "state": result.get("state", result["status"].get("state", "")),
-            "message": str(result.get("message", "")),
-            "trajectory_stop_requested": bool(result.get("trajectory_stop_requested", False)),
-        }
+        return self._web_execute_session.stop()
 
     def _handle_set_gripper(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):
@@ -1056,81 +1046,6 @@ class TeleopStatusPanelNode(Node):
         msg.torque = 0.0
         msg.status_code = 1
         self._sim_gripper_state_pub.publish(msg)
-
-    def _on_execute_cancel_response(self, future) -> None:
-        try:
-            response = future.result()
-            goals_canceling = len(getattr(response, "goals_canceling", []))
-        except Exception as exc:
-            self._store.update_teleop_status("web_execute", {"state": "failed", "message": str(exc)})
-            return
-        state = "cancel_requested" if goals_canceling else "done"
-        message = (
-            "trajectory cancel accepted"
-            if goals_canceling
-            else "trajectory already finished before cancel"
-        )
-        self._store.update_teleop_status("web_execute", {"state": state, "message": message})
-
-    def _on_execute_goal_response(self, future, decision: WebExecuteDecision) -> None:
-        try:
-            goal_handle = future.result()
-        except Exception as exc:
-            self._store.update_teleop_status("web_execute", {"state": "failed", "message": str(exc)})
-            return
-        if goal_handle is None or not goal_handle.accepted:
-            self._store.update_teleop_status(
-                "web_execute",
-                {"state": "rejected", "message": "trajectory goal rejected"},
-            )
-            return
-        with self._execute_lock:
-            self._execute_goal_handle = goal_handle
-        self._store.update_teleop_status(
-            "web_execute",
-            {
-                "state": "accepted",
-                "message": "trajectory goal accepted by controller",
-                "max_delta": decision.max_delta,
-                "max_delta_limit": decision.max_delta_limit,
-                "duration": decision.duration,
-                "max_joint_speed_rad_s": float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
-            },
-        )
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(lambda fut: self._on_execute_result(fut, decision))
-
-    def _on_execute_result(self, future, decision: WebExecuteDecision) -> None:
-        try:
-            result_response = future.result()
-            result = result_response.result
-            status = int(result_response.status)
-            error_code = int(getattr(result, "error_code", 0))
-            error_string = str(getattr(result, "error_string", ""))
-        except Exception as exc:
-            self._store.update_teleop_status("web_execute", {"state": "failed", "message": str(exc)})
-            with self._execute_lock:
-                self._execute_goal_handle = None
-            return
-        if error_code == FollowJointTrajectory.Result.SUCCESSFUL:
-            state = "done"
-        elif status == 5:
-            state = "canceled"
-        else:
-            state = "failed"
-        with self._execute_lock:
-            self._execute_goal_handle = None
-        self._store.update_teleop_status(
-            "web_execute",
-            {
-                "state": state,
-                "message": f"trajectory result status={status}, error_code={error_code}: {error_string}",
-                "max_delta": decision.max_delta,
-                "max_delta_limit": decision.max_delta_limit,
-                "duration": decision.duration,
-                "max_joint_speed_rad_s": float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
-            },
-        )
 
     def _on_joint_state(self, msg: JointState) -> None:
         self._store.update_joint_state(

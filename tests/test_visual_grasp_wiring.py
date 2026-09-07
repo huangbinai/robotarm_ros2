@@ -1021,13 +1021,15 @@ def test_status_panel_stop_replay_falls_back_to_controller_stop():
 def test_status_panel_web_stop_always_requests_controller_stop():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     client_text = _read("src/rebotarm_teleop/rebotarm_teleop/web_teleop_client.py")
+    session_text = _read("src/rebotarm_teleop/rebotarm_teleop/web_execute_session.py")
     stop_body = panel_text.split("def _handle_stop_execute(self) -> dict:", 1)[1].split("\n    def ", 1)[0]
 
-    assert "self._web_teleop_client.stop(" in stop_body
-    assert "trajectory_stop_client=self._trajectory_stop_client" in stop_body
+    assert "return self._web_execute_session.stop()" in stop_body
+    assert "self._client.stop(" in session_text
+    assert "trajectory_stop_client=self._trajectory_stop_client" in session_text
     assert "call_trigger_service(" in client_text
     assert "no active web execute goal; controller trajectory_stop requested" in client_text
-    assert "self._execute_goal_handle = None" in stop_body
+    assert "self.clear_goal_handle()" in session_text
 
 
 def test_status_panel_web_execute_settings_are_number_inputs_only():

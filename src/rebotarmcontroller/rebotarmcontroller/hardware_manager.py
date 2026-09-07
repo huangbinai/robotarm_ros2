@@ -11,8 +11,9 @@ import numpy as np
 from .bus_synchronization import patch_arm_bus_lock
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
-from .feedback_sequence import VerifiedFeedbackSample, sequence_advanced, validate_sequence
+from .feedback_sequence import VerifiedFeedbackSample
 from .gripper_safety import is_gripper_contact_sample
+from .hardware_feedback import HardwareFeedbackCoordinator
 from .hardware_runtime_config import HardwareRuntimeConfig
 from .mode_transition import ModeTransitionCoordinator
 from .mode_transition_policy import (
@@ -122,7 +123,6 @@ class HardwareManager:
             grasp_hold_timeout_sec=grasp_hold_timeout_sec,
             gripper_contact_torque_min_nm=gripper_contact_torque_min_nm,
         )
-        self._hardware_feedback_period_sec = runtime_config.hardware_feedback_period_sec
         self._feedback_stale_timeout_sec = runtime_config.feedback_stale_timeout_sec
         self._gripper_position_torque_cap_nm = runtime_config.gripper_position_torque_cap_nm
         self._gripper_position_max_speed_rad_s = runtime_config.gripper_position_max_speed_rad_s
@@ -184,16 +184,17 @@ class HardwareManager:
         self._gripper_loop_running = False
         self._gripper_lock = threading.RLock()
 
-        self._feedback_lock = threading.RLock()
-        self._verified_feedback_by_label: dict[str, VerifiedFeedbackSample] = {}
-        self._feedback_request_baseline_by_label: dict[str, int] = {}
-        self._feedback_request_deadline_by_label: dict[str, float] = {}
-        self._feedback_error_by_label: dict[str, str] = {}
-        self._feedback_next_refresh_monotonic: float | None = None
-        self._arm_feedback_updated_monotonic: float | None = None
-        self._arm_feedback_error: str | None = "arm feedback not received"
-        self._gripper_feedback_updated_monotonic: float | None = None
-        self._gripper_feedback_error: str | None = "gripper feedback not received"
+        self._feedback_coordinator = HardwareFeedbackCoordinator(
+            feedback_period_sec=runtime_config.hardware_feedback_period_sec,
+            stale_timeout_sec=runtime_config.feedback_stale_timeout_sec,
+            controller_groups=self._feedback_controller_groups,
+            joint_labels=lambda: self.joint_names,
+            has_gripper=lambda: self._gripper_mot is not None,
+            validate_state=self._validate_feedback_state,
+            on_verified=self._on_verified_feedback,
+            refresh_retries=_FEEDBACK_REFRESH_RETRIES,
+            retry_interval_sec=_FEEDBACK_RETRY_INTERVAL_SEC,
+        )
         self._gripper_zero_error: str | None = None
         self._motor_lifecycle_lock = threading.RLock()
 
@@ -748,7 +749,7 @@ class HardwareManager:
             positions, velocities, _effort = self.get_cached_joint_state()
         else:
             positions, velocities, _effort = self.get_joint_state()
-        updated = self._arm_feedback_updated_monotonic
+        updated = self._feedback_coordinator.arm_updated_monotonic
         age_sec = float("inf") if updated is None else max(
             0.0, time.monotonic() - updated
         )
@@ -904,22 +905,6 @@ class HardwareManager:
         return groups
 
     @staticmethod
-    def _state_with_sequence(label: str, motor) -> tuple[object, int]:
-        getter = getattr(motor, "get_state_with_sequence", None)
-        if not callable(getter):
-            raise RuntimeError(
-                f"{label} feedback requires patched MotorBridge "
-                "get_state_with_sequence(); run "
-                "tools/setup_motorbridge_fresh_feedback.py"
-            )
-        state, raw_sequence = getter()
-        try:
-            sequence = validate_sequence(raw_sequence)
-        except ValueError as exc:
-            raise RuntimeError(f"{label} feedback sequence invalid: {exc}") from exc
-        return state, sequence
-
-    @staticmethod
     def _validated_gripper_feedback_values(state) -> tuple[float, float, float, int]:
         if state is None:
             raise RuntimeError("gripper feedback unavailable")
@@ -952,272 +937,21 @@ class HardwareManager:
                 f"[{limits[0]:.6f}, {limits[1]:.6f}]"
             )
 
-    def _record_verified_feedback(
-        self, label: str, state, sequence: int, observed_at: float
+    def _on_verified_feedback(
+        self,
+        label: str,
+        state: object,
+        _observed_at: float,
     ) -> None:
-        self._validate_feedback_state(label, state)
-        sample = VerifiedFeedbackSample(state, sequence, observed_at)
-        self._verified_feedback_by_label[label] = sample
-        self._feedback_error_by_label.pop(label, None)
         if label == "gripper":
             position, velocity, torque, _status = self._validated_gripper_feedback_values(state)
             with self._gripper_lock:
                 self._gripper_pos = position
                 self._gripper_vel = velocity
                 self._gripper_torque = torque
-                self._gripper_feedback_updated_monotonic = observed_at
-                self._gripper_feedback_error = None
 
     def _verified_feedback_sample(self, label: str) -> VerifiedFeedbackSample:
-        with self._feedback_lock:
-            sample = self._verified_feedback_by_label.get(label)
-        if sample is None:
-            raise RuntimeError(f"{label} verified feedback unavailable")
-        return sample
-
-    def _feedback_response_window_sec(self) -> float:
-        return max(
-            self._hardware_feedback_period_sec * _FEEDBACK_REFRESH_RETRIES,
-            _FEEDBACK_RETRY_INTERVAL_SEC * _FEEDBACK_REFRESH_RETRIES,
-        )
-
-    def _ensure_feedback_request_state(self) -> None:
-        if not hasattr(self, "_feedback_request_baseline_by_label"):
-            self._feedback_request_baseline_by_label = {}
-        if not hasattr(self, "_feedback_request_deadline_by_label"):
-            self._feedback_request_deadline_by_label = {}
-
-    def _inspect_pending_feedback(
-        self,
-        observations: dict[str, tuple[object, int]],
-        *,
-        observed_at: float,
-    ) -> None:
-        self._ensure_feedback_request_state()
-        for label, baseline in list(
-            self._feedback_request_baseline_by_label.items()
-        ):
-            observation = observations.get(label)
-            if observation is None:
-                continue
-            state, sequence = observation
-            if sequence_advanced(sequence, baseline):
-                try:
-                    self._record_verified_feedback(
-                        label,
-                        state,
-                        sequence,
-                        observed_at,
-                    )
-                except Exception as exc:
-                    self._feedback_error_by_label[label] = (
-                        f"{label} feedback invalid: {exc}"
-                    )
-                self._feedback_request_baseline_by_label.pop(label, None)
-                self._feedback_request_deadline_by_label.pop(label, None)
-                continue
-            deadline = self._feedback_request_deadline_by_label[label]
-            if observed_at >= deadline:
-                self._feedback_error_by_label[label] = (
-                    f"{label} feedback deadline expired: sequence did not advance "
-                    f"beyond baseline={baseline}"
-                )
-                self._feedback_request_baseline_by_label.pop(label, None)
-                self._feedback_request_deadline_by_label.pop(label, None)
-
-    def _read_feedback_observations(
-        self,
-        groups,
-    ) -> dict[str, tuple[object, int]]:
-        observations: dict[str, tuple[object, int]] = {}
-        for _controller, entries in groups:
-            for label, motor in entries:
-                observations[label] = self._state_with_sequence(label, motor)
-        return observations
-
-    def _refresh_feedback_batch(
-        self,
-        *,
-        observed_at: float,
-        inspect_after_poll: bool = False,
-    ) -> None:
-        self._ensure_feedback_request_state()
-        groups = self._feedback_controller_groups()
-        observations: dict[str, tuple[object, int]] = {}
-        group_errors: list[str] = []
-        readable_groups = []
-        for controller, entries in groups:
-            try:
-                for label, motor in entries:
-                    observations[label] = self._state_with_sequence(label, motor)
-                readable_groups.append((controller, entries))
-            except Exception as exc:
-                labels = ",".join(label for label, _motor in entries)
-                message = f"controller={type(controller).__name__} motors={labels}: {exc}"
-                group_errors.append(message)
-                for label, _motor in entries:
-                    self._feedback_error_by_label[label] = (
-                        f"shared feedback batch failed before request: {message}"
-                    )
-
-        self._inspect_pending_feedback(observations, observed_at=observed_at)
-        response_window = self._feedback_response_window_sec()
-        for _controller, entries in readable_groups:
-            for label, _motor in entries:
-                if label not in self._feedback_request_baseline_by_label:
-                    _state, sequence = observations[label]
-                    self._feedback_request_baseline_by_label[label] = sequence
-                    self._feedback_request_deadline_by_label[label] = (
-                        observed_at + response_window
-                    )
-
-        successful_groups = []
-        for controller, entries in readable_groups:
-            lock = getattr(controller, "_bus_lock", None)
-
-            def transaction() -> None:
-                for _label, motor in entries:
-                    motor.request_feedback()
-                controller.poll_feedback_once()
-
-            try:
-                if lock is None:
-                    transaction()
-                else:
-                    with lock:
-                        transaction()
-                successful_groups.append((controller, entries))
-            except Exception as exc:
-                labels = ",".join(label for label, _motor in entries)
-                message = f"controller={type(controller).__name__} motors={labels}: {exc}"
-                group_errors.append(message)
-                for label, _motor in entries:
-                    self._feedback_error_by_label[label] = (
-                        f"shared feedback batch failed: {message}"
-                    )
-                    self._feedback_request_baseline_by_label.pop(label, None)
-                    self._feedback_request_deadline_by_label.pop(label, None)
-
-        if inspect_after_poll:
-            completed_at = time.monotonic()
-            observations = {}
-            for controller, entries in successful_groups:
-                try:
-                    for label, motor in entries:
-                        observations[label] = self._state_with_sequence(label, motor)
-                except Exception as exc:
-                    labels = ",".join(label for label, _motor in entries)
-                    message = (
-                        f"controller={type(controller).__name__} motors={labels}: {exc}"
-                    )
-                    group_errors.append(message)
-                    for label, _motor in entries:
-                        self._feedback_error_by_label[label] = message
-            self._inspect_pending_feedback(
-                observations,
-                observed_at=completed_at,
-            )
-        self._sync_feedback_health()
-        if group_errors:
-            raise RuntimeError("shared feedback batch failed: " + "; ".join(group_errors))
-
-    def _force_feedback_refresh(self) -> None:
-        self._ensure_feedback_request_state()
-        groups = self._feedback_controller_groups()
-        initial: dict[str, tuple[object, int]] = {}
-        initial_errors: list[str] = []
-        for controller, entries in groups:
-            try:
-                for label, motor in entries:
-                    initial[label] = self._state_with_sequence(label, motor)
-            except Exception as exc:
-                labels = ",".join(label for label, _motor in entries)
-                message = f"controller={type(controller).__name__} motors={labels}: {exc}"
-                initial_errors.append(message)
-                for label, _motor in entries:
-                    self._feedback_error_by_label[label] = message
-        if initial_errors:
-            self._sync_feedback_health()
-            raise RuntimeError(
-                "forced feedback baseline failed before request: "
-                + "; ".join(initial_errors)
-            )
-
-        required_baselines = {
-            label: sequence for label, (_state, sequence) in initial.items()
-        }
-        prior_samples = {
-            label: self._verified_feedback_by_label.get(label)
-            for label in required_baselines
-        }
-
-        def forced_sample_satisfies(label: str, baseline: int) -> bool:
-            sample = self._verified_feedback_by_label.get(label)
-            return bool(
-                label not in self._feedback_error_by_label
-                and sample is not None
-                and sample is not prior_samples[label]
-                and sequence_advanced(sample.sequence, baseline)
-            )
-
-        for label in required_baselines:
-            self._feedback_request_baseline_by_label.pop(label, None)
-            self._feedback_request_deadline_by_label.pop(label, None)
-
-        last_error: Exception | None = None
-        for attempt in range(_FEEDBACK_REFRESH_RETRIES):
-            attempt_error: Exception | None = None
-            try:
-                self._refresh_feedback_batch(
-                    observed_at=time.monotonic(),
-                    inspect_after_poll=True,
-                )
-            except Exception as exc:
-                last_error = exc
-                attempt_error = exc
-            if attempt_error is None and all(
-                forced_sample_satisfies(label, baseline)
-                for label, baseline in required_baselines.items()
-            ):
-                return
-            if attempt + 1 < _FEEDBACK_REFRESH_RETRIES:
-                time.sleep(_FEEDBACK_RETRY_INTERVAL_SEC)
-
-        missing: list[str] = []
-        for label, baseline in required_baselines.items():
-            if not forced_sample_satisfies(label, baseline):
-                reason = self._feedback_error_by_label.get(label)
-                if reason is None:
-                    reason = (
-                        f"{label} feedback timeout: sequence did not advance "
-                        f"beyond baseline={baseline}"
-                    )
-                self._feedback_error_by_label[label] = reason
-                missing.append(reason)
-            self._feedback_request_baseline_by_label.pop(label, None)
-            self._feedback_request_deadline_by_label.pop(label, None)
-        self._sync_feedback_health()
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("fresh hardware feedback unavailable: " + "; ".join(missing))
-
-    def _sync_feedback_health(self) -> None:
-        labels = list(self.joint_names)
-        errors = [self._feedback_error_by_label[x] for x in labels if x in self._feedback_error_by_label]
-        missing = [x for x in labels if x not in self._verified_feedback_by_label]
-        if errors:
-            self._arm_feedback_error = "; ".join(errors)
-        elif missing:
-            self._arm_feedback_error = "verified feedback pending: " + ",".join(missing)
-        else:
-            self._arm_feedback_error = None
-            self._arm_feedback_updated_monotonic = min(
-                self._verified_feedback_by_label[x].observed_at for x in labels
-            )
-        if self._gripper_mot is not None:
-            self._gripper_feedback_error = self._feedback_error_by_label.get("gripper")
-            if "gripper" not in self._verified_feedback_by_label:
-                self._gripper_feedback_error = "gripper feedback not received"
+        return self._feedback_coordinator.sample(label)
 
     def refresh_feedback_if_due(self, *, force: bool = False, now: float | None = None) -> bool:
         observed_at = time.monotonic() if now is None else float(now)
@@ -1232,36 +966,13 @@ class HardwareManager:
                     "synchronous feedback refresh rejected while hardware loop owns bus"
                 )
             return False
-        with self._feedback_lock:
-            due = self._feedback_next_refresh_monotonic
-            if not force and due is not None and observed_at < due:
-                return False
-            self._feedback_next_refresh_monotonic = (
-                observed_at + self._hardware_feedback_period_sec
-            )
-            try:
-                if force:
-                    self._force_feedback_refresh()
-                else:
-                    self._refresh_feedback_batch(observed_at=observed_at)
-                return True
-            except Exception:
-                if force:
-                    raise
-                return False
+        return self._feedback_coordinator.refresh_if_due(
+            force=force,
+            now=observed_at,
+        )
 
     def _arm_feedback_failure_reason(self, *, now: float | None = None) -> str | None:
-        if self._arm_feedback_error:
-            return f"arm feedback unavailable: {self._arm_feedback_error}"
-        current = time.monotonic() if now is None else float(now)
-        updated = self._arm_feedback_updated_monotonic
-        age = float("inf") if updated is None else max(current - updated, 0.0)
-        if age > self._feedback_stale_timeout_sec:
-            return (
-                f"arm feedback stale: age={age:.3f}s "
-                f"limit={self._feedback_stale_timeout_sec:.3f}s"
-            )
-        return None
+        return self._feedback_coordinator.arm_failure_reason(now=now)
 
     def _gripper_feedback_failure_reason_locked(
         self,
@@ -1271,11 +982,11 @@ class HardwareManager:
         zero_error = getattr(self, "_gripper_zero_error", None)
         if zero_error is not None:
             return zero_error
-        feedback_error = getattr(self, "_gripper_feedback_error", None)
+        feedback_error = self._feedback_coordinator.gripper_error
         if feedback_error is not None:
             return f"gripper feedback unavailable: {feedback_error}"
         current = time.monotonic() if now is None else float(now)
-        updated = getattr(self, "_gripper_feedback_updated_monotonic", None)
+        updated = self._feedback_coordinator.gripper_updated_monotonic
         age = float("inf") if updated is None else max(current - updated, 0.0)
         if age > self._feedback_stale_timeout_sec:
             return (

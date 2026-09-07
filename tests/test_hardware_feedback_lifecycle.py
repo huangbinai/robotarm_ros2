@@ -19,6 +19,7 @@ if "motorbridge" not in sys.modules:
     sys.modules["motorbridge"] = motorbridge
 
 from rebotarmcontroller.hardware_manager import HardwareManager
+from rebotarmcontroller.hardware_feedback import HardwareFeedbackCoordinator
 
 
 @pytest.mark.parametrize(
@@ -100,17 +101,19 @@ def _feedback_manager(*, advance=True):
     )
     manager._gripper_mot = None
     manager._gripper_ctrl = None
-    manager._feedback_lock = threading.RLock()
     manager._gripper_lock = threading.RLock()
-    manager._verified_feedback_by_label = {}
-    manager._feedback_request_baseline_by_label = {}
-    manager._feedback_request_deadline_by_label = {}
-    manager._feedback_error_by_label = {}
-    manager._feedback_next_refresh_monotonic = None
-    manager._hardware_feedback_period_sec = 0.02
     manager._feedback_stale_timeout_sec = 0.15
-    manager._arm_feedback_updated_monotonic = None
-    manager._arm_feedback_error = "arm feedback not received"
+    manager._feedback_coordinator = HardwareFeedbackCoordinator(
+        feedback_period_sec=0.02,
+        stale_timeout_sec=manager._feedback_stale_timeout_sec,
+        controller_groups=manager._feedback_controller_groups,
+        joint_labels=lambda: manager.joint_names,
+        has_gripper=lambda: manager._gripper_mot is not None,
+        validate_state=manager._validate_feedback_state,
+        on_verified=manager._on_verified_feedback,
+        refresh_retries=3,
+        retry_interval_sec=0.005,
+    )
     return manager, controller
 
 
@@ -125,8 +128,6 @@ def _gripper_zero_manager():
     manager._gripper_pos = -1.0
     manager._gripper_vel = 0.0
     manager._gripper_torque = 0.0
-    manager._gripper_feedback_updated_monotonic = None
-    manager._gripper_feedback_error = "gripper feedback not received"
     manager._gripper_zero_error = None
     manager._connected = True
     manager._enabled = False
@@ -143,8 +144,11 @@ def test_shared_feedback_batch_accepts_only_advanced_sequences() -> None:
     manager, controller = _feedback_manager()
     assert manager.refresh_feedback_if_due(force=True)
     assert controller.poll_count == 1
-    assert {sample.sequence for sample in manager._verified_feedback_by_label.values()} == {8}
-    assert manager._arm_feedback_error is None
+    assert {
+        sample.sequence
+        for sample in manager._feedback_coordinator.verified_samples().values()
+    } == {8}
+    assert manager._arm_feedback_failure_reason() is None
 
 
 def test_forced_feedback_rejects_replayed_cache() -> None:
@@ -152,7 +156,7 @@ def test_forced_feedback_rejects_replayed_cache() -> None:
     with pytest.raises(RuntimeError, match="sequence did not advance"):
         manager.refresh_feedback_if_due(force=True)
     assert controller.poll_count == 3
-    assert manager._verified_feedback_by_label == {}
+    assert manager._feedback_coordinator.verified_samples() == {}
 
 
 def test_delayed_sequence_is_accepted_on_later_feedback_batch() -> None:
@@ -160,16 +164,19 @@ def test_delayed_sequence_is_accepted_on_later_feedback_batch() -> None:
     now = 10.0
 
     assert manager.refresh_feedback_if_due(now=now)
-    assert manager._verified_feedback_by_label == {}
-    assert manager._feedback_request_baseline_by_label
+    assert manager._feedback_coordinator.verified_samples() == {}
+    assert manager._feedback_coordinator.pending_labels()
 
     for motor in controller.motors:
         motor.sequence += 1
         motor.requested = False
 
     assert manager.refresh_feedback_if_due(now=now + 0.02)
-    assert {sample.sequence for sample in manager._verified_feedback_by_label.values()} == {8}
-    assert manager._arm_feedback_error is None
+    assert {
+        sample.sequence
+        for sample in manager._feedback_coordinator.verified_samples().values()
+    } == {8}
+    assert manager._arm_feedback_failure_reason(now=now + 0.02) is None
 
 
 def test_feedback_deadline_expiry_records_sequence_error() -> None:
@@ -179,8 +186,8 @@ def test_feedback_deadline_expiry_records_sequence_error() -> None:
     assert manager.refresh_feedback_if_due(now=now)
     assert manager.refresh_feedback_if_due(now=now + 0.08)
 
-    assert "deadline expired" in manager._arm_feedback_error
-    assert manager._verified_feedback_by_label == {}
+    assert "deadline expired" in manager._arm_feedback_failure_reason()
+    assert manager._feedback_coordinator.verified_samples() == {}
 
 
 def test_hardware_tick_reraises_non_feedback_callback_failure() -> None:

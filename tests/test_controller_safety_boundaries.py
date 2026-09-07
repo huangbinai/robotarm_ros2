@@ -264,10 +264,10 @@ def test_hardware_feedback_reports_missing_and_aging_samples(monkeypatch):
     manager = object.__new__(hardware_module.HardwareManager)
     manager._arm = SimpleNamespace(control_loop_active=False)
     manager.get_joint_state = lambda: (np.zeros(6), np.zeros(6), np.zeros(6))
-    manager._arm_feedback_updated_monotonic = None
+    manager._feedback_coordinator = SimpleNamespace(arm_updated_monotonic=None)
     assert manager.feedback().age_sec == float("inf")
 
-    manager._arm_feedback_updated_monotonic = 90.0
+    manager._feedback_coordinator.arm_updated_monotonic = 90.0
     monkeypatch.setattr(hardware_module.time, "monotonic", lambda: 100.0)
     assert manager.feedback().age_sec == pytest.approx(10.0)
 

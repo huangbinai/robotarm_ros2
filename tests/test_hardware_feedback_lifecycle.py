@@ -473,3 +473,46 @@ def test_failed_gripper_zero_remains_visible_and_blocks_position_use() -> None:
         "GRIPPER_FEEDBACK" in code and "serial write failed" in code
         for code in manager.error_codes
     )
+
+
+def test_gripper_feedback_metadata_is_read_before_gripper_lock() -> None:
+    class TrackingLock:
+        def __init__(self) -> None:
+            self.held = False
+
+        def __enter__(self):
+            self.held = True
+            return self
+
+        def __exit__(self, *_args):
+            self.held = False
+
+    class FeedbackCoordinator:
+        def __init__(self, lock: TrackingLock) -> None:
+            self._lock = lock
+
+        def arm_failure_reason(self, *, now=None):
+            return None
+
+        @property
+        def gripper_error(self):
+            assert not self._lock.held
+            return None
+
+        @property
+        def gripper_updated_monotonic(self):
+            assert not self._lock.held
+            return 1.0e30
+
+    manager = object.__new__(HardwareManager)
+    lock = TrackingLock()
+    manager._gripper_lock = lock
+    manager._feedback_coordinator = FeedbackCoordinator(lock)
+    manager._connected = True
+    manager._gripper_mot = object()
+    manager._gripper_zero_error = None
+    manager._gripper_pos = -1.0
+    manager._feedback_stale_timeout_sec = 1.0
+    manager._error_codes = []
+
+    assert manager.error_codes == []

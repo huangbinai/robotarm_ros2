@@ -289,8 +289,7 @@ class HardwareManager:
         if arm_failure is not None:
             codes.append(f"ARM_FEEDBACK: {arm_failure}")
         if self._gripper_mot is not None:
-            with self._gripper_lock:
-                gripper_failure = self._gripper_feedback_failure_reason_locked()
+            gripper_failure = self._gripper_feedback_failure_reason()
             if gripper_failure is not None:
                 codes.append(f"GRIPPER_FEEDBACK: {gripper_failure}")
         return codes
@@ -977,16 +976,16 @@ class HardwareManager:
     def _gripper_feedback_failure_reason_locked(
         self,
         *,
+        feedback_error: str | None,
+        updated: float | None,
         now: float | None = None,
     ) -> str | None:
         zero_error = getattr(self, "_gripper_zero_error", None)
         if zero_error is not None:
             return zero_error
-        feedback_error = self._feedback_coordinator.gripper_error
         if feedback_error is not None:
             return f"gripper feedback unavailable: {feedback_error}"
         current = time.monotonic() if now is None else float(now)
-        updated = self._feedback_coordinator.gripper_updated_monotonic
         age = float("inf") if updated is None else max(current - updated, 0.0)
         if age > self._feedback_stale_timeout_sec:
             return (
@@ -1007,8 +1006,13 @@ class HardwareManager:
         return None
 
     def _gripper_feedback_failure_reason(self) -> str | None:
+        feedback_error = self._feedback_coordinator.gripper_error
+        updated = self._feedback_coordinator.gripper_updated_monotonic
         with self._gripper_lock:
-            return self._gripper_feedback_failure_reason_locked()
+            return self._gripper_feedback_failure_reason_locked(
+                feedback_error=feedback_error,
+                updated=updated,
+            )
 
     def _validated_joint_feedback(
         self,

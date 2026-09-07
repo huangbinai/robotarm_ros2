@@ -214,6 +214,20 @@ def test_hardware_manager_uses_shared_gripper_coordinate_model() -> None:
     assert "_G_CLOSED_FEEDBACK_TOL_RAD" not in source
 
 
+def test_hardware_manager_delegates_gripper_grasp_workflow() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+    grasp_source = source.split("    def grasp_gripper", 1)[1].split(
+        "    def gripper_feedback_sample", 1
+    )[0]
+
+    assert "self._gripper_grasp = GripperGraspCoordinator(" in source
+    assert "return self._gripper_grasp.execute(" in grasp_source
+    assert "while time.monotonic()" not in grasp_source
+    assert "stable_contact_samples" not in grasp_source
+
+
 def test_hardware_manager_delegates_lifecycle_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

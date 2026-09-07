@@ -13,6 +13,7 @@ from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
 from .gripper_coordinates import DEFAULT_GRIPPER_COORDINATES
+from .gripper_grasp import GripperGraspConfig, GripperGraspCoordinator
 from .gripper_motion_policy import (
     GripperMotionPolicyConfig,
     GripperTickDecision,
@@ -24,7 +25,6 @@ from .gripper_motor_commands import (
     send_safe_gripper_mit,
 )
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
-from .gripper_safety import is_gripper_contact_sample
 from .gripper_sdk_adapter import GripperSdkAdapter
 from .gravity_compensation_state import (
     GravityCompensationField,
@@ -207,6 +207,19 @@ class HardwareManager:
         self._gripper_loop_thread: threading.Thread | None = None
         self._gripper_loop_running = False
         self._gripper_lock = threading.RLock()
+        self._gripper_grasp = GripperGraspCoordinator(
+            self,
+            GripperGraspConfig(
+                feedback_stale_timeout_sec=self._feedback_stale_timeout_sec,
+                default_hold_timeout_sec=self._grasp_hold_timeout_sec,
+                maximum_hold_timeout_sec=_G_GRASP_HOLD_TIMEOUT_MAX_SEC,
+                maximum_close_force_nm=_G_GRASP_CLOSE_FORCE_MAX,
+                maximum_torque_nm=_G_TAU_MAX,
+                empty_close_threshold_m=_G_GRASP_EMPTY_CLOSE_THRESHOLD_M,
+                contact_torque_min_nm=self._gripper_contact_torque_min_nm,
+                contact_stable_samples=_G_GRASP_CONTACT_STABLE_SAMPLES,
+            ),
+        )
 
         self._feedback_coordinator = HardwareFeedbackCoordinator(
             feedback_period_sec=runtime_config.hardware_feedback_period_sec,
@@ -1217,117 +1230,43 @@ class HardwareManager:
             raise RuntimeError(gripper_failure)
 
         initial_sample = self._verified_feedback_sample("gripper")
-        if initial_sample.is_stale(time.monotonic(), self._feedback_stale_timeout_sec):
-            raise RuntimeError("gripper feedback is stale before grasp command")
-
-        close_effort = float(np.clip(close_force, 0.05, _G_GRASP_CLOSE_FORCE_MAX))
-        hold_effort = float(np.clip(hold_force, 0.05, _G_TAU_MAX))
-        numeric_inputs = (
-            close_force,
-            hold_force,
-            close_timeout_sec,
-            min_close_time_sec,
-            velocity_threshold,
-            min_closure_distance_m,
-        )
-        if any(not np.isfinite(float(value)) for value in numeric_inputs):
-            raise ValueError("gripper grasp parameters must be finite")
-        timeout = max(float(close_timeout_sec), 0.1)
-        min_time = max(float(min_close_time_sec), 0.0)
-        velocity_limit = max(float(velocity_threshold), 0.0)
-        min_closure = max(float(min_closure_distance_m), 0.0)
-        start_position_m = self.gripper_position_m()
-        start = time.monotonic()
-        stable_contact_samples = 0
-        last_sequence = initial_sample.sequence
-        requested_hold = self._grasp_hold_timeout_sec if hold_timeout_sec is None else float(
-            hold_timeout_sec
-        )
-        if not np.isfinite(requested_hold):
-            raise ValueError("gripper hold timeout must be finite")
-        hold_timeout = float(
-            np.clip(requested_hold, 0.1, _G_GRASP_HOLD_TIMEOUT_MAX_SEC)
+        return self._gripper_grasp.execute(
+            initial_sample,
+            close_force=close_force,
+            hold_force=hold_force,
+            close_timeout_sec=close_timeout_sec,
+            min_close_time_sec=min_close_time_sec,
+            velocity_threshold=velocity_threshold,
+            min_closure_distance_m=min_closure_distance_m,
+            hold_timeout_sec=hold_timeout_sec,
         )
 
+    def gripper_feedback_sample(self) -> VerifiedFeedbackSample:
+        return self._verified_feedback_sample("gripper")
+
+    def gripper_feedback_motion(self) -> tuple[float, float]:
+        with self._gripper_lock:
+            return self._gripper_state.velocity, self._gripper_state.torque
+
+    def gripper_command_canceled(self) -> bool:
+        return self._gripper_command_cancel.is_set()
+
+    def begin_gripper_grasp(self, close_force: float, hold_force: float) -> None:
         with self._gripper_lock:
             self._gripper_command_cancel.clear()
             self._gripper_state.start_grasp(
-                close_force=close_effort,
-                hold_force=hold_effort,
+                close_force=close_force,
+                hold_force=hold_force,
             )
         self._start_gripper_loop()
 
-        while time.monotonic() - start < timeout:
-            if self._gripper_command_cancel.is_set():
-                self.stop_gripper_motion()
-                return (
-                    False,
-                    False,
-                    0.0,
-                    self.gripper_position_m(),
-                    hold_effort,
-                    "grasp canceled",
-                )
-            elapsed = time.monotonic() - start
-            try:
-                sample = self._verified_feedback_sample("gripper")
-            except Exception as exc:
-                self.stop_gripper_motion(str(exc))
-                return False, False, 0.0, float("nan"), hold_effort, str(exc)
-            if sample.is_stale(time.monotonic(), self._feedback_stale_timeout_sec):
-                self.stop_gripper_motion("gripper feedback stale during grasp")
-                return (
-                    False,
-                    False,
-                    0.0,
-                    self.gripper_position_m(),
-                    hold_effort,
-                    "gripper feedback stale during grasp",
-                )
-            if sample.sequence == last_sequence:
-                time.sleep(0.005)
-                continue
-            last_sequence = sample.sequence
-            reached_position_m = self.gripper_position_m()
-            closure_m = max(start_position_m - reached_position_m, 0.0)
-            contact_sample = elapsed >= min_time and is_gripper_contact_sample(
-                opening_m=reached_position_m,
-                closure_m=closure_m,
-                velocity_rad_s=self._gripper_state.velocity,
-                torque_nm=self._gripper_state.torque,
-                min_opening_m=_G_GRASP_EMPTY_CLOSE_THRESHOLD_M,
-                min_closure_m=min_closure,
-                max_velocity_rad_s=velocity_limit,
-                min_torque_nm=self._gripper_contact_torque_min_nm,
+    def begin_gripper_hold(self, hold_force: float, deadline: float) -> None:
+        with self._gripper_lock:
+            self._gripper_state.start_hold(
+                angle=self._gripper_state.position,
+                force=hold_force,
+                deadline=deadline,
             )
-            stable_contact_samples = stable_contact_samples + 1 if contact_sample else 0
-            if stable_contact_samples >= _G_GRASP_CONTACT_STABLE_SAMPLES:
-                with self._gripper_lock:
-                    self._gripper_state.start_hold(
-                        angle=self._gripper_state.position,
-                        force=hold_effort,
-                        deadline=time.monotonic() + hold_timeout,
-                    )
-                contact_position_m = self.gripper_position_m()
-                return (
-                    True,
-                    True,
-                    contact_position_m,
-                    contact_position_m,
-                    hold_effort,
-                    f"contact detected; hold bounded to {hold_timeout:g} s",
-                )
-            time.sleep(0.01)
-
-        self.stop_gripper_motion("grasp close timeout before contact")
-        return (
-            False,
-            False,
-            0.0,
-            self.gripper_position_m(),
-            hold_effort,
-            "grasp close timeout before contact",
-        )
 
     def stop_gripper_motion(self, reason: str = "gripper command canceled") -> None:
         """Cancel the current task and queue a zero-torque command for the bus owner."""

@@ -703,7 +703,7 @@ def test_visual_grasp_executor_wires_retry_verification_place_and_recovery():
     assert "def _append_place_stages" in executor_text
     assert "def _precheck_execute_pose" in executor_text
     assert 'name="retry_safe_retreat"' in executor_text
-    assert "self._retry_retreat_stage = stage" in executor_text
+    assert "self._execution_state.remember_retry_retreat(stage)" in executor_text
     assert "self._run_stage(retreat)" in executor_text
     assert "recovery_decision_for_stage" in executor_text
     assert '"close_gripper"' not in recovery_text

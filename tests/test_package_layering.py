@@ -32,11 +32,13 @@ def test_calibration_package_owns_calibration_algorithms() -> None:
 
 def test_vision_package_exports_visual_grasp_parameter_adapter() -> None:
     import rebotarm_vision.visual_grasp_parameter_adapter as parameter_adapter
+    import rebotarm_vision.visual_grasp_execution_state as execution_state
     import rebotarm_vision.visual_gripper_gateway as gripper_gateway
     import rebotarm_vision.visual_motion_gateway as motion_gateway
     import rebotarm_vision.visual_trigger_gateway as trigger_gateway
 
     assert hasattr(parameter_adapter, "VisualGraspParameterAdapter")
+    assert hasattr(execution_state, "VisualGraspExecutionState")
     assert hasattr(gripper_gateway, "VisualGripperGateway")
     assert hasattr(motion_gateway, "VisualMotionGateway")
     assert hasattr(trigger_gateway, "VisualTriggerGateway")
@@ -123,6 +125,17 @@ def test_hardware_manager_delegates_gripper_runtime_state() -> None:
     assert "self._gripper_state.start_grasp(" in source
     assert "self._gripper_state.start_hold(" in source
     assert "self._gripper_state.request_stop(reason)" in source
+
+
+def test_visual_grasp_executor_delegates_execution_state() -> None:
+    source = (
+        ROOT / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._execution_state = VisualGraspExecutionState()" in source
+    assert "self._execution_state.reserve_run()" in source
+    assert "self._execution_state.begin_attempt(" in source
+    assert "self._execution_state.remember_retry_retreat(stage)" in source
 
 
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:

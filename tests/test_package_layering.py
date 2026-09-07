@@ -286,6 +286,23 @@ def test_hardware_manager_delegates_gravity_compensation_state() -> None:
     assert "self._gravity_state.observe_motion(" in source
 
 
+def test_hardware_manager_delegates_sdk_gravity_dynamics() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._gravity_dynamics = sdk_runtime.gravity_dynamics" in source
+    assert "self._gravity_dynamics.gravity_torque(" in source
+    assert "self._gravity_dynamics.end_effector_speeds(" in source
+    assert "computeJointJacobians" not in source
+    assert "updateFramePlacements" not in source
+    assert "getFrameJacobian" not in source
+    assert "_gc_model" not in source
+    assert "_gc_data" not in source
+    assert "_gc_ee_frame_id" not in source
+    assert "_gc_pin" not in source
+
+
 def test_visual_grasp_executor_delegates_execution_state() -> None:
     source = (
         ROOT / "src/rebotarm_vision/rebotarm_vision/visual_grasp_executor_node.py"

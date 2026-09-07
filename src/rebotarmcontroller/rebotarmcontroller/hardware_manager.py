@@ -178,13 +178,7 @@ class HardwareManager:
         )
         self._sdk_root = sdk_runtime.sdk_root
         self._arm = sdk_runtime.arm
-        self._gc_model = sdk_runtime.gravity_model
-        self._gc_data = sdk_runtime.gravity_data
-        self._gc_ee_frame_id = sdk_runtime.gravity_end_effector_frame_id
-        self._gc_compute_generalized_gravity = (
-            sdk_runtime.compute_generalized_gravity
-        )
-        self._gc_pin = sdk_runtime.pinocchio
+        self._gravity_dynamics = sdk_runtime.gravity_dynamics
         self._gripper_cfg_path = sdk_runtime.gripper_config_path
         self._gripper_cfg = None
         self._gripper_mot = None
@@ -729,7 +723,9 @@ class HardwareManager:
         return FeedbackSample(positions=positions, velocities=velocities, age_sec=age_sec)
 
     def gravity_torque(self, positions: np.ndarray) -> np.ndarray:
-        torque = self._gc_compute_generalized_gravity(q=np.asarray(positions, dtype=np.float64))
+        torque = self._gravity_dynamics.gravity_torque(
+            np.asarray(positions, dtype=np.float64)
+        )
         return apply_gravity_compensation_tau_scale(torque)
 
     def preload_position_hold(self, target: np.ndarray) -> None:
@@ -1038,23 +1034,16 @@ class HardwareManager:
 
         q = self._read_gravity_comp_positions()
         _positions, qd, _torque = self.get_cached_joint_state()
-        tau_g = self._gc_compute_generalized_gravity(q=q)
+        tau_g = self._gravity_dynamics.gravity_torque(q)
         tau_g = apply_gravity_compensation_tau_scale(tau_g)
 
         q_error = self._gravity_state.target - q
         integral = self._gravity_state.accumulate_error(q_error, template=q)
 
-        self._gc_pin.computeJointJacobians(self._gc_model, self._gc_data, q)
-        self._gc_pin.updateFramePlacements(self._gc_model, self._gc_data)
-        jacobian = self._gc_pin.getFrameJacobian(
-            self._gc_model,
-            self._gc_data,
-            self._gc_ee_frame_id,
-            self._gc_pin.ReferenceFrame.WORLD,
+        linear_speed, angular_speed = self._gravity_dynamics.end_effector_speeds(
+            q,
+            qd,
         )
-        spatial_velocity = jacobian @ qd
-        linear_speed = float(np.linalg.norm(spatial_velocity[:3]))
-        angular_speed = float(np.linalg.norm(spatial_velocity[3:]))
 
         self._gravity_state.observe_motion(
             q,

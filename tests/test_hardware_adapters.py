@@ -158,10 +158,13 @@ def test_hardware_sdk_runtime_uses_default_paths_and_defers_endpos(tmp_path) -> 
     assert runtime.arm_config_path == expected_arm_config
     assert runtime.arm.cfg_path == str(expected_arm_config)
     assert runtime.gripper_config_path == sdk_root / "config" / "gripper.yaml"
-    assert runtime.gravity_data == "gravity-data"
-    assert runtime.gravity_end_effector_frame_id == 17
-    assert runtime.compute_generalized_gravity is compute_generalized_gravity
-    assert runtime.pinocchio is pinocchio
+    assert runtime.gravity_dynamics.data == "gravity-data"
+    assert runtime.gravity_dynamics.end_effector_frame_id == 17
+    assert (
+        runtime.gravity_dynamics.compute_generalized_gravity
+        is compute_generalized_gravity
+    )
+    assert runtime.gravity_dynamics.pinocchio is pinocchio
     assert [event[0] for event in events] == ["arm", "load_model", "create_data", "frame"]
 
     endpos = runtime.create_endpos_controller()

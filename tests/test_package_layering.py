@@ -183,6 +183,23 @@ def test_hardware_manager_delegates_gripper_runtime_state() -> None:
     assert "self._gripper_state.request_stop(reason)" in source
 
 
+def test_hardware_manager_delegates_gripper_motor_command_policy() -> None:
+    source = (
+        ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
+    ).read_text(encoding="utf-8")
+    gripper_command_source = source.split(
+        "    def send_gripper_motor_cmd", 1
+    )[1].split("    def _start_pos_vel_loop", 1)[0]
+
+    assert "motor_command = resolve_gripper_motor_command(" in gripper_command_source
+    assert (
+        "dispatch_gripper_motor_command(self._gripper_mot, motor_command)"
+        in gripper_command_source
+    )
+    assert "send_safe_gripper_mit(" in source
+    assert "unsupported JointMotorCmd mode" not in gripper_command_source
+
+
 def test_hardware_manager_delegates_lifecycle_state() -> None:
     source = (
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"

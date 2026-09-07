@@ -17,6 +17,11 @@ from .gripper_motion_policy import (
     GripperTickDecision,
     decide_gripper_tick,
 )
+from .gripper_motor_commands import (
+    dispatch_gripper_motor_command,
+    resolve_gripper_motor_command,
+    send_safe_gripper_mit,
+)
 from .gripper_runtime_state import GripperRuntimeField, GripperRuntimeState
 from .gripper_safety import is_gripper_contact_sample
 from .gripper_sdk_adapter import GripperSdkAdapter
@@ -1425,33 +1430,14 @@ class HardwareManager:
         if gripper_failure is not None:
             raise RuntimeError(gripper_failure)
         state = self._verified_feedback_sample("gripper").state
-        pos = float(cmd.pos) if cmd.use_pos else float(state.pos if state is not None else 0.0)
-        vel = float(cmd.vel) if cmd.use_vel else float(state.vel if state is not None else 0.0)
-        kp = float(cmd.kp) if cmd.use_kp else float(self._gripper_cfg.kp)
-        kd = float(cmd.kd) if cmd.use_kd else float(self._gripper_cfg.kd)
-        tau = float(cmd.tau) if cmd.use_tau else 0.0
-        vlim = float(cmd.vlim) if cmd.use_vlim else float(self._gripper_cfg.vlim)
-
-        values = (pos, vel, kp, kd, tau, vlim)
-        if not all(np.isfinite(value) for value in values):
-            raise ValueError("gripper motor command values must be finite")
-        if kp < 0.0 or kd < 0.0 or vlim <= 0.0:
-            raise ValueError("gripper kp/kd must be non-negative and vlim must be positive")
-        if cmd.use_pos and not _G_OPEN_SOFT_LIMIT <= pos <= 0.0:
-            raise ValueError("gripper raw position command outside calibrated range")
-        if cmd.use_tau and abs(tau) > _G_TAU_MAX:
-            raise ValueError(f"gripper torque command exceeds {_G_TAU_MAX:g} N.m")
-
-        if int(cmd.mode) == 0:
-            self._gripper_mot.send_mit(pos, vel, kp, kd, tau)
-        elif int(cmd.mode) == 1:
-            self._gripper_mot.send_pos_vel(pos, vlim)
-        elif int(cmd.mode) == 2:
-            if not hasattr(self._gripper_mot, "send_vel"):
-                raise RuntimeError("gripper does not support send_vel")
-            self._gripper_mot.send_vel(vel)
-        else:
-            raise ValueError(f"unsupported JointMotorCmd mode: {cmd.mode}")
+        motor_command = resolve_gripper_motor_command(
+            cmd,
+            feedback_state=state,
+            config=self._gripper_cfg,
+            open_soft_limit_rad=_G_OPEN_SOFT_LIMIT,
+            torque_limit_nm=_G_TAU_MAX,
+        )
+        dispatch_gripper_motor_command(self._gripper_mot, motor_command)
         with self._gripper_lock:
             self._gripper_state.set_idle()
 
@@ -1542,16 +1528,19 @@ class HardwareManager:
     ) -> None:
         if self._gripper_mot is None or self._gripper_ctrl is None:
             return
-        pos_cmd = float(np.clip(pos, _G_OPEN_SOFT_LIMIT, 0.0))
-        pos_term = kp * (pos_cmd - self._gripper_state.position) + kd * (
-            -self._gripper_state.velocity
+        send_safe_gripper_mit(
+            self._gripper_mot,
+            position_rad=pos,
+            velocity_rad_s=vel,
+            kp=kp,
+            kd=kd,
+            torque_feedforward_nm=tau_ff,
+            torque_limit_nm=tau_limit,
+            current_position_rad=self._gripper_state.position,
+            current_velocity_rad_s=self._gripper_state.velocity,
+            open_soft_limit_rad=_G_OPEN_SOFT_LIMIT,
+            maximum_torque_nm=_G_TAU_MAX,
         )
-        limit = float(np.clip(abs(tau_limit), 0.05, _G_TAU_MAX))
-        tau_safe = float(np.clip(pos_term + tau_ff, -limit, limit)) - pos_term
-        try:
-            self._gripper_mot.send_mit(pos_cmd, vel, kp, kd, tau_safe)
-        except Exception as exc:
-            raise RuntimeError(f"gripper MIT command failed: {exc}") from exc
 
     def _gripper_tick(self) -> None:
         with self._gripper_lock:

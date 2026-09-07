@@ -12,6 +12,12 @@ from .bus_synchronization import patch_arm_bus_lock
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
+from .gripper_motion_policy import (
+    GripperMotionPolicyConfig,
+    GripperMotionSnapshot,
+    GripperTickDecision,
+    decide_gripper_tick,
+)
 from .gripper_safety import is_gripper_contact_sample
 from .hardware_feedback import HardwareFeedbackCoordinator
 from .hardware_runtime_config import HardwareRuntimeConfig
@@ -1633,76 +1639,100 @@ class HardwareManager:
 
     def _gripper_tick(self) -> None:
         with self._gripper_lock:
-            pending = self._gripper_neutral_pending
-            if pending is not None:
-                angle, _reason, marks_success = pending
-                self._gripper_safe_mit(angle, 0.0, 0.0, 0.0, 0.0, tau_limit=0.05)
-                self._gripper_neutral_pending = None
-                self._gripper_active = False
-                self._gripper_mode = "idle"
-                if marks_success:
-                    self._gripper_position_result = "succeeded"
-                    self._gripper_command_error = None
+            snapshot = self._gripper_motion_snapshot_locked()
+            if snapshot.neutral_pending is not None:
+                decision = decide_gripper_tick(
+                    snapshot,
+                    now=time.monotonic(),
+                    config=self._gripper_motion_policy_config(),
+                )
+                self._apply_neutral_decision_locked(decision)
                 return
-            target = self._gripper_target_angle
-            goal = self._gripper_goal_angle
-            effort = self._gripper_target_effort
-            close_force = self._gripper_close_force
-            hold_force = self._gripper_hold_force
-            hold_angle = self._gripper_hold_angle
-            mode = self._gripper_mode
-            active = self._gripper_active
-        if not active:
+        if not snapshot.active:
             return
-        sample = self._verified_feedback_sample("gripper")
+        self._verified_feedback_sample("gripper")
         gripper_failure = self._gripper_feedback_failure_reason()
         if gripper_failure is not None:
             self.stop_gripper_motion(gripper_failure)
             return
-        if mode == "grasp_closing":
-            self._gripper_safe_mit(0.0, 0.0, _G_GRASP_CLOSE_KP, _G_GRASP_CLOSE_KD, close_force)
-        elif mode == "grasp_holding":
-            if self._gripper_hold_deadline is not None and time.monotonic() >= self._gripper_hold_deadline:
-                self._gripper_hold_release_reason = "hold timeout"
-                self.stop_gripper_motion("grasp release: hold timeout")
-                return
-            self._gripper_safe_mit(hold_angle, 0.0, _G_GRASP_HOLD_KP, _G_GRASP_HOLD_KD, hold_force)
-        elif mode == "position":
-            if abs(self._gripper_pos - goal) < _G_ARRIVE_TOL:
-                with self._gripper_lock:
-                    self._gripper_neutral_pending = (
-                        float(self._gripper_pos),
-                        "position target reached",
-                        True,
-                    )
-                    self._gripper_mode = "neutral_pending"
-                return
-            now = time.monotonic()
-            elapsed = max(now - (self._gripper_last_tick_monotonic or now), 0.0)
-            max_step = self._gripper_position_max_speed_rad_s * elapsed
-            remaining = goal - target
-            if abs(remaining) <= max_step:
-                target = goal
-            elif max_step > 0.0:
-                target += float(np.copysign(max_step, remaining))
-            with self._gripper_lock:
-                self._gripper_target_angle = target
-                self._gripper_last_tick_monotonic = now
-            if (
-                self._gripper_target_deadline_monotonic is not None
-                and now >= self._gripper_target_deadline_monotonic
-            ):
-                self.stop_gripper_motion("gripper dynamic position timeout")
-                return
-            tau_ff = effort if abs(target) < 1e-6 else 0.0
-            self._gripper_safe_mit(
-                target,
-                0.0,
-                _G_KP_MOVE,
-                _G_KD_MOVE,
-                tau_ff,
-                tau_limit=effort,
+        now = time.monotonic()
+        with self._gripper_lock:
+            decision = decide_gripper_tick(
+                self._gripper_motion_snapshot_locked(),
+                now=now,
+                config=self._gripper_motion_policy_config(),
             )
+            if decision.next_target_rad is not None:
+                self._gripper_target_angle = decision.next_target_rad
+                self._gripper_last_tick_monotonic = now
+            if decision.action == "queue_neutral":
+                self._gripper_neutral_pending = (
+                    decision.position_rad,
+                    decision.reason,
+                    decision.marks_success,
+                )
+                self._gripper_mode = "neutral_pending"
+                return
+            if decision.reason == "grasp release: hold timeout":
+                self._gripper_hold_release_reason = "hold timeout"
+        if decision.action == "cancel":
+            self.stop_gripper_motion(decision.reason)
+            return
+        if decision.action == "mit":
+            self._gripper_safe_mit(
+                decision.position_rad,
+                0.0,
+                decision.kp,
+                decision.kd,
+                decision.torque_ff_nm,
+                tau_limit=decision.torque_limit_nm,
+            )
+
+    def _gripper_motion_snapshot_locked(self) -> GripperMotionSnapshot:
+        return GripperMotionSnapshot(
+            mode=self._gripper_mode,
+            active=self._gripper_active,
+            position_rad=self._gripper_pos,
+            target_rad=self._gripper_target_angle,
+            goal_rad=self._gripper_goal_angle,
+            target_effort_nm=self._gripper_target_effort,
+            close_force_nm=self._gripper_close_force,
+            hold_force_nm=self._gripper_hold_force,
+            hold_angle_rad=self._gripper_hold_angle,
+            hold_deadline=self._gripper_hold_deadline,
+            target_deadline=self._gripper_target_deadline_monotonic,
+            last_tick=self._gripper_last_tick_monotonic,
+            neutral_pending=self._gripper_neutral_pending,
+        )
+
+    def _gripper_motion_policy_config(self) -> GripperMotionPolicyConfig:
+        return GripperMotionPolicyConfig(
+            arrive_tolerance_rad=_G_ARRIVE_TOL,
+            position_max_speed_rad_s=self._gripper_position_max_speed_rad_s,
+            move_kp=_G_KP_MOVE,
+            move_kd=_G_KD_MOVE,
+            grasp_close_kp=_G_GRASP_CLOSE_KP,
+            grasp_close_kd=_G_GRASP_CLOSE_KD,
+            grasp_hold_kp=_G_GRASP_HOLD_KP,
+            grasp_hold_kd=_G_GRASP_HOLD_KD,
+            default_torque_limit_nm=_G_TAU_MAX,
+        )
+
+    def _apply_neutral_decision_locked(self, decision: GripperTickDecision) -> None:
+        self._gripper_safe_mit(
+            decision.position_rad,
+            0.0,
+            decision.kp,
+            decision.kd,
+            decision.torque_ff_nm,
+            tau_limit=decision.torque_limit_nm,
+        )
+        self._gripper_neutral_pending = None
+        self._gripper_active = False
+        self._gripper_mode = "idle"
+        if decision.marks_success:
+            self._gripper_position_result = "succeeded"
+            self._gripper_command_error = None
 
     def _gripper_loop(self) -> None:
         dt = 1.0 / _G_CTRL_RATE

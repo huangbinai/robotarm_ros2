@@ -7,6 +7,7 @@
 - `TeachRecorderNode`：按反馈批次去重并写入 JSONL。
 - `TeachReplayNode`：读取、准备、预检并发送标准关节轨迹。
 - `TeachReplayWorkflow`：供节点和 Dashboard 共用的轨迹准备、起点对齐、碰撞预检与轨迹构造流程。
+- `TeachReplaySession`：管理 Dashboard 回放 Action 的发送、取消、结果和运行时跟踪状态。
 - launch：`rebotarm_bringup/teach_record.launch.py` 和 `teach_replay.launch.py`。
 
 原始记录不是可直接信任的执行轨迹。真实回放前必须经过有限值、跳变、滤波、重采样、重定时、起点和碰撞检查。先使用 `dry_run:=true`。

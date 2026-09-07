@@ -62,6 +62,10 @@ def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
     assert "MoveItStartAlignmentConfig(" not in source
     assert "CollisionPrecheckConfig(" not in source
     assert "self._teach_replay_workflow.build_trajectory(" in source
+    assert "self._teach_replay_session.start(" in source
+    assert "def _on_teach_replay_goal_response" not in source
+    assert "def _on_teach_replay_result" not in source
+    assert "def _check_active_replay_tracking" not in source
 
 
 def test_interactive_control_keeps_teach_compatibility_imports() -> None:

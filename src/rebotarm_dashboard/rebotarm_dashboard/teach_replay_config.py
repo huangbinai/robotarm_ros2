@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rebotarm_motion.collision_precheck import CollisionPrecheckConfig
+from rebotarm_motion.replay_runtime_monitor import ReplayRuntimeMonitorConfig
 from rebotarm_motion.teach_replay_start_align_precheck import (
     MoveItStartAlignPrecheckConfig,
 )
@@ -106,4 +107,13 @@ class TeachReplayParameterAdapter:
             max_prepared_jump_rad=float(self._value("max_prepared_jump_rad")),
             max_replay_acceleration_rad_s2=float(self._value("max_replay_acceleration_rad_s2")),
             max_replay_jerk_rad_s3=float(self._value("max_replay_jerk_rad_s3")),
+        )
+
+    def runtime_monitor(self) -> ReplayRuntimeMonitorConfig:
+        return ReplayRuntimeMonitorConfig(
+            enabled=bool(self._value("replay_monitor_enabled")),
+            start_grace_sec=float(self._value("replay_monitor_start_grace_sec")),
+            violation_grace_sec=float(self._value("replay_monitor_violation_grace_sec")),
+            max_tracking_error_rad=float(self._value("max_tracking_error_rad")),
+            max_live_velocity_rad_s=float(self._value("max_live_velocity_rad_s")),
         )

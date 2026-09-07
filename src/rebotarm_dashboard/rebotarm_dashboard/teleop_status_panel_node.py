@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import threading
-import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -32,7 +31,6 @@ from .arm_command_api import (
 from rebotarm_motion.collision_precheck import CollisionPrechecker
 from .parameter_helpers import build_joint_limits
 from .parameter_helpers import sensor_qos_kwargs
-from rebotarm_motion.replay_runtime_monitor import ReplayRuntimeMonitor, ReplayRuntimeMonitorConfig
 from .status_panel_http import create_status_panel_server
 from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
@@ -41,7 +39,7 @@ from .web_command_gateway import WebCommandGateway, WebCommandRequest
 from rebotarm_teleop.teleop_core import validate_web_keyboard_command
 from rebotarm_teach.teach_record_client import TeachRecordClient
 from rebotarm_teach.teach_replay_coordinator import TeachReplayCoordinator, TeachReplayLimits
-from rebotarm_teach.teach_replay_client import TeachReplayClient
+from rebotarm_teach.teach_replay_session import TeachReplaySession
 from rebotarm_teach.teach_replay_workflow import TeachReplayWorkflow
 from rebotarm_teach.teach_recording import (
     ReplayStartBand,
@@ -340,7 +338,6 @@ class TeleopStatusPanelNode(Node):
             gravity_stop_client=self._gravity_stop_client,
             record_path_request_factory=SetTeachRecordPath.Request,
         )
-        self._teach_replay_client = TeachReplayClient()
         self._teach_replay_coordinator = TeachReplayCoordinator()
         trajectory_builder = TeachReplayTrajectoryBuilder(
             trajectory_factory=JointTrajectory,
@@ -361,6 +358,13 @@ class TeleopStatusPanelNode(Node):
             collision_prechecker=collision_prechecker,
         )
         self._teach_replay_config = TeachReplayParameterAdapter(self.get_parameter)
+        self._teach_replay_session = TeachReplaySession(
+            action_client=self._action_client,
+            trajectory_stop_client=self._trajectory_stop_client,
+            goal_factory=FollowJointTrajectory.Goal,
+            status_sink=lambda status: self._store.update_teleop_status("replay", status),
+            status_source=lambda: self._store.snapshot().teleop.get("replay", {}),
+        )
         self._teach_replay_settings_provider = TeachReplaySettingsProvider(
             replay_speed=float(self.get_parameter("replay_speed").value),
             align_duration=float(self.get_parameter("align_duration").value),
@@ -388,11 +392,6 @@ class TeleopStatusPanelNode(Node):
         self._web_keyboard_step_rad = float(self.get_parameter("web_keyboard_default_step_rad").value)
         self._web_keyboard_duration = float(self.get_parameter("web_keyboard_default_duration").value)
         self._web_keyboard_speed = float(self.get_parameter("web_keyboard_default_speed_rad_s").value)
-        self._teach_replay_lock = threading.Lock()
-        self._teach_replay_goal_handle = None
-        self._active_teach_replay_trajectory: JointTrajectory | None = None
-        self._active_teach_replay_started_at: float | None = None
-        self._replay_runtime_monitor = ReplayRuntimeMonitor()
         self._last_teach_dry_run: dict | None = None
         sensor_qos_spec = sensor_qos_kwargs()
         sensor_qos = QoSProfile(
@@ -440,7 +439,9 @@ class TeleopStatusPanelNode(Node):
         self.create_timer(1.0, self._update_gravity_comp_status)
         self.create_timer(
             max(float(self.get_parameter("replay_monitor_period_sec").value), 0.02),
-            self._check_active_replay_tracking,
+            lambda: self._teach_replay_session.check_tracking(
+                self._store.snapshot().joints
+            ),
         )
         self._server = self._make_server()
         self._server_thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -854,10 +855,6 @@ class TeleopStatusPanelNode(Node):
             )
             self._store.update_teleop_status("replay", result)
             return result
-        if not self._action_client.wait_for_server(timeout_sec=0.1):
-            message = "follow_joint_trajectory action unavailable"
-            self._store.update_teleop_status("replay", {"state": "unavailable", "message": message})
-            return {"accepted": False, "message": message}
         if trajectory is None:
             result = {
                 "accepted": False,
@@ -875,10 +872,14 @@ class TeleopStatusPanelNode(Node):
             self._store.update_teleop_status("replay", result)
             return result
         prepared_payload = getattr(self, "_last_teach_prepared_payload", prepared_payload)
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory = trajectory
-        future = self._action_client.send_goal_async(goal)
-        future.add_done_callback(lambda fut: self._on_teach_replay_goal_response(fut, info_payload, len(trajectory.points), trajectory))
+        start_result = self._teach_replay_session.start(
+            trajectory,
+            info_payload=info_payload,
+            monitor_config=self._teach_replay_config.runtime_monitor(),
+        )
+        if not start_result["accepted"]:
+            self._store.update_teleop_status("replay", start_result)
+            return start_result
         result = self._teach_replay_coordinator.build_execute_result(
             info_payload=info_payload,
             settings=settings,
@@ -900,15 +901,7 @@ class TeleopStatusPanelNode(Node):
         if gateway_result is not None:
             self._store.update_teleop_status("replay", gateway_result)
             return gateway_result
-        with self._teach_replay_lock:
-            goal_handle = self._teach_replay_goal_handle
-        result = self._teach_replay_client.stop(
-            goal_handle,
-            trajectory_stop_client=self._trajectory_stop_client,
-        )
-        future = result.pop("cancel_future", None)
-        if future is not None:
-            future.add_done_callback(self._on_teach_replay_cancel_response)
+        result = self._teach_replay_session.stop()
         self._store.update_teleop_status("replay", result)
         return result
 
@@ -1010,141 +1003,6 @@ class TeleopStatusPanelNode(Node):
             trajectory_config=self._teach_replay_config.trajectory(tuple(first.joint_names)),
             alignment_config=self._teach_replay_config.alignment(),
         )
-
-    def _on_teach_replay_goal_response(self, future, info_payload: dict, points: int, trajectory: JointTrajectory) -> None:
-        try:
-            goal_handle = future.result()
-        except Exception as exc:
-            self._store.update_teleop_status("replay", {"state": "failed", "message": str(exc)})
-            return
-        if goal_handle is None or not goal_handle.accepted:
-            self._store.update_teleop_status("replay", {"state": "rejected", "message": "teach replay goal rejected"})
-            return
-        with self._teach_replay_lock:
-            self._teach_replay_goal_handle = goal_handle
-            self._active_teach_replay_trajectory = trajectory
-            self._active_teach_replay_started_at = time.monotonic()
-            self._replay_runtime_monitor.reset()
-        self._store.update_teleop_status(
-            "replay",
-            {
-                "state": "replaying",
-                "message": "teach replay goal accepted",
-                "record_path": str(info_payload.get("path", "")),
-                "start_band": str(info_payload.get("start_band", "")),
-                "max_error": info_payload.get("max_error"),
-                "trajectory_points": points,
-                "runtime_monitor": {
-                    "enabled": bool(self.get_parameter("replay_monitor_enabled").value),
-                    "max_tracking_error_rad": float(self.get_parameter("max_tracking_error_rad").value),
-                    "max_live_velocity_rad_s": float(self.get_parameter("max_live_velocity_rad_s").value),
-                },
-                "dry_run": False,
-            },
-        )
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(lambda fut: self._on_teach_replay_result(fut, info_payload, points))
-
-    def _on_teach_replay_cancel_response(self, future) -> None:
-        try:
-            response = future.result()
-            goals_canceling = len(getattr(response, "goals_canceling", []))
-        except Exception as exc:
-            self._store.update_teleop_status("replay", {"state": "failed", "message": str(exc)})
-            return
-        state = "cancel_requested" if goals_canceling else "done"
-        message = (
-            "teach replay cancel accepted"
-            if goals_canceling
-            else "teach replay already finished before cancel"
-        )
-        self._store.update_teleop_status("replay", {"state": state, "message": message})
-        if not goals_canceling:
-            with self._teach_replay_lock:
-                self._teach_replay_goal_handle = None
-                self._active_teach_replay_trajectory = None
-                self._active_teach_replay_started_at = None
-                self._replay_runtime_monitor.reset()
-
-    def _on_teach_replay_result(self, future, info_payload: dict, points: int) -> None:
-        previous_replay = self._store.snapshot().teleop.get("replay", {})
-        with self._teach_replay_lock:
-            monitor_stop_requested = self._replay_runtime_monitor.stop_requested
-        try:
-            wrapped_result = future.result()
-            status = int(getattr(wrapped_result, "status", -1))
-            result = getattr(wrapped_result, "result", None)
-            error_code = int(getattr(result, "error_code", 0)) if result is not None else 0
-            error_string = str(getattr(result, "error_string", "")) if result is not None else ""
-        except Exception as exc:
-            self._store.update_teleop_status("replay", {"state": "failed", "message": str(exc)})
-            with self._teach_replay_lock:
-                self._teach_replay_goal_handle = None
-                self._active_teach_replay_trajectory = None
-                self._active_teach_replay_started_at = None
-                self._replay_runtime_monitor.reset()
-            return
-        if status == 4 and error_code == 0:
-            state = "done"
-        elif status == 5:
-            state = "safety_stop" if monitor_stop_requested else "canceled"
-        else:
-            state = "failed"
-        message = f"teach replay result status={status}, error_code={error_code}: {error_string}"
-        runtime_monitor = previous_replay.get("runtime_monitor") if isinstance(previous_replay, dict) else None
-        if status == 5 and monitor_stop_requested:
-            previous_message = str(previous_replay.get("message", "")) if isinstance(previous_replay, dict) else ""
-            message = (
-                f"action canceled after runtime monitor stop: {previous_message}"
-                if previous_message
-                else "action canceled after runtime monitor stop"
-            )
-        self._store.update_teleop_status(
-            "replay",
-            {
-                "state": state,
-                "message": message,
-                "record_path": str(info_payload.get("path", "")),
-                "start_band": str(info_payload.get("start_band", "")),
-                "max_error": info_payload.get("max_error"),
-                "trajectory_points": points,
-                "runtime_monitor": runtime_monitor,
-                "dry_run": False,
-            },
-        )
-        with self._teach_replay_lock:
-            self._teach_replay_goal_handle = None
-            self._active_teach_replay_trajectory = None
-            self._active_teach_replay_started_at = None
-            self._replay_runtime_monitor.reset()
-
-    def _check_active_replay_tracking(self) -> None:
-        snapshot = self._store.snapshot()
-        with self._teach_replay_lock:
-            goal_handle = self._teach_replay_goal_handle
-            trajectory = self._active_teach_replay_trajectory
-            started_at = self._active_teach_replay_started_at
-        if goal_handle is None:
-            return
-        decision = self._replay_runtime_monitor.check(
-            trajectory=trajectory,
-            started_at=started_at,
-            joints=snapshot.joints,
-            now=time.monotonic(),
-            config=ReplayRuntimeMonitorConfig(
-                enabled=bool(self.get_parameter("replay_monitor_enabled").value),
-                start_grace_sec=float(self.get_parameter("replay_monitor_start_grace_sec").value),
-                violation_grace_sec=float(self.get_parameter("replay_monitor_violation_grace_sec").value),
-                max_tracking_error_rad=float(self.get_parameter("max_tracking_error_rad").value),
-                max_live_velocity_rad_s=float(self.get_parameter("max_live_velocity_rad_s").value),
-            ),
-        )
-        if not decision.should_stop:
-            return
-        self._request_controller_trajectory_stop(timeout_sec=0.2)
-        with suppress(Exception):
-            goal_handle.cancel_goal_async()
-        self._store.update_teleop_status("replay", decision.status)
 
     def _handle_keyboard_enable(self, payload: dict) -> dict:
         if not bool(self.get_parameter("web_execute_enabled").value):

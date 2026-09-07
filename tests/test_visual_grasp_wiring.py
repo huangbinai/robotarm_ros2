@@ -993,11 +993,13 @@ def test_follow_joint_trajectory_keeps_running_until_goal_settles():
 def test_status_panel_stop_replay_falls_back_to_controller_stop():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     client_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_client.py")
+    session_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_session.py")
 
     assert "self._trajectory_stop_client = self.create_client(" in panel_text
     assert 'f"/{self._arm_namespace}/trajectory_stop"' in panel_text
-    assert "self._teach_replay_client.stop(" in panel_text
-    assert "trajectory_stop_client=self._trajectory_stop_client" in panel_text
+    assert "self._teach_replay_session.stop()" in panel_text
+    assert "self._replay_client.stop(" in session_text
+    assert "trajectory_stop_client=self._trajectory_stop_client" in session_text
     assert "controller trajectory_stop requested" in client_text
 
 
@@ -1400,17 +1402,21 @@ def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
     replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     monitor_text = _read("src/rebotarm_motion/rebotarm_motion/replay_runtime_monitor.py")
+    session_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_session.py")
     config_text = _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
 
     assert "evaluate_replay_tracking" in replay_node_text
     assert "evaluate_replay_tracking" in monitor_text
-    assert "ReplayRuntimeMonitor" in panel_text
-    assert "_replay_runtime_monitor.check(" in panel_text
+    assert "TeachReplaySession" in panel_text
+    assert "self._teach_replay_session.check_tracking(" in panel_text
+    assert "ReplayRuntimeMonitor" in session_text
+    assert "self._runtime_monitor.check(" in session_text
     for text in (replay_node_text, panel_text):
         assert 'self.declare_parameter("replay_monitor_enabled", True)' in text
         assert 'self.declare_parameter("max_tracking_error_rad", 0.25)' in text
         assert 'self.declare_parameter("max_live_velocity_rad_s", 3.0)' in text
-        assert "def _check_active_replay_tracking" in text
+    for text in (replay_node_text, session_text):
+        assert "def _check_active_replay_tracking" in text or "def check_tracking" in text
         assert "self._request_controller_trajectory_stop" in text
     for text in (replay_node_text, monitor_text):
         assert "tracking_error" in text
@@ -1422,13 +1428,13 @@ def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
 
 
 def test_status_panel_preserves_runtime_safety_stop_result_reason():
-    panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
-    result_body = panel_text.split("def _on_teach_replay_result", 1)[1].split(
-        "\n    def _check_active_replay_tracking", 1
+    session_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_session.py")
+    result_body = session_text.split("def _on_result", 1)[1].split(
+        "\n    def _clear", 1
     )[0]
 
-    assert "previous_replay = self._store.snapshot().teleop.get(\"replay\", {})" in result_body
-    assert "self._replay_runtime_monitor.stop_requested" in result_body
+    assert "previous_replay = self._status_source()" in result_body
+    assert "self._runtime_monitor.stop_requested" in result_body
     assert "state = \"safety_stop\"" in result_body
     assert "action canceled after runtime monitor stop" in result_body
 

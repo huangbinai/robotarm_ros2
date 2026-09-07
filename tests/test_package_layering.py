@@ -45,6 +45,7 @@ def test_teach_package_exports_core_modules() -> None:
     import rebotarm_teach.teach_record_types as teach_record_types
     import rebotarm_teach.teach_recording as teach_recording
     import rebotarm_teach.teach_replay_coordinator as teach_replay_coordinator
+    import rebotarm_teach.teach_replay_parameter_adapter as teach_replay_parameter_adapter
     import rebotarm_teach.teach_replay_settings as teach_replay_settings
     import rebotarm_teach.teach_replay_workflow as teach_replay_workflow
 
@@ -52,8 +53,20 @@ def test_teach_package_exports_core_modules() -> None:
     assert teach_recording.TeachSample is teach_record_types.TeachSample
     assert teach_recording.load_teach_samples is teach_record_repository.load_teach_samples
     assert hasattr(teach_replay_coordinator, "TeachReplayCoordinator")
+    assert hasattr(teach_replay_parameter_adapter, "TeachReplayParameterAdapter")
     assert hasattr(teach_replay_settings, "TeachReplaySettingsProvider")
     assert hasattr(teach_replay_workflow, "TeachReplayWorkflow")
+
+
+def test_dashboard_keeps_teach_replay_parameter_adapter_compatibility_import() -> None:
+    from rebotarm_dashboard.teach_replay_config import (
+        TeachReplayParameterAdapter as dashboard_adapter,
+    )
+    from rebotarm_teach.teach_replay_parameter_adapter import (
+        TeachReplayParameterAdapter as teach_adapter,
+    )
+
+    assert dashboard_adapter is teach_adapter
 
 
 def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:

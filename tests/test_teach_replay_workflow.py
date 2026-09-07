@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from rebotarm_dashboard.teach_replay_config import TeachReplayParameterAdapter
 from rebotarm_motion.collision_precheck import CollisionPrecheckConfig
 from rebotarm_motion.teach_replay_start_alignment import MoveItStartAlignmentConfig
+from rebotarm_teach.teach_replay_parameter_adapter import TeachReplayParameterAdapter
 from rebotarm_teach.teach_recording import TeachSample, encode_teach_sample
 from rebotarm_teach.teach_replay_trajectory_builder import TeachReplayTrajectoryConfig
 from rebotarm_teach.teach_replay_workflow import (

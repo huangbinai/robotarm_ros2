@@ -18,13 +18,11 @@ from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from rebotarm_motion.collision_precheck import (
-    CollisionPrecheckConfig,
     CollisionPrechecker,
 )
 from rebotarm_motion.moveit_planner import MoveItMotionPlanner
 from rebotarm_motion.teach_replay_start_alignment import (
     MoveItStartAligner,
-    MoveItStartAlignmentConfig,
 )
 from rebotarm_motion.teach_replay_start_align_precheck import (
     MoveItStartAlignPrechecker,
@@ -41,13 +39,10 @@ from .teach_recording import (
     prepared_teach_replay_to_dict,
     teach_trajectory_quality_to_dict,
 )
-from .teach_replay_trajectory_builder import (
-    TeachReplayTrajectoryBuilder,
-    TeachReplayTrajectoryConfig,
-)
+from .teach_replay_parameter_adapter import TeachReplayParameterAdapter
+from .teach_replay_trajectory_builder import TeachReplayTrajectoryBuilder
 from .teach_replay_workflow import (
     PreparedReplayRecord,
-    TeachReplayPreparationConfig,
     TeachReplayWorkflow,
 )
 
@@ -120,6 +115,7 @@ class TeachReplayNode(Node):
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._record_path = Path(str(self.get_parameter("record_path").value))
         self._dry_run = bool(self.get_parameter("dry_run").value)
+        self._teach_replay_config = TeachReplayParameterAdapter(self.get_parameter)
         self._latest_joint_state: JointState | None = None
         self._started = False
         self._samples = []
@@ -215,94 +211,27 @@ class TeachReplayNode(Node):
         self._publish_status("ready", f"waiting to replay {self._record_path}")
 
     def _max_replay_velocity_limits(self, joint_names: tuple[str, ...]):
-        scalar_limit = float(self.get_parameter("max_replay_velocity_rad_s").value)
-        values = self.get_parameter("max_replay_velocity_rad_s_by_joint").value
-        if isinstance(values, (list, tuple)) and len(values) == len(joint_names):
-            return tuple(float(value) for value in values)
-        return scalar_limit
+        return self._teach_replay_config.velocity_limits(joint_names)
 
     def _preparation_config(
         self,
         joint_names: tuple[str, ...],
-    ) -> TeachReplayPreparationConfig:
-        return TeachReplayPreparationConfig(
-            smoothing_enabled=bool(self.get_parameter("smoothing_enabled").value),
-            smoothing_window=int(self.get_parameter("smoothing_window").value),
-            filter_enabled=bool(self.get_parameter("filter_enabled").value),
-            filter_cutoff_hz=float(self.get_parameter("filter_cutoff_hz").value),
-            filter_sample_rate_hz=float(
-                self.get_parameter("filter_sample_rate_hz").value
-            ),
-            resample_enabled=bool(self.get_parameter("resample_enabled").value),
-            resample_rate_hz=float(self.get_parameter("resample_rate_hz").value),
+    ):
+        return self._teach_replay_config.preparation(
+            joint_names,
             replay_speed=float(self.get_parameter("speed").value),
-            max_velocity_rad_s=self._max_replay_velocity_limits(joint_names),
-            max_acceleration_rad_s2=float(
-                self.get_parameter("max_replay_acceleration_rad_s2").value
-            ),
-            max_jerk_rad_s3=float(
-                self.get_parameter("max_replay_jerk_rad_s3").value
-            ),
-            time_parameterization_method=str(
-                self.get_parameter("time_parameterization_method").value
-            ),
-            large_motion_span_rad=float(
-                self.get_parameter("large_motion_span_rad").value
-            ),
-            large_motion_total_rad=float(
-                self.get_parameter("large_motion_total_rad").value
-            ),
-            large_motion_max_speed=float(
-                self.get_parameter("large_motion_max_speed").value
-            ),
         )
 
     def _trajectory_config(
         self,
         joint_names: tuple[str, ...],
-    ) -> TeachReplayTrajectoryConfig:
-        return TeachReplayTrajectoryConfig(
-            use_moveit_start_align=bool(
-                self.get_parameter("use_moveit_start_align").value
-            ),
-            start_hold_sec=float(self.get_parameter("start_hold_sec").value),
-            soft_start_duration=float(
-                self.get_parameter("soft_start_duration").value
-            ),
-            soft_start_steps=int(self.get_parameter("soft_start_steps").value),
-            first_hold_sec=float(self.get_parameter("first_hold_sec").value),
-            yellow_max_speed=float(self.get_parameter("yellow_max_speed").value),
-            initial_replay_delay_sec=float(
-                self.get_parameter("initial_replay_delay_sec").value
-            ),
-            max_velocity_rad_s=self._max_replay_velocity_limits(joint_names),
-            max_acceleration_rad_s2=float(
-                self.get_parameter("max_replay_acceleration_rad_s2").value
-            ),
-            max_jerk_rad_s3=float(
-                self.get_parameter("max_replay_jerk_rad_s3").value
-            ),
-        )
+    ):
+        return self._teach_replay_config.trajectory(joint_names)
 
-    def _alignment_config(self) -> MoveItStartAlignmentConfig:
-        return MoveItStartAlignmentConfig(
-            start_hold_sec=float(self.get_parameter("start_hold_sec").value),
-            first_hold_sec=float(self.get_parameter("first_hold_sec").value),
-            skip_threshold=float(
-                self.get_parameter("moveit_start_skip_threshold").value
-            ),
-            joint_goal_tolerance=float(
-                self.get_parameter("moveit_joint_goal_tolerance").value
-            ),
-            velocity_scaling=float(
-                self.get_parameter("moveit_velocity_scaling").value
-            ),
-            acceleration_scaling=float(
-                self.get_parameter("moveit_acceleration_scaling").value
-            ),
-        )
+    def _alignment_config(self):
+        return self._teach_replay_config.alignment()
 
-    def _collision_config(self) -> CollisionPrecheckConfig:
+    def _collision_config(self):
         group_name = str(self.get_parameter("collision_group_name").value)
         defaults: tuple[tuple[str, float], ...] = ()
         if group_name == "arm_with_gripper":
@@ -317,14 +246,7 @@ class TeachReplayNode(Node):
                 ("left_finger_joint", latest_positions.get("left_finger_joint", 0.0)),
                 ("right_finger_joint", latest_positions.get("right_finger_joint", -0.0)),
             )
-        return CollisionPrecheckConfig(
-            enabled=bool(self.get_parameter("collision_check_enabled").value),
-            service=str(self.get_parameter("collision_check_service").value),
-            group_name=group_name,
-            max_samples=int(self.get_parameter("collision_check_max_samples").value),
-            timeout_sec=float(
-                self.get_parameter("collision_check_timeout_sec").value
-            ),
+        return self._teach_replay_config.collision(
             default_joint_positions=defaults,
         )
 

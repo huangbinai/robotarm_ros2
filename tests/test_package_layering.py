@@ -149,6 +149,8 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
 
     assert "RebotSdkLocator.for_module(__file__)" in source
     assert "patch_arm_bus_lock(self._arm)" in source
+    assert "patch_controller_bus(ctrl)" in source
+    assert "wrap_motor_bus(self._gripper_mot, ctrl._bus_lock)" in source
     assert "def _sdk_candidates" not in source
     assert "def _patch_controller_bus" not in source
     assert "sys.path.insert" not in source

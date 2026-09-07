@@ -8,7 +8,11 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from .bus_synchronization import patch_arm_bus_lock
+from .bus_synchronization import (
+    patch_arm_bus_lock,
+    patch_controller_bus,
+    wrap_motor_bus,
+)
 from .command_arbiter import CommandArbiter
 from .conversions import fk_to_pose
 from .feedback_sequence import VerifiedFeedbackSample
@@ -1172,8 +1176,8 @@ class HardwareManager:
 
         self._gripper_ctrl = ctrl
 
-        self._patch_controller_bus(ctrl)
-        self._wrap_motor_bus(self._gripper_mot, ctrl._bus_lock)
+        patch_controller_bus(ctrl)
+        wrap_motor_bus(self._gripper_mot, ctrl._bus_lock)
         # Connection only discovers hardware.  Mode selection, enabling, and
         # command-loop startup belong to the explicit enable transition.
 

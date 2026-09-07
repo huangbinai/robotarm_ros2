@@ -1370,19 +1370,19 @@ def test_teach_replay_prepared_pipeline_defaults_to_150hz():
     replay_launch_text = _read("src/rebotarm_bringup/launch/teach_replay.launch.py")
     replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
+    parameters_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_parameters.py")
     profiles_text = _read("src/rebotarm_bringup/config/replay_profiles.yaml")
 
     assert 'DeclareLaunchArgument("filter_sample_rate_hz", default_value="150.0")' in replay_launch_text
     assert 'DeclareLaunchArgument("resample_rate_hz", default_value="150.0")' in replay_launch_text
-    assert 'self.declare_parameter("filter_sample_rate_hz", 150.0)' in replay_node_text
-    assert 'self.declare_parameter("resample_rate_hz", 150.0)' in replay_node_text
-    assert 'self.declare_parameter("filter_sample_rate_hz", 150.0)' in panel_text
-    assert 'self.declare_parameter("resample_rate_hz", 150.0)' in panel_text
+    assert '("filter_sample_rate_hz", 150.0)' in parameters_text
+    assert '("resample_rate_hz", 150.0)' in parameters_text
+    for text in (replay_node_text, panel_text):
+        assert "declare_teach_replay_parameters(" in text
     assert "filter_sample_rate_hz: 150.0" in profiles_text
     assert "resample_rate_hz: 150.0" in profiles_text
     assert "time_parameterization_method: auto" in profiles_text
-    assert 'self.declare_parameter("time_parameterization_method", "auto")' in replay_node_text
-    assert 'self.declare_parameter("time_parameterization_method", "auto")' in panel_text
+    assert '("time_parameterization_method", "auto")' in parameters_text
 
 
 def test_moveit_ompl_uses_ruckig_response_adapter_with_jerk_limits():
@@ -1414,6 +1414,7 @@ def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     monitor_text = _read("src/rebotarm_motion/rebotarm_motion/replay_runtime_monitor.py")
     session_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_session.py")
+    parameters_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_parameters.py")
     config_text = _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
 
     assert "evaluate_replay_tracking" in replay_node_text
@@ -1422,10 +1423,11 @@ def test_teach_replay_has_runtime_tracking_guard_for_cli_and_web():
     assert "self._teach_replay_session.check_tracking(" in panel_text
     assert "ReplayRuntimeMonitor" in session_text
     assert "self._runtime_monitor.check(" in session_text
+    assert '("replay_monitor_enabled", True)' in parameters_text
+    assert '("max_tracking_error_rad", 0.25)' in parameters_text
+    assert '("max_live_velocity_rad_s", 3.0)' in parameters_text
     for text in (replay_node_text, panel_text):
-        assert 'self.declare_parameter("replay_monitor_enabled", True)' in text
-        assert 'self.declare_parameter("max_tracking_error_rad", 0.25)' in text
-        assert 'self.declare_parameter("max_live_velocity_rad_s", 3.0)' in text
+        assert "declare_teach_replay_parameters(" in text
     for text in (replay_node_text, session_text):
         assert "def _check_active_replay_tracking" in text or "def check_tracking" in text
         assert "self._request_controller_trajectory_stop" in text

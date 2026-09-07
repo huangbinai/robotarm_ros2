@@ -37,7 +37,7 @@ ROS 构建 Python 与视觉/GraspNet/MuJoCo 的运行解释器应分开。不要
 ## 3. 获取依赖
 
 ```bash
-cd ~/seeed/rebotarm_ros2
+cd ~/robotarm_ros2
 source /opt/ros/jazzy/setup.bash
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
@@ -62,7 +62,7 @@ python3 tools/apply_rebotarm_control_safety_patch.py --apply
 ## 4. 构建
 
 ```bash
-cd ~/seeed/rebotarm_ros2
+cd ~/robotarm_ros2
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install
 source install/setup.bash
@@ -110,7 +110,7 @@ ros2 launch rebotarm_bringup driver_only.launch.py \
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-source ~/seeed/rebotarm_ros2/install/setup.bash
+source ~/robotarm_ros2/install/setup.bash
 ros2 topic echo /rebotarm/arm_status --once
 ros2 topic hz /rebotarm/joint_states
 ```

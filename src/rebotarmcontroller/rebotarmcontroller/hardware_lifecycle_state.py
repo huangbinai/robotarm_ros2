@@ -18,7 +18,6 @@ STATE_MACHINE_VALUES = frozenset(
         "TRAJ_RUNNING",
         "LOWLEVEL_STREAMING",
         "GRAVITY_COMP",
-        "MODE_TRANSITION",
     }
 )
 

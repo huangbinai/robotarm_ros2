@@ -1,6 +1,6 @@
 # rebotarmcontroller
 
-真机控制和最后一道执行安全边界。该包独占 MotorBridge 与底层机械臂 SDK，负责连接、显式使能、反馈缓存、模式切换、轨迹执行、夹爪控制和安全关闭。
+真机控制和最后一道执行安全边界。该包独占 MotorBridge 与底层机械臂 SDK，负责连接、显式使能、反馈缓存、控制模式、轨迹执行、夹爪控制和安全关闭。
 
 ## 主要入口
 
@@ -15,7 +15,6 @@
 - `ros_actions.py` / `ros_services.py`：ROS API 与命令仲裁。
 - `trajectory_safety.py`：轨迹验证与插值。
 - `feedback_sequence.py`：逐电机反馈序号和新鲜度。
-- `mode_transition.py`：POS_VEL/MIT 平滑切换。
 
 ## 边界
 

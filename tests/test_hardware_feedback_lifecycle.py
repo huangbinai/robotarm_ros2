@@ -427,7 +427,7 @@ def test_emergency_disable_requires_fresh_disabled_feedback_before_finalising() 
         connected=True,
         enabled=True,
         lifecycle_state="ENABLED_HOLD",
-        state_machine="MODE_TRANSITION",
+        state_machine="GRAVITY_COMP",
     )
     manager._error_codes = []
     manager._stop_control_loop = lambda: None

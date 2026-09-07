@@ -15,6 +15,6 @@
 
 ## 主要配置
 
-`arm.yaml`、`gripper.yaml`、`driver_params.yaml`、`controller_safety.yaml`、`mode_transition.yaml` 和 `replay_profiles.yaml`。
+`arm.yaml`、`gripper.yaml`、`controller_runtime.yaml`、`controller_safety.yaml` 和 `replay_profiles.yaml`。
 
 该包只负责组装，不应实现硬件、轨迹、示教或感知算法。部署步骤见[部署手册](../../docs/deployment_guide_zh.md)。

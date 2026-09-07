@@ -58,7 +58,7 @@ ros2 launch rebotarm_voice_control voice_real.launch.py
 
 ### moveit2
 
-`MoveIt2SimExecutor` 已预留，并通过 `Ros2ActionTransport` 发送 ROS2 action goal。当前 CLI 在没有 ROS2 node/transport 的情况下会安全拒绝。后续需要在 ROS2 node 内创建 transport，再接入真实 action server。
+`MoveIt2SimExecutor` 已预留，并通过 `Ros2ActionTransport` 发送 ROS2 action goal。当前 CLI 在没有 ROS2 node/transport 的情况下会安全拒绝；现有 transport 主要完成 goal 接受检查，结果、反馈、超时和取消闭环仍未完成。不要把 `sim` 的路由成功当成 MoveIt2 动作已经执行成功。
 
 ## 已绑定的 action goal 构建
 
@@ -66,7 +66,7 @@ ros2 launch rebotarm_voice_control voice_real.launch.py
 - `/rebotarm/sim/pick_object` -> `rebotarm_msgs/action/ExecuteGrasp`
 - `/rebotarm/sim/place_object` -> `rebotarm_msgs/action/ExecuteGrasp`
 
-`/rebotarm/sim/move_relative` 仍保留为语音层安全路由目标，后续需要决定是转换为末端位姿偏移，还是转换为规划轨迹后再派发。
+`/rebotarm/sim/move_relative` 仍保留为语音层安全路由目标，但尚未形成统一的末端位姿偏移或规划轨迹派发语义；在语义确定并补齐结果/反馈/取消前，不得接入真机。
 
 ## 真机前置条件
 

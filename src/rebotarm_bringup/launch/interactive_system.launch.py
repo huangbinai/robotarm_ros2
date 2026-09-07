@@ -47,11 +47,11 @@ def generate_launch_description():
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
-    mode_transition_params = PathJoinSubstitution(
-        [bringup_share, "config", "mode_transition.yaml"]
-    )
     controller_safety_params = PathJoinSubstitution(
         [bringup_share, "config", "controller_safety.yaml"]
+    )
+    controller_runtime_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_runtime.yaml"]
     )
     moveit_config = (
         MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
@@ -134,7 +134,7 @@ def generate_launch_description():
                 name="reBotArmController",
                 output="screen",
                 condition=IfCondition(use_hardware),
-                parameters=[mode_transition_params,
+                parameters=[controller_runtime_params,
                     controller_safety_params,
                     {
                         "arm_config": arm_config,

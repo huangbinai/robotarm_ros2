@@ -17,7 +17,7 @@ Windows YOLO / depth / GraspNet
 PowerShell 终端 1：
 
 ```powershell
-cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main\softare\reBotArmController_ROS2-main"
+cd "<path-to-reBotArmController-ROS2-main>"
 .\tools\windows_start_yolo_server.ps1
 ```
 
@@ -35,7 +35,7 @@ http://127.0.0.1:8081/camera_info.json
 PowerShell 终端 2：
 
 ```powershell
-cd "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main\softare\reBotArmController_ROS2-main"
+cd "<path-to-reBotArmController-ROS2-main>"
 .\tools\windows_start_graspnet_bridge.ps1
 ```
 
@@ -58,7 +58,7 @@ VisualizeMaxPoints=8000
 运行后按 `y + Enter` 推理一次，写入：
 
 ```text
-D:\tmp\graspnet_candidates.json
+<temp-dir>\graspnet_candidates.json
 ```
 
 如果只想临时调整候选数量或显示点云数量：
@@ -158,6 +158,8 @@ gripper_grasp_enabled:=false
 candidate_max_joint6_delta_rad:=1.5708
 candidate_joint6_symmetry_enabled:=true
 ```
+
+注意：`real_perception_sim_execution.launch.py` 为独立仿真状态源配置，将 `candidate_max_joint6_delta_rad` 覆盖为 `0.0`；使用该封装入口时以 launch 日志和最终参数为准。
 
 ## 5. 真机实际抓取启动
 

@@ -17,15 +17,15 @@ visual_grasp_executor 做 trajectory / gripper / lift / retreat 执行
 
 ```yaml
 start_vision: true
-ordinary_depth_quality_enabled: true
 start_graspnet_baseline: true
 graspnet_candidates_topic: /grasp/graspnet_candidates
 candidate_ik_input_topic: /grasp/graspnet_candidates
 ```
 
 - `start_vision`：启动 Ubuntu 视觉节点，接收 Windows 相机、YOLO、depth、camera_info。
-- `ordinary_depth_quality_enabled`：开启 YOLO/depth 路线的深度质量检查，默认保持开启。
 - `start_graspnet_baseline`：启动 GraspNet 候选输入节点，当前通常是 network 模式读取 Windows bridge 输出。
+
+当前没有 `ordinary_depth_quality_enabled` 参数。YOLO/depth 只负责感知输入和目标区域筛选，抓取候选统一由 GraspNet 产生；不要在新 launch 或配置中恢复旧 ordinary grasp 参数。
 
 ## 第 2 层：Candidate Source
 
@@ -101,7 +101,7 @@ open_before_approach: true
 auto_gripper_width: true
 auto_gripper_effort: true
 open_clearance_m: 0.0
-max_allowed_grasp_width_m: 0.082
+max_allowed_grasp_width_m: 0.085
 close_max_effort: 0.4
 gripper_grasp_enabled: true
 gripper_grasp_close_force: 0.4

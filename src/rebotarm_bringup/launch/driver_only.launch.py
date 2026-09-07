@@ -15,11 +15,11 @@ def generate_launch_description():
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     arm_namespace = LaunchConfiguration("arm_namespace")
-    mode_transition_params = PathJoinSubstitution(
-        [bringup_share, "config", "mode_transition.yaml"]
-    )
     controller_safety_params = PathJoinSubstitution(
         [bringup_share, "config", "controller_safety.yaml"]
+    )
+    controller_runtime_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_runtime.yaml"]
     )
 
     return LaunchDescription(
@@ -41,7 +41,7 @@ def generate_launch_description():
                 executable="reBotArmController",
                 name="reBotArmController",
                 output="screen",
-                parameters=[mode_transition_params,
+                parameters=[controller_runtime_params,
                     controller_safety_params,
                     {
                         "arm_config": arm_config,

@@ -75,8 +75,7 @@ python -m pytest tests/test_package_layering.py -q
 python -m pytest \
   tests/test_controller_safety_boundaries.py \
   tests/test_hardware_feedback_lifecycle.py \
-  tests/test_feedback_sequence.py \
-  tests/test_mode_transition.py -q
+  tests/test_feedback_sequence.py -q
 ```
 
 修改视觉链路时优先运行：

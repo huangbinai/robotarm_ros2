@@ -29,6 +29,9 @@ def generate_launch_description():
     controller_safety_params = PathJoinSubstitution(
         [bringup_share, "config", "controller_safety.yaml"]
     )
+    controller_runtime_params = PathJoinSubstitution(
+        [bringup_share, "config", "controller_runtime.yaml"]
+    )
 
     return LaunchDescription(
         [
@@ -64,6 +67,7 @@ def generate_launch_description():
                 output="screen",
                 condition=IfCondition(use_hardware),
                 parameters=[
+                    controller_runtime_params,
                     controller_safety_params,
                     {
                         "arm_config": arm_config,

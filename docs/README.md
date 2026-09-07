@@ -15,7 +15,6 @@
 - [系统架构](architecture.md)：包职责、依赖方向和代码归属规则。
 - [开发维护指南](development_guide_zh.md)：新增功能、测试、文档和提交要求。
 - [下游硬件安全迁移记录](downstream_hardware_safety_migration.md)：迁移范围和决策记录。
-- [模式切换测试](mode_transition_test.md)：POS_VEL 与 MIT 切换验证。
 
 ## 包级说明
 
@@ -46,7 +45,7 @@
 - [Sim2Real 工作流](sim2real_workflow_zh.md)
 - [语音控制阶段说明](voice_control_stage4_zh.md)
 
-`docs/superpowers/` 保存历史设计与实施计划。它们用于追踪决策，不代表当前运行接口；发生冲突时，以源码、当前配置和上述正式手册为准。
+跨模块状态、决策、代码审查和未决问题保存在上层项目文档 [`../../../docs/`](../../../docs/README.md)。本仓库只维护当前源码对应的模块文档；发生冲突时，以源码、当前配置和测试证据为准。
 
 ## 文档维护规则
 

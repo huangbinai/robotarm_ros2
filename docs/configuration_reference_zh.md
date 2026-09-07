@@ -6,9 +6,8 @@
 | --- | --- | --- |
 | `rebotarm_bringup/config/arm.yaml` | 电机 ID、控制频率、MIT/POS_VEL 参数 | 只按实机调试结果修改 |
 | `gripper.yaml` | 夹爪电机与控制器参数 | 与六轴共享总线设置保持一致 |
-| `driver_params.yaml` | 常用 ROS 驱动参数 | 用于日常覆盖 |
+| `controller_runtime.yaml` | ROS 控制器运行参数 | 用于日常覆盖 |
 | `controller_safety.yaml` | 最后一层轨迹和反馈安全边界 | 不得比规划层更宽松 |
-| `mode_transition.yaml` | MIT/POS_VEL 平滑切换 | 修改后必须重做模式验收 |
 | `replay_profiles.yaml` | 示教滤波、重定时和回放限制 | 按轨迹质量选择 profile |
 | `rebotarm_moveit_config/config/*` | MoveIt 规划与模型限制 | 与 URDF 和真机边界同步 |
 | `rebotarm_vision/config/*` | 相机、候选、夹爪、撤退和重试策略 | 先 `plan_only` 验证 |
@@ -39,7 +38,7 @@
 | J5 | `-1.57 rad` | `1.57 rad` | `1.8 rad/s` | `7` |
 | J6 | `-3.14 rad` | `3.14 rad` | `1.8 rad/s` | `7` |
 
-所有关节最大加速度当前为 `5.0 rad/s²`。轨迹起点容差为 `0.10 rad`，终点容差为 `0.03 rad`，结束收敛等待为 `2.0 s`，轨迹安全采样周期为 `0.01 s`。
+配置文件声明所有关节最大加速度为 `5.0 rad/s²`，轨迹起点容差为 `0.10 rad`，终点容差为 `0.03 rad`，结束收敛等待为 `2.0 s`，轨迹安全采样周期为 `0.01 s`。代码审查发现当前执行层尚未完整落实所有动态约束和时间插值；这些值是安全目标与配置输入，不能单凭配置表宣称真实轨迹已经按约束执行。
 
 J2、J3 的硬件反馈读取可接受到 `+0.02 rad`。这是反馈验证容差，不修改表中的命令和规划上限。
 
@@ -69,22 +68,7 @@ J2、J3 的硬件反馈读取可接受到 `+0.02 rad`。这是反馈验证容差
 
 闭合端约 `1 mm` 的反馈容差只用于接收传感反馈。不要把内部 `0.09 m` 几何常量写入上层夹爪命令。
 
-## 6. 模式切换
-
-| 参数 | 默认值 | 作用 |
-| --- | ---: | --- |
-| `mode_transition.enabled` | `true` | 启用受控切换 |
-| `allow_velocity_mode` | `false` | 禁止直接速度模式 |
-| `enter.ramp_duration_sec` | `0.35 s` | 进入 MIT 增益渐变 |
-| `enter.max_start_velocity_rad_s` | `0.05 rad/s` | 允许进入的起始速度 |
-| `exit.damping_duration_sec` | `0.15 s` | 退出阻尼阶段 |
-| `exit.blend_duration_sec` | `0.35 s` | 退出混合阶段 |
-| `exit.velocity_wait_timeout_sec` | `1.0 s` | 等待速度下降超时 |
-| `safety.max_position_jump_rad` | `0.02 rad` | 切换过程最大目标跳变 |
-| `safety.feedback_timeout_sec` | `0.10 s` | 切换反馈超时 |
-| `safety.transition_timeout_sec` | `2.0 s` | 整体切换超时 |
-
-## 7. 命令和命名空间
+## 6. 命令和命名空间
 
 | 参数 | 默认值 | 有效值/说明 |
 | --- | --- | --- |
@@ -94,7 +78,7 @@ J2、J3 的硬件反馈读取可接受到 `+0.02 rad`。这是反馈验证容差
 | `frame_id` | `base_link` | 基座坐标系 |
 | `ee_frame_id` | `end_link` | 末端坐标系 |
 
-## 8. 视觉关键边界
+## 7. 视觉关键边界
 
 完整视觉启动文件参数较多，按层分组管理：输入与模型、候选几何、工作空间、IK/碰撞、夹爪、撤退、重试和放置。当前关键默认值包括：
 
@@ -111,7 +95,7 @@ J2、J3 的硬件反馈读取可接受到 `+0.02 rad`。这是反馈验证容差
 
 这些工作空间值依赖基座、桌面和相机安装，不能未经现场测量直接视为通用实机参数。完整说明见[视觉抓取七层参数](visual_grasp_seven_layer_params.md)。
 
-## 9. 修改检查清单
+## 8. 修改检查清单
 
 修改机械参数时至少同步检查：
 

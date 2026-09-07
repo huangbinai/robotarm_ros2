@@ -103,8 +103,10 @@ def test_teach_recording_uses_higher_sampling_defaults() -> None:
         launch_text = _read(launch_path)
         assert 'DeclareLaunchArgument("joint_state_rate", default_value="100.0")' in launch_text
 
-    driver_params = yaml.safe_load(_read("src/rebotarm_bringup/config/driver_params.yaml"))
-    assert driver_params["reBotArmController"]["ros__parameters"]["joint_state_rate"] == 100.0
+    controller_runtime = yaml.safe_load(
+        _read("src/rebotarm_bringup/config/controller_runtime.yaml")
+    )
+    assert controller_runtime["reBotArmController"]["ros__parameters"]["joint_state_rate"] == 100.0
 
 
 def test_common_commands_document_recommends_one_entrypoint() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import logging
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
@@ -46,12 +47,6 @@ from .hardware_sdk_runtime import create_hardware_sdk_runtime
 from .joint_motor_commands import (
     dispatch_joint_motor_command,
     resolve_joint_motor_command,
-)
-from .mode_transition import ModeTransitionCoordinator
-from .mode_transition_policy import (
-    FeedbackSample,
-    ModeTransitionConfig,
-    validate_mode_transition,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -110,6 +105,15 @@ def apply_gravity_compensation_tau_scale(tau: np.ndarray) -> np.ndarray:
     return scaled
 
 
+@dataclass(frozen=True)
+class FeedbackSample:
+    """Snapshot used by diagnostics and feedback-age checks."""
+
+    positions: np.ndarray
+    velocities: np.ndarray
+    age_sec: float = 0.0
+
+
 class HardwareManager:
     """Owns the single RobotArm instance used by the ROS driver."""
 
@@ -138,7 +142,6 @@ class HardwareManager:
         arm_cfg: Optional[str] = None,
         gripper_cfg: Optional[str] = None,
         channel: str = "",
-        mode_transition_config: ModeTransitionConfig | None = None,
         hardware_feedback_rate_hz: float = _HARDWARE_FEEDBACK_RATE_HZ,
         feedback_stale_timeout_sec: float = _FEEDBACK_STALE_TIMEOUT_SEC,
         gripper_position_torque_cap_nm: float = _G_POSITION_TORQUE_CAP_NM,
@@ -229,14 +232,6 @@ class HardwareManager:
         self.command_arbiter = CommandArbiter()
         self._error_codes: list[str] = []
         self._gravity_state = GravityCompensationState()
-
-        self._mode_transition_config = mode_transition_config or ModeTransitionConfig()
-        self._mode_transition = ModeTransitionCoordinator(
-            self,
-            self._mode_transition_config,
-            control_period_sec=1.0 / float(getattr(self._arm, "_rate", 500.0)),
-            on_stage=self._on_mode_transition_stage,
-        )
 
         patch_arm_bus_lock(self._arm)
 
@@ -370,8 +365,8 @@ class HardwareManager:
             try:
                 self.stop_gravity_compensation()
             except Exception as exc:
-                # Shutdown must continue to hard-disable even when a graceful
-                # mode transition cannot be completed.
+                # Shutdown must continue to hard-disable even when gravity
+                # compensation cannot be stopped cleanly.
                 message = f"SHUTDOWN_GRAVITY_STOP_FAILED: {exc}"
                 if message not in self._error_codes:
                     self._error_codes.append(message)
@@ -550,13 +545,8 @@ class HardwareManager:
         mode = mode.strip().lower()
         if mode not in ("mit", "pos_vel", "vel"):
             raise ValueError(f"unsupported mode: {mode}")
-        if self._mode_transition.in_progress:
-            raise RuntimeError("mode transition in progress")
-        validate_mode_transition(self.mode, mode, self._mode_transition_config)
-        if mode == "mit" and self.mode != "mit":
-            raise ValueError(
-                "direct MIT mode entry is disabled; use gravity compensation service"
-            )
+        if mode == "vel":
+            raise ValueError("VEL mode is disabled")
         self.stop_gravity_compensation()
 
         if mode == self.mode:
@@ -650,16 +640,13 @@ class HardwareManager:
             raise RuntimeError(message) from exc
 
     def ensure_pos_vel_control(self) -> None:
-        if self._mode_transition.in_progress:
-            raise RuntimeError("mode transition in progress")
         self._require_enabled()
         if self._gravity_state.active:
             self.stop_gravity_compensation()
         if self.mode != "pos_vel":
-            validate_mode_transition(self.mode, "pos_vel", self._mode_transition_config)
             if self.mode == "mit":
                 raise RuntimeError(
-                    "MIT mode is not in gravity compensation; refusing abrupt POS_VEL switch"
+                    "MIT mode is active; stop gravity compensation before position control"
                 )
             self._stop_control_loop()
             self._arm.mode_pos_vel()
@@ -669,9 +656,7 @@ class HardwareManager:
             self.hold_current_position()
 
     def send_joint_motor_cmd(self, joint_name: str, cmd) -> None:
-        if self._mode_transition.in_progress:
-            raise RuntimeError("mode transition in progress")
-        if int(cmd.mode) == 2 and not self._mode_transition_config.allow_velocity_mode:
+        if int(cmd.mode) == 2:
             raise ValueError("VEL mode is disabled")
         self._require_enabled()
         if joint_name not in self._arm._motor_map:
@@ -698,16 +683,35 @@ class HardwareManager:
         if self._gravity_state.active:
             return
         self._require_enabled()
-        result = self._mode_transition.enter_gravity_compensation()
-        if not result.success:
-            raise RuntimeError(f"{result.stage}: {result.failure_reason}")
+        self._stop_control_loop()
+        self._endpos_ctrl._stop_send.set()
+        self._endpos_ctrl._moving = False
+        target = self._read_gravity_comp_positions(request=True)
+        if not self._arm.mode_mit(
+            kp=np.full(self._arm.num_joints, _GC_KP, dtype=np.float64),
+            kd=np.full(self._arm.num_joints, _GC_KD, dtype=np.float64),
+        ):
+            raise RuntimeError("MIT mode switch failed")
+        self._gravity_state.start(target)
+        self._gravity_hardware_tick(self._arm, 1.0 / float(self._arm._rate))
+        self._arm.start_control_loop(self._gravity_hardware_tick, rate=self._arm._rate)
+        self.set_state_machine("GRAVITY_COMP")
 
     def stop_gravity_compensation(self) -> None:
         if not self._gravity_state.active:
             return
-        result = self._mode_transition.exit_gravity_compensation()
-        if not result.success:
-            raise RuntimeError(f"{result.stage}: {result.failure_reason}")
+        hold_target = (
+            self._gravity_state.last_position.copy()
+            if self._gravity_state.last_position is not None
+            else None
+        )
+        self._stop_control_loop()
+        self._gravity_state.finish()
+        if self._lifecycle.enabled:
+            if not self._arm.mode_pos_vel():
+                raise RuntimeError("POS_VEL mode switch failed")
+            self._start_pos_vel_loop(target=hold_target)
+        self.set_state_machine("IDLE")
 
     def feedback(self) -> FeedbackSample:
         if self.control_loop_active:
@@ -719,71 +723,6 @@ class HardwareManager:
             0.0, time.monotonic() - updated
         )
         return FeedbackSample(positions=positions, velocities=velocities, age_sec=age_sec)
-
-    def gravity_torque(self, positions: np.ndarray) -> np.ndarray:
-        torque = self._gravity_dynamics.gravity_torque(
-            np.asarray(positions, dtype=np.float64)
-        )
-        return apply_gravity_compensation_tau_scale(torque)
-
-    def preload_position_hold(self, target: np.ndarray) -> None:
-        self._endpos_ctrl._q_target[:] = np.asarray(target, dtype=np.float64)
-
-    def stop_control_loop(self) -> None:
-        self._stop_control_loop()
-
-    def switch_mode(self, mode: str, *, kp: float | None = None, kd: float | None = None) -> None:
-        normalized = str(mode).strip().lower()
-        if normalized == "mit":
-            kp_values = np.full(self._arm.num_joints, float(kp or _GC_KP), dtype=np.float64)
-            kd_values = np.full(self._arm.num_joints, float(kd or _GC_KD), dtype=np.float64)
-            if not self._arm.mode_mit(kp=kp_values, kd=kd_values):
-                raise RuntimeError("MIT mode switch failed")
-        elif normalized == "pos_vel":
-            if not self._arm.mode_pos_vel():
-                raise RuntimeError("POS_VEL mode switch failed")
-        else:
-            raise ValueError(f"unsupported coordinated mode: {mode}")
-
-    def send_mit(
-        self,
-        *,
-        position: np.ndarray,
-        kp: float,
-        kd: float,
-        torque: np.ndarray,
-    ) -> None:
-        self._arm.mit(
-            pos=np.asarray(position, dtype=np.float64),
-            vel=np.zeros(self._arm.num_joints, dtype=np.float64),
-            kp=np.full(self._arm.num_joints, float(kp), dtype=np.float64),
-            kd=np.full(self._arm.num_joints, float(kd), dtype=np.float64),
-            tau=np.asarray(torque, dtype=np.float64),
-        )
-
-    def start_gravity_loop(self, target: np.ndarray) -> None:
-        self._gravity_state.start(target)
-        self._gravity_hardware_tick(self._arm, 1.0 / float(self._arm._rate))
-        self._arm.start_control_loop(self._gravity_hardware_tick, rate=self._arm._rate)
-
-    def finish_gravity_compensation(self) -> None:
-        self._gravity_state.finish()
-
-    def start_position_hold(
-        self,
-        target: np.ndarray,
-        *,
-        zero_velocity_limit: bool = False,
-    ) -> None:
-        self._start_pos_vel_loop(target=np.asarray(target, dtype=np.float64))
-        if zero_velocity_limit:
-            self._endpos_ctrl._vlim_override = np.zeros(
-                self._arm.num_joints,
-                dtype=np.float64,
-            )
-
-    def restore_position_velocity_limit(self) -> None:
-        self._endpos_ctrl._vlim_override = None
 
     def disable_immediately(self) -> bool:
         """Best-effort emergency disable without claiming an unverified state."""
@@ -809,14 +748,6 @@ class HardwareManager:
             self._lifecycle.state_machine = "IDLE"
             self._set_lifecycle_state("CONNECTED_DISABLED")
             return True
-
-    def _on_mode_transition_stage(self, stage: str) -> None:
-        if stage == "GRAVITY_COMP":
-            self.set_state_machine("GRAVITY_COMP")
-        elif stage in ("POS_VEL_HOLD", "TRANSITION_FAILED"):
-            self.set_state_machine("IDLE")
-        else:
-            self.set_state_machine("MODE_TRANSITION")
 
     def gravity_compensation_active(self) -> bool:
         return self._gravity_state.active

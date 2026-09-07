@@ -1265,19 +1265,19 @@ class WebRobotAssetTests(unittest.TestCase):
             / "rebotarm_dashboard"
             / "teleop_status_panel_node.py"
         ).read_text(encoding="utf-8")
-        client_source = (
+        gripper_client_source = (
             ROOT
             / "src"
             / "rebotarm_teleop"
             / "rebotarm_teleop"
-            / "web_teleop_client.py"
+            / "web_gripper_client.py"
         ).read_text(encoding="utf-8")
 
         self.assertIn('self._use_hardware = bool(self.get_parameter("use_hardware").value)', source)
         self.assertIn("use_hardware=self._use_hardware", source)
         self.assertIn('f"/{self._arm_namespace}/gripper/state"', source)
         self.assertIn("self._publish_simulated_gripper_state", source)
-        self.assertIn('"simulated": True', client_source)
+        self.assertIn('"simulated": True', gripper_client_source)
 
     def test_teach_recorder_retries_auto_gravity_comp_start(self) -> None:
         source = (

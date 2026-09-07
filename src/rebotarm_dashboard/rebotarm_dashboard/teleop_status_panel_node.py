@@ -67,11 +67,12 @@ from .web_robot_assets import (
     merge_velocity_limits,
     merge_joint_limits,
 )
-from rebotarm_teleop.web_execute import (
-    WebExecuteDecision,
-    WebGripperDecision,
+from rebotarm_teleop.web_execute import WebExecuteDecision
+from rebotarm_teleop.web_gripper_client import (
+    WebGripperClient,
+    gripper_decision_response,
 )
-from rebotarm_teleop.web_teleop_client import WebTeleopClient, decision_response, gripper_decision_response
+from rebotarm_teleop.web_teleop_client import WebTeleopClient, decision_response
 
 
 def _is_number_like(value) -> bool:
@@ -301,8 +302,14 @@ class TeleopStatusPanelNode(Node):
             trajectory_factory=JointTrajectory,
             trajectory_point_factory=JointTrajectoryPoint,
             follow_goal_factory=FollowJointTrajectory.Goal,
-            gripper_action_client=self._gripper_action_client,
-            gripper_goal_factory=GripperCommand.Goal,
+        )
+        self._web_gripper_client = WebGripperClient(
+            action_client=self._gripper_action_client,
+            goal_factory=GripperCommand.Goal,
+            status_sink=lambda status: self._store.update_teleop_status(
+                "web_gripper",
+                status,
+            ),
         )
         self._web_keyboard_client = WebKeyboardClient(
             action_client=self._action_client,
@@ -1015,7 +1022,7 @@ class TeleopStatusPanelNode(Node):
         if gateway_result is not None:
             self._store.update_teleop_status("web_gripper", gateway_result)
             return gateway_result
-        result = self._web_teleop_client.set_gripper(
+        result = self._web_gripper_client.set_position(
             payload,
             use_hardware=self._use_hardware,
             gripper_limits=self._gripper_limits,
@@ -1034,55 +1041,9 @@ class TeleopStatusPanelNode(Node):
         if not result["accepted"]:
             self._store.update_teleop_status("web_gripper", result["status"])
             return result["response"]
-        future = result["goal_future"]
-        future.add_done_callback(lambda fut: self._on_gripper_goal_response(fut, decision))
+        self._web_gripper_client.observe_result(result)
         self._store.update_teleop_status("web_gripper", result["status"])
         return gripper_decision_response(decision)
-
-    def _on_gripper_goal_response(self, future, decision: WebGripperDecision) -> None:
-        try:
-            goal_handle = future.result()
-        except Exception as exc:
-            self._store.update_teleop_status("web_gripper", {"state": "failed", "message": str(exc)})
-            return
-        if goal_handle is None or not goal_handle.accepted:
-            self._store.update_teleop_status(
-                "web_gripper",
-                {"state": "rejected", "message": "gripper goal rejected"},
-            )
-            return
-        self._store.update_teleop_status(
-            "web_gripper",
-            {
-                "state": "accepted",
-                "message": "gripper goal accepted by controller",
-                "position": decision.position,
-                "max_effort": decision.max_effort,
-            },
-        )
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(lambda fut: self._on_gripper_result(fut, decision))
-
-    def _on_gripper_result(self, future, decision: WebGripperDecision) -> None:
-        try:
-            result_response = future.result()
-            result = result_response.result
-            reached = bool(getattr(result, "reached_goal", False))
-            position = float(getattr(result, "position", decision.position))
-            effort = float(getattr(result, "effort", 0.0))
-        except Exception as exc:
-            self._store.update_teleop_status("web_gripper", {"state": "failed", "message": str(exc)})
-            return
-        self._store.update_teleop_status(
-            "web_gripper",
-            {
-                "state": "done" if reached else "failed",
-                "message": f"gripper result reached={reached}",
-                "position": position,
-                "max_effort": decision.max_effort,
-                "effort": effort,
-            },
-        )
 
     def _publish_simulated_gripper_state(self) -> None:
         if self._sim_gripper_state_pub is None:

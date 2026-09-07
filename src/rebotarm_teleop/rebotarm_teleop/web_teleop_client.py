@@ -5,11 +5,10 @@ from typing import Any, Callable
 from .service_call_helpers import call_trigger_service
 from .web_execute import (
     WebExecuteDecision,
-    WebGripperDecision,
     interpolate_joint_points,
-    validate_web_gripper_request,
     validate_web_execute_request,
 )
+from .web_gripper_client import WebGripperClient, gripper_decision_response
 
 
 def set_duration(duration_msg: Any, seconds: float) -> None:
@@ -26,15 +25,6 @@ def decision_response(decision: WebExecuteDecision) -> dict:
         "duration": decision.duration,
         "max_delta": decision.max_delta,
         "max_delta_limit": decision.max_delta_limit,
-    }
-
-
-def gripper_decision_response(decision: WebGripperDecision) -> dict:
-    return {
-        "accepted": bool(decision.accepted),
-        "message": decision.message,
-        "position": decision.position,
-        "max_effort": decision.max_effort,
     }
 
 
@@ -61,8 +51,10 @@ class WebTeleopClient:
         self._trajectory_factory = trajectory_factory
         self._trajectory_point_factory = trajectory_point_factory
         self._follow_goal_factory = follow_goal_factory
-        self._gripper_action_client = gripper_action_client
-        self._gripper_goal_factory = gripper_goal_factory
+        self._gripper_client = WebGripperClient(
+            action_client=gripper_action_client,
+            goal_factory=gripper_goal_factory,
+        )
 
     def execute(
         self,
@@ -213,70 +205,10 @@ class WebTeleopClient:
         default_max_effort: float,
         max_effort_limit: float,
     ) -> dict:
-        decision = validate_web_gripper_request(
+        return self._gripper_client.set_position(
             payload,
+            use_hardware=use_hardware,
             gripper_limits=gripper_limits,
             default_max_effort=default_max_effort,
             max_effort_limit=max_effort_limit,
         )
-        if not decision.accepted:
-            return {
-                "accepted": False,
-                "decision": decision,
-                "response": gripper_decision_response(decision),
-                "status": {"state": "rejected", "message": decision.message},
-                "goal_future": None,
-                "simulated_position": None,
-            }
-        if not use_hardware:
-            return {
-                "accepted": True,
-                "decision": decision,
-                "response": gripper_decision_response(decision),
-                "status": {
-                    "state": "done",
-                    "message": f"simulated gripper position={decision.position:.4f} m",
-                    "position": decision.position,
-                    "max_effort": decision.max_effort,
-                    "simulated": True,
-                },
-                "goal_future": None,
-                "simulated_position": float(decision.position),
-            }
-        if self._gripper_action_client is None or self._gripper_goal_factory is None:
-            message = "gripper command action unavailable"
-            return {
-                "accepted": False,
-                "decision": decision,
-                "response": {"accepted": False, "message": message},
-                "status": {"state": "unavailable", "message": message},
-                "goal_future": None,
-                "simulated_position": None,
-            }
-        if not self._gripper_action_client.wait_for_server(timeout_sec=0.1):
-            message = "gripper command action unavailable"
-            return {
-                "accepted": False,
-                "decision": decision,
-                "response": {"accepted": False, "message": message},
-                "status": {"state": "unavailable", "message": message},
-                "goal_future": None,
-                "simulated_position": None,
-            }
-        goal = self._gripper_goal_factory()
-        goal.command.position = float(decision.position)
-        goal.command.max_effort = float(decision.max_effort)
-        future = self._gripper_action_client.send_goal_async(goal)
-        return {
-            "accepted": True,
-            "decision": decision,
-            "response": gripper_decision_response(decision),
-            "status": {
-                "state": "active",
-                "message": decision.message,
-                "position": decision.position,
-                "max_effort": decision.max_effort,
-            },
-            "goal_future": future,
-            "simulated_position": None,
-        }

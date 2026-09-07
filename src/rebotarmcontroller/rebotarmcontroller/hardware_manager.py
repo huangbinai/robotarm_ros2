@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 import time
 import logging
-from pathlib import Path
 from typing import Optional, Sequence
 
 import numpy as np
@@ -40,6 +39,7 @@ from .hardware_lifecycle_state import (
     HardwareLifecycleState,
 )
 from .hardware_runtime_config import HardwareRuntimeConfig
+from .hardware_sdk_runtime import create_hardware_sdk_runtime
 from .joint_motor_commands import (
     dispatch_joint_motor_command,
     resolve_joint_motor_command,
@@ -50,7 +50,6 @@ from .mode_transition_policy import (
     ModeTransitionConfig,
     validate_mode_transition,
 )
-from .sdk_runtime import RebotSdkLocator
 
 _LOG = logging.getLogger(__name__)
 
@@ -170,33 +169,23 @@ class HardwareManager:
         self._gripper_position_timeout_margin_sec = runtime_config.gripper_position_timeout_margin_sec
         self._grasp_hold_timeout_sec = runtime_config.grasp_hold_timeout_sec
         self._gripper_contact_torque_min_nm = runtime_config.gripper_contact_torque_min_nm
-        sdk_locator = RebotSdkLocator.for_module(__file__)
-        self._sdk_root = sdk_locator.ensure_importable()
-
-        from reBotArm_control_py.actuator import RobotArm
-        from reBotArm_control_py.controllers import ArmEndPos
-        from reBotArm_control_py.kinematics import load_robot_model
-        from reBotArm_control_py.dynamics import compute_generalized_gravity
-        import pinocchio as pin
-
-        cfg_path = (
-            Path(arm_cfg).expanduser()
-            if arm_cfg
-            else sdk_locator.arm_config(self._sdk_root)
+        sdk_runtime = create_hardware_sdk_runtime(
+            module_path=__file__,
+            arm_config=arm_cfg,
+            gripper_config=gripper_cfg,
+            channel=channel,
+            end_effector_frame=_GC_EE_FRAME,
         )
-        cfg_path = sdk_locator.with_channel_override(cfg_path, channel)
-        self._arm = RobotArm(cfg_path=str(cfg_path))
-        self._gc_model = load_robot_model()
-        self._gc_data = self._gc_model.createData()
-        self._gc_ee_frame_id = self._gc_model.getFrameId(_GC_EE_FRAME)
-        self._gc_compute_generalized_gravity = compute_generalized_gravity
-        self._gc_pin = pin
-
-        self._gripper_cfg_path = (
-            Path(gripper_cfg).expanduser()
-            if gripper_cfg
-            else sdk_locator.gripper_config(self._sdk_root)
+        self._sdk_root = sdk_runtime.sdk_root
+        self._arm = sdk_runtime.arm
+        self._gc_model = sdk_runtime.gravity_model
+        self._gc_data = sdk_runtime.gravity_data
+        self._gc_ee_frame_id = sdk_runtime.gravity_end_effector_frame_id
+        self._gc_compute_generalized_gravity = (
+            sdk_runtime.compute_generalized_gravity
         )
+        self._gc_pin = sdk_runtime.pinocchio
+        self._gripper_cfg_path = sdk_runtime.gripper_config_path
         self._gripper_cfg = None
         self._gripper_mot = None
         self._gripper_ctrl = None
@@ -235,7 +224,7 @@ class HardwareManager:
         self._gripper_zero_error: str | None = None
         self._motor_lifecycle_lock = threading.RLock()
 
-        self._endpos_ctrl = ArmEndPos(self._arm)
+        self._endpos_ctrl = sdk_runtime.create_endpos_controller()
         self._lifecycle = HardwareLifecycleState()
         self.command_arbiter = CommandArbiter()
         self._error_codes: list[str] = []

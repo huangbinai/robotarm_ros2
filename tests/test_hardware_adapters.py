@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 import yaml
 
 from rebotarmcontroller.bus_synchronization import patch_arm_bus_lock
 from rebotarmcontroller.hardware_runtime_config import HardwareRuntimeConfig
+from rebotarmcontroller.hardware_sdk_runtime import create_hardware_sdk_runtime
 from rebotarmcontroller.sdk_runtime import RebotSdkLocator
 
 
@@ -89,6 +91,149 @@ def test_sdk_channel_override_is_runtime_only(tmp_path) -> None:
         "channel": "can1",
         "rate": 500,
     }
+
+
+def test_hardware_sdk_runtime_uses_default_paths_and_defers_endpos(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    sdk_root = workspace / "third_party" / "reBotArm_control_py-main"
+    (sdk_root / "reBotArm_control_py").mkdir(parents=True)
+    locator = RebotSdkLocator(
+        workspace_root=workspace,
+        cwd=tmp_path / "cwd",
+        user_home=tmp_path / "home",
+        import_path=[],
+    )
+    events = []
+
+    class FakeArm:
+        def __init__(self, *, cfg_path):
+            self.cfg_path = cfg_path
+            events.append(("arm", cfg_path))
+
+    class FakeModel:
+        def createData(self):
+            events.append(("create_data",))
+            return "gravity-data"
+
+        def getFrameId(self, frame):
+            events.append(("frame", frame))
+            return 17
+
+    def load_robot_model():
+        events.append(("load_model",))
+        return FakeModel()
+
+    def create_endpos(arm):
+        events.append(("endpos", arm))
+        return ("endpos-controller", arm)
+
+    def compute_generalized_gravity(*, q):
+        return q
+
+    pinocchio = object()
+    modules = {
+        "reBotArm_control_py.actuator": SimpleNamespace(RobotArm=FakeArm),
+        "reBotArm_control_py.controllers": SimpleNamespace(ArmEndPos=create_endpos),
+        "reBotArm_control_py.kinematics": SimpleNamespace(
+            load_robot_model=load_robot_model
+        ),
+        "reBotArm_control_py.dynamics": SimpleNamespace(
+            compute_generalized_gravity=compute_generalized_gravity
+        ),
+        "pinocchio": pinocchio,
+    }
+
+    runtime = create_hardware_sdk_runtime(
+        module_path=tmp_path / "unused.py",
+        arm_config=None,
+        gripper_config=None,
+        channel="auto",
+        end_effector_frame="end_link",
+        locator=locator,
+        module_importer=modules.__getitem__,
+    )
+
+    expected_arm_config = sdk_root / "config" / "arm.yaml"
+    assert runtime.sdk_root == sdk_root
+    assert runtime.arm_config_path == expected_arm_config
+    assert runtime.arm.cfg_path == str(expected_arm_config)
+    assert runtime.gripper_config_path == sdk_root / "config" / "gripper.yaml"
+    assert runtime.gravity_data == "gravity-data"
+    assert runtime.gravity_end_effector_frame_id == 17
+    assert runtime.compute_generalized_gravity is compute_generalized_gravity
+    assert runtime.pinocchio is pinocchio
+    assert [event[0] for event in events] == ["arm", "load_model", "create_data", "frame"]
+
+    endpos = runtime.create_endpos_controller()
+
+    assert endpos == ("endpos-controller", runtime.arm)
+    assert events[-1] == ("endpos", runtime.arm)
+
+
+def test_hardware_sdk_runtime_prefers_explicit_configs_and_channel_override(
+    tmp_path,
+) -> None:
+    sdk_root = tmp_path / "sdk"
+    arm_config = tmp_path / "explicit-arm.yaml"
+    gripper_config = tmp_path / "explicit-gripper.yaml"
+    override_config = tmp_path / "runtime-arm.yaml"
+    calls = []
+
+    class FakeLocator:
+        def ensure_importable(self):
+            calls.append(("ensure_importable",))
+            return sdk_root
+
+        def arm_config(self, root):
+            raise AssertionError(f"default arm config requested for {root}")
+
+        def gripper_config(self, root):
+            raise AssertionError(f"default gripper config requested for {root}")
+
+        def with_channel_override(self, path, channel):
+            calls.append(("channel_override", path, channel))
+            return override_config
+
+    class FakeArm:
+        def __init__(self, *, cfg_path):
+            calls.append(("arm", cfg_path))
+
+    class FakeModel:
+        def createData(self):
+            return object()
+
+        def getFrameId(self, frame):
+            return frame
+
+    modules = {
+        "reBotArm_control_py.actuator": SimpleNamespace(RobotArm=FakeArm),
+        "reBotArm_control_py.controllers": SimpleNamespace(ArmEndPos=lambda arm: arm),
+        "reBotArm_control_py.kinematics": SimpleNamespace(
+            load_robot_model=FakeModel
+        ),
+        "reBotArm_control_py.dynamics": SimpleNamespace(
+            compute_generalized_gravity=lambda **kwargs: kwargs
+        ),
+        "pinocchio": object(),
+    }
+
+    runtime = create_hardware_sdk_runtime(
+        module_path=tmp_path / "unused.py",
+        arm_config=arm_config,
+        gripper_config=gripper_config,
+        channel="can1",
+        end_effector_frame="end_link",
+        locator=FakeLocator(),
+        module_importer=modules.__getitem__,
+    )
+
+    assert calls == [
+        ("ensure_importable",),
+        ("channel_override", arm_config, "can1"),
+        ("arm", str(override_config)),
+    ]
+    assert runtime.arm_config_path == override_config
+    assert runtime.gripper_config_path == gripper_config
 
 
 def test_bus_synchronization_wraps_controller_and_motor_once() -> None:

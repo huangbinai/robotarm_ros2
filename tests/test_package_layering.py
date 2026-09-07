@@ -147,7 +147,8 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
         ROOT / "src/rebotarmcontroller/rebotarmcontroller/hardware_manager.py"
     ).read_text(encoding="utf-8")
 
-    assert "RebotSdkLocator.for_module(__file__)" in source
+    assert "sdk_runtime = create_hardware_sdk_runtime(" in source
+    assert "sdk_runtime.create_endpos_controller()" in source
     assert "patch_arm_bus_lock(self._arm)" in source
     assert "adapter = GripperSdkAdapter(self._arm)" in source
     assert "adapter.create_motor(controller, self._gripper_cfg)" in source
@@ -158,6 +159,12 @@ def test_hardware_manager_delegates_sdk_and_bus_adaptation() -> None:
     assert "add_myactuator_motor" not in source
     assert "add_robstride_motor" not in source
     assert "sys.path.insert" not in source
+    assert "RebotSdkLocator" not in source
+    assert "from reBotArm_control_py.actuator import RobotArm" not in source
+    assert "from reBotArm_control_py.controllers import ArmEndPos" not in source
+    assert "from reBotArm_control_py.dynamics" not in source
+    assert "import pinocchio" not in source
+    assert "load_robot_model" not in source
 
 
 def test_hardware_manager_delegates_feedback_topology_and_validation() -> None:

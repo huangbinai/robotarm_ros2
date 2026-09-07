@@ -40,6 +40,7 @@ from .visual_grasp_sequence import (
 )
 from .visual_motion_gateway import VisualMotionGateway
 from .visual_servo_policy import build_visual_servo_step
+from .visual_trigger_gateway import VisualTriggerGateway
 
 
 def pose_to_target(pose: Pose) -> PoseTarget:
@@ -295,6 +296,14 @@ class VisualGraspExecutorNode(Node):
             grasp_request_factory=GraspGripper.Request,
             wait_for_future=self._wait_for_future,
             service_timeout_sec=self._service_timeout_sec,
+        )
+        self._trigger_gateway = VisualTriggerGateway(
+            request_factory=Trigger.Request,
+            wait_for_future=self._wait_for_future,
+            monotonic=time.monotonic,
+            sleep=time.sleep,
+            ok=rclpy.ok,
+            warn=self.get_logger().warn,
         )
         self._disable_client = self.create_client(
             Trigger,
@@ -837,15 +846,15 @@ class VisualGraspExecutorNode(Node):
         return True, message
 
     def _call_visual_ready_trigger(self, client, operation: str) -> tuple[bool, str]:
-        if not client.wait_for_service(timeout_sec=self._service_timeout_sec):
-            return False, f"visual_ready {operation} service unavailable"
-        future = client.call_async(Trigger.Request())
-        if not self._wait_for_future(future, self._service_timeout_sec + self._motion_result_timeout_sec):
-            return False, f"visual_ready {operation} service call timed out"
-        result = future.result()
-        if result is None:
-            return False, f"visual_ready {operation} returned no result"
-        return bool(result.success), str(result.message)
+        return self._trigger_gateway.call(
+            client,
+            f"visual_ready {operation}",
+            availability_timeout_sec=self._service_timeout_sec,
+            response_timeout_sec=(
+                self._service_timeout_sec + self._motion_result_timeout_sec
+            ),
+            interruptible=True,
+        )
 
     def _call_execute_pose(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.pose is None:
@@ -929,15 +938,15 @@ class VisualGraspExecutorNode(Node):
     def _call_safe_home(self) -> tuple[bool, str]:
         if not self._execution_enabled():
             return True, "plan_only: safe_home skipped"
-        if not self._safe_home_client.wait_for_service(timeout_sec=self._service_timeout_sec):
-            return False, "safe_home service unavailable"
-        future = self._safe_home_client.call_async(Trigger.Request())
-        if not self._wait_for_future(future, self._service_timeout_sec + self._motion_result_timeout_sec):
-            return False, "safe_home service call timed out"
-        result = future.result()
-        if result is None:
-            return False, "safe_home returned no result"
-        return bool(result.success), str(result.message)
+        return self._trigger_gateway.call(
+            self._safe_home_client,
+            "safe_home",
+            availability_timeout_sec=self._service_timeout_sec,
+            response_timeout_sec=(
+                self._service_timeout_sec + self._motion_result_timeout_sec
+            ),
+            interruptible=True,
+        )
 
     def _call_grasp_gripper(self, stage: VisualGraspStage) -> tuple[bool, str]:
         if stage.gripper_position_m is None or stage.gripper_max_effort is None:
@@ -998,29 +1007,16 @@ class VisualGraspExecutorNode(Node):
         label: str,
         timeout_sec: float,
     ) -> tuple[bool, str]:
-        try:
-            if not client.wait_for_service(timeout_sec=timeout_sec):
-                return False, f"{label} service unavailable"
-            future = client.call_async(Trigger.Request())
-            deadline = time.monotonic() + max(0.0, timeout_sec)
-            while rclpy.ok() and not future.done() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            if not future.done():
-                return False, f"{label} service call timed out"
-            result = future.result()
-            if result is None:
-                return False, f"{label} returned no result"
-            return bool(result.success), str(result.message)
-        except Exception as exc:
-            return False, f"{type(exc).__name__}: {exc}"
+        return self._trigger_gateway.call(
+            client,
+            label,
+            availability_timeout_sec=timeout_sec,
+            response_timeout_sec=timeout_sec,
+            interruptible=False,
+        )
 
     def _request_stop_service(self, client, label: str) -> None:
-        try:
-            if not client.wait_for_service(timeout_sec=0.2):
-                return
-            client.call_async(Trigger.Request())
-        except Exception as exc:
-            self.get_logger().warn(f"failed to request {label}: {exc}")
+        self._trigger_gateway.request(client, label)
 
 
 def main(args=None) -> None:

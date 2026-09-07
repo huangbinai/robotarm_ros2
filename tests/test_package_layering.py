@@ -34,10 +34,12 @@ def test_vision_package_exports_visual_grasp_parameter_adapter() -> None:
     import rebotarm_vision.visual_grasp_parameter_adapter as parameter_adapter
     import rebotarm_vision.visual_gripper_gateway as gripper_gateway
     import rebotarm_vision.visual_motion_gateway as motion_gateway
+    import rebotarm_vision.visual_trigger_gateway as trigger_gateway
 
     assert hasattr(parameter_adapter, "VisualGraspParameterAdapter")
     assert hasattr(gripper_gateway, "VisualGripperGateway")
     assert hasattr(motion_gateway, "VisualMotionGateway")
+    assert hasattr(trigger_gateway, "VisualTriggerGateway")
 
 
 def test_interactive_control_keeps_motion_compatibility_imports() -> None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import threading
 from contextlib import suppress
 from pathlib import Path
@@ -37,7 +36,10 @@ from .status_panel_page import HTML_PAGE
 from .status_panel_state import TeleopStatusStore
 from .teach_replay_config import TeachReplayParameterAdapter
 from .web_command_gateway import WebCommandGateway, WebCommandRequest
-from rebotarm_teleop.teleop_core import validate_web_keyboard_command
+from rebotarm_teleop.web_keyboard_client import (
+    WebKeyboardClient,
+    keyboard_decision_response,
+)
 from rebotarm_teach.teach_record_client import TeachRecordClient
 from rebotarm_teach.teach_replay_coordinator import TeachReplayCoordinator, TeachReplayLimits
 from rebotarm_teach.teach_replay_session import TeachReplaySession
@@ -54,10 +56,7 @@ from rebotarm_teach.teach_recording import (
 from rebotarm_teach.teach_replay_settings import TeachReplaySettingsProvider
 from rebotarm_motion.teach_replay_start_align_precheck import MoveItStartAlignPrechecker
 from rebotarm_motion.teach_replay_start_alignment import MoveItStartAligner
-from rebotarm_teach.teach_replay_trajectory_builder import (
-    TeachReplayTrajectoryBuilder,
-    set_duration,
-)
+from rebotarm_teach.teach_replay_trajectory_builder import TeachReplayTrajectoryBuilder
 from rebotarm_motion.moveit_planner import MoveItMotionPlanner
 from .web_robot_assets import (
     DEFAULT_GRIPPER_LIMITS_M,
@@ -75,26 +74,12 @@ from rebotarm_teleop.web_execute import (
 from rebotarm_teleop.web_teleop_client import WebTeleopClient, decision_response, gripper_decision_response
 
 
-def _set_duration(duration_msg, seconds: float) -> None:
-    set_duration(duration_msg, seconds)
-
-
 def _is_number_like(value) -> bool:
     try:
         float(value)
     except (TypeError, ValueError):
         return False
     return True
-
-
-def _number_or_default(value, default: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return float(default)
-    if not _is_number_like(number) or not math.isfinite(number):
-        return float(default)
-    return float(number)
 
 
 def _decision_response(decision: WebExecuteDecision) -> dict:
@@ -105,20 +90,6 @@ def _decision_response(decision: WebExecuteDecision) -> dict:
         "max_delta_limit": float(decision.max_delta_limit),
         "duration": float(decision.duration),
     }
-
-
-def _keyboard_decision_response(decision) -> dict:
-    return {
-        "accepted": bool(decision.accepted),
-        "message": decision.message,
-        "key": str(decision.key),
-        "joint_name": str(decision.joint_name),
-        "step_rad": float(decision.step_rad),
-        "duration": float(decision.duration),
-        "max_joint_speed_rad_s": float(decision.max_joint_speed_rad_s),
-    }
-
-
 
 
 class TeleopStatusPanelNode(Node):
@@ -333,13 +304,26 @@ class TeleopStatusPanelNode(Node):
             gripper_action_client=self._gripper_action_client,
             gripper_goal_factory=GripperCommand.Goal,
         )
+        self._web_keyboard_client = WebKeyboardClient(
+            action_client=self._action_client,
+            joint_names=self._joint_names,
+            joint_limits=self._joint_limits,
+            joint_velocity_limits=self._joint_velocity_limits,
+            trajectory_factory=JointTrajectory,
+            trajectory_point_factory=JointTrajectoryPoint,
+            follow_goal_factory=FollowJointTrajectory.Goal,
+            default_step_rad=float(
+                self.get_parameter("web_keyboard_default_step_rad").value
+            ),
+            default_duration=float(
+                self.get_parameter("web_keyboard_default_duration").value
+            ),
+            default_speed_rad_s=float(
+                self.get_parameter("web_keyboard_default_speed_rad_s").value
+            ),
+        )
         self._execute_lock = threading.Lock()
         self._execute_goal_handle = None
-        self._web_keyboard_lock = threading.Lock()
-        self._web_keyboard_enabled = False
-        self._web_keyboard_step_rad = float(self.get_parameter("web_keyboard_default_step_rad").value)
-        self._web_keyboard_duration = float(self.get_parameter("web_keyboard_default_duration").value)
-        self._web_keyboard_speed = float(self.get_parameter("web_keyboard_default_speed_rad_s").value)
         self._last_teach_dry_run: dict | None = None
         sensor_qos_spec = sensor_qos_kwargs()
         sensor_qos = QoSProfile(
@@ -853,32 +837,24 @@ class TeleopStatusPanelNode(Node):
             message = "web keyboard blocked: check mode is read-only"
             self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "blocked", "message": message})
             return {"accepted": False, "message": message}
-        step = _number_or_default(payload.get("step_rad"), self._web_keyboard_step_rad)
-        duration = _number_or_default(payload.get("duration"), self._web_keyboard_duration)
-        speed = _number_or_default(payload.get("max_joint_speed_rad_s"), self._web_keyboard_speed)
-        with self._web_keyboard_lock:
-            self._web_keyboard_step_rad = min(
-                max(step, float(self.get_parameter("web_keyboard_min_step_rad").value)),
-                float(self.get_parameter("web_keyboard_max_step_rad").value),
-            )
-            self._web_keyboard_duration = min(
-                max(duration, float(self.get_parameter("web_keyboard_min_duration").value)),
-                float(self.get_parameter("web_keyboard_max_duration").value),
-            )
-            self._web_keyboard_speed = min(
-                max(speed, 0.05),
-                float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
-            )
-            self._web_keyboard_enabled = True
-        result = {
-            "accepted": True,
-            "source": "web_keyboard",
-            "state": "ready",
-            "message": "web keyboard teleop enabled",
-            "step_rad": self._web_keyboard_step_rad,
-            "duration": self._web_keyboard_duration,
-            "max_joint_speed_rad_s": self._web_keyboard_speed,
-        }
+        result = self._web_keyboard_client.enable(
+            payload,
+            min_step_rad=float(
+                self.get_parameter("web_keyboard_min_step_rad").value
+            ),
+            max_step_rad=float(
+                self.get_parameter("web_keyboard_max_step_rad").value
+            ),
+            min_duration=float(
+                self.get_parameter("web_keyboard_min_duration").value
+            ),
+            max_duration=float(
+                self.get_parameter("web_keyboard_max_duration").value
+            ),
+            max_speed_rad_s=float(
+                self.get_parameter("web_execute_max_joint_speed_rad_s").value
+            ),
+        )
         self._store.update_teleop_status("status", result)
         return result
 
@@ -887,8 +863,7 @@ class TeleopStatusPanelNode(Node):
         if gateway_result is not None:
             self._store.update_teleop_status("status", {**gateway_result, "source": "web_keyboard"})
             return gateway_result
-        with self._web_keyboard_lock:
-            self._web_keyboard_enabled = False
+        self._web_keyboard_client.disable()
         stop_requested = self._request_controller_trajectory_stop(timeout_sec=0.2)
         result = {
             "accepted": True,
@@ -901,61 +876,41 @@ class TeleopStatusPanelNode(Node):
         return result
 
     def _handle_keyboard_key(self, payload: dict) -> dict:
-        with self._web_keyboard_lock:
-            enabled = self._web_keyboard_enabled
-            step_rad = self._web_keyboard_step_rad
-            duration = self._web_keyboard_duration
-            speed = self._web_keyboard_speed
-        request_payload = dict(payload)
-        request_payload.setdefault("step_rad", step_rad)
-        request_payload.setdefault("duration", duration)
-        request_payload.setdefault("max_joint_speed_rad_s", speed)
         snapshot = self._store.snapshot()
         current_positions = {
             name: float(data["position"])
             for name, data in snapshot.joints.items()
             if "position" in data
         }
-        decision = validate_web_keyboard_command(
-            request_payload,
-            enabled=enabled,
-            joint_names=self._joint_names,
+        request_payload, decision = self._web_keyboard_client.prepare_command(
+            payload,
             current_positions=current_positions,
-            joint_limits=self._joint_limits,
             default_step_rad=float(self.get_parameter("web_keyboard_default_step_rad").value),
             min_step_rad=float(self.get_parameter("web_keyboard_min_step_rad").value),
             max_step_rad=float(self.get_parameter("web_keyboard_max_step_rad").value),
             default_duration=float(self.get_parameter("web_keyboard_default_duration").value),
             min_duration=float(self.get_parameter("web_keyboard_min_duration").value),
             max_duration=float(self.get_parameter("web_keyboard_max_duration").value),
-            joint_velocity_limits=self._joint_velocity_limits,
-            max_joint_speed_rad_s=float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
+            max_speed_rad_s=float(self.get_parameter("web_execute_max_joint_speed_rad_s").value),
         )
         if not decision.accepted:
             self._store.update_teleop_status(
                 "status",
                 {"source": "web_keyboard", "state": "rejected", "message": decision.message, "last_key": payload.get("key")},
             )
-            return _keyboard_decision_response(decision)
+            return keyboard_decision_response(decision)
         gateway_result = self._route_web_command("keyboard_step", request_payload)
         if gateway_result is not None:
             self._store.update_teleop_status("status", {**gateway_result, "source": "web_keyboard", "last_key": payload.get("key")})
             return gateway_result
-        if not self._action_client.wait_for_server(timeout_sec=0.05):
-            message = "follow_joint_trajectory action unavailable"
+        dispatch = self._web_keyboard_client.send(decision)
+        if not dispatch["accepted"]:
+            message = dispatch["message"]
             self._store.update_teleop_status("status", {"source": "web_keyboard", "state": "unavailable", "message": message, "last_key": decision.key})
             return {"accepted": False, "message": message}
-        trajectory = JointTrajectory()
-        trajectory.joint_names = list(decision.joint_names)
-        point = JointTrajectoryPoint()
-        point.positions = [float(v) for v in decision.positions]
-        _set_duration(point.time_from_start, decision.duration)
-        trajectory.points = [point]
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory = trajectory
-        future = self._action_client.send_goal_async(goal)
+        future = dispatch["goal_future"]
         future.add_done_callback(lambda fut: self._on_keyboard_goal_response(fut, decision))
-        result = _keyboard_decision_response(decision)
+        result = keyboard_decision_response(decision)
         self._store.update_teleop_status(
             "status",
             {

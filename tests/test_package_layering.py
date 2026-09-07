@@ -87,6 +87,18 @@ def test_dashboard_keeps_teach_replay_parameter_adapter_compatibility_import() -
     assert dashboard_adapter is teach_adapter
 
 
+def test_dashboard_delegates_web_keyboard_commands_to_teleop_package() -> None:
+    source = (
+        ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._web_keyboard_client = WebKeyboardClient(" in source
+    assert "self._web_keyboard_client.enable(" in source
+    assert "self._web_keyboard_client.prepare_command(" in source
+    assert "self._web_keyboard_client.send(decision)" in source
+    assert "validate_web_keyboard_command(" not in source
+
+
 def test_dashboard_delegates_teach_replay_algorithms_to_teach_package() -> None:
     source = (
         ROOT / "src/rebotarm_dashboard/rebotarm_dashboard/teleop_status_panel_node.py"
@@ -150,10 +162,12 @@ def test_interactive_control_keeps_teach_compatibility_imports() -> None:
 
 def test_teleop_package_exports_command_adapters() -> None:
     import rebotarm_teleop.teleop_core as teleop_core
+    import rebotarm_teleop.web_keyboard_client as web_keyboard_client
     import rebotarm_teleop.web_execute as web_execute
     import rebotarm_teleop.web_teleop_client as web_teleop_client
 
     assert hasattr(teleop_core, "validate_web_keyboard_command")
+    assert hasattr(web_keyboard_client, "WebKeyboardClient")
     assert hasattr(web_execute, "validate_web_execute_request")
     assert hasattr(web_teleop_client, "WebTeleopClient")
 

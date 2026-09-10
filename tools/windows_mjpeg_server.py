@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 try:
     import cv2
@@ -764,7 +765,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth-fps", type=int, default=30)
     parser.add_argument("--depth-downsample-filter", type=int, default=1)
     parser.add_argument("--jpeg-quality", type=int, default=80)
-    parser.add_argument("--model-path", default=r"D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main\tools\yolo26s-seg.pt")
+    parser.add_argument(
+        "--model-path",
+        default=str(Path(__file__).resolve().with_name("yolo26s-seg.pt")),
+    )
     parser.add_argument("--yolo-device", default="0")
     parser.add_argument("--conf-threshold", type=float, default=0.25)
     parser.add_argument("--iou-threshold", type=float, default=0.45)

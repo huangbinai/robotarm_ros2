@@ -37,6 +37,9 @@ def test_orbbec_grasp_defaults_are_fixed_but_classes_remain_overridable():
     assert args.iou_threshold == 0.45
     assert args.detection_fps == 15.0
     assert args.jpeg_quality == 80
+    assert Path(args.model_path) == Path(module.__file__).resolve().with_name(
+        "yolo26s-seg.pt"
+    )
     assert args.classes == "bottle,cup"
     assert args.allowed_classes == "bottle,cup"
 

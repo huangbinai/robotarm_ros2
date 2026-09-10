@@ -1,5 +1,5 @@
 param(
-    [string]$RepoRoot = "D:\BaiduNetdiskDownload\reBot-DevArm-main\reBot-DevArm-main",
+    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [int]$MaxGrasps = 50,
     [int]$VisualizeTopN = 10,
     [int]$VisualizeMaxPoints = 8000

@@ -68,6 +68,7 @@ def test_windows_graspnet_bridge_script_freezes_model_and_output_defaults():
 def test_windows_grasp_ai_stack_script_starts_both_fixed_entrypoints():
     text = _read_script("windows_start_grasp_ai_stack.ps1")
 
+    assert "[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)" in text
     assert "windows_start_yolo_server.ps1" in text
     assert "windows_start_graspnet_bridge.ps1" in text
     assert "Start-Process" in text

@@ -51,10 +51,14 @@ bash tools/bootstrap_ubuntu_dependencies.sh
 的 `build/`、`.dll` 或 SDK 安装目录复制到 `third_party/`；Ubuntu 应从锁定的
 源码重新构建。
 
-GraspNet 权重不进入普通 Git 历史。将 `checkpoint-rs.tar` 放入
+GraspNet 权重不进入普通 Git 历史，而是托管在 GitHub Release。下载到
 `models/graspnet/` 后校验：
 
 ```bash
+mkdir -p models/graspnet
+curl -L \
+  https://github.com/huangbinai/robotarm_ros2/releases/download/graspnet-model-v1/checkpoint-rs.tar \
+  -o models/graspnet/checkpoint-rs.tar
 sha256sum --check models/MANIFEST.sha256
 ```
 

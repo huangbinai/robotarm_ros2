@@ -1,12 +1,14 @@
 # Runtime model assets
 
 Model weights are runtime assets and are intentionally excluded from normal Git
-history. On a new Ubuntu checkout, create `models/graspnet/` and place the
-GraspNet checkpoint there:
+history. On a new Ubuntu checkout, download the versioned GraspNet checkpoint
+from the GitHub Release and verify it:
 
 ```bash
 mkdir -p models/graspnet
-cp /path/to/checkpoint-rs.tar models/graspnet/checkpoint-rs.tar
+curl -L \
+  https://github.com/huangbinai/robotarm_ros2/releases/download/graspnet-model-v1/checkpoint-rs.tar \
+  -o models/graspnet/checkpoint-rs.tar
 sha256sum --check models/MANIFEST.sha256
 ```
 

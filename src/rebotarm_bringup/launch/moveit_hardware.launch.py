@@ -1,27 +1,12 @@
-import os
-
-import yaml
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-
-def load_yaml(package_name, relative_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_path = os.path.join(package_path, relative_path)
-    with open(absolute_path, "r", encoding="utf-8") as file:
-        return yaml.safe_load(file)
-
-
 def generate_launch_description():
+    # 兼容入口：真实 MoveIt 链路统一由 interactive_system 维护。
     bringup_share = FindPackageShare("rebotarm_bringup")
-    moveit_share = FindPackageShare("rebotarm_moveit_config")
-
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     arm_namespace = LaunchConfiguration("arm_namespace")
@@ -33,13 +18,8 @@ def generate_launch_description():
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
     use_rviz = LaunchConfiguration("use_rviz")
-
-    demo_launch = PathJoinSubstitution([moveit_share, "launch", "demo.launch.py"])
-    controller_safety_params = PathJoinSubstitution(
-        [bringup_share, "config", "controller_safety.yaml"]
-    )
-    controller_runtime_params = PathJoinSubstitution(
-        [bringup_share, "config", "controller_runtime.yaml"]
+    interactive_launch = PathJoinSubstitution(
+        [bringup_share, "launch", "core.launch.py"]
     )
 
     return LaunchDescription(
@@ -63,34 +43,24 @@ def generate_launch_description():
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
-            Node(
-                package="rebotarmcontroller",
-                executable="reBotArmController",
-                name="reBotArmController",
-                output="screen",
-                parameters=[
-                    controller_runtime_params,
-                    controller_safety_params,
-                    {
-                        "arm_config": arm_config,
-                        "gripper_config": gripper_config,
-                        "channel": channel,
-                        "joint_state_rate": joint_state_rate,
-                        "teach_record_path": teach_record_path,
-                        "teach_record_rate_hz": teach_record_rate_hz,
-                        "cmd_arbitration": cmd_arbitration,
-                        "arm_namespace": arm_namespace,
-                        "frame_id": frame_id,
-                        "ee_frame_id": ee_frame_id,
-                    }
-                ],
-            ),
             IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(demo_launch),
+                PythonLaunchDescriptionSource(interactive_launch),
                 launch_arguments={
-                    "use_rviz": use_rviz,
+                    "use_hardware": "true",
+                    "hardware_mode": "real",
+                    "use_moveit_preview": "true",
+                    "use_moveit_fake_joint_states": "false",
+                    "use_local_rviz": use_rviz,
+                    "arm_config": arm_config,
+                    "gripper_config": gripper_config,
                     "arm_namespace": arm_namespace,
-                    "use_fake_joint_states": "false",
+                    "channel": channel,
+                    "joint_state_rate": joint_state_rate,
+                    "teach_record_path": teach_record_path,
+                    "teach_record_rate_hz": teach_record_rate_hz,
+                    "cmd_arbitration": cmd_arbitration,
+                    "frame_id": frame_id,
+                    "ee_frame_id": ee_frame_id,
                 }.items(),
             ),
         ]

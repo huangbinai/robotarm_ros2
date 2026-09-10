@@ -8,6 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 只启动视觉感知、候选过滤和 RViz 标记，不启动抓取执行器，不主动驱动机械臂。
     bringup_share = FindPackageShare("rebotarm_bringup")
     vision_share = FindPackageShare("rebotarm_vision")
 
@@ -125,6 +126,7 @@ def generate_launch_description():
             DeclareLaunchArgument("show_tcp_markers", default_value="true"),
             DeclareLaunchArgument("show_approach_arrow", default_value="true"),
             DeclareLaunchArgument("show_gripper_open_axis", default_value="true"),
+            # 这里只引入 vision.launch.py；视觉抓取执行器属于完整视觉系统入口。
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([vision_share, "launch", "vision.launch.py"])

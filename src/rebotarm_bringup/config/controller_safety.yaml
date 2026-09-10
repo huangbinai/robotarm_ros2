@@ -1,11 +1,12 @@
-# reBotArm 机械臂安全约束和保护文件
+# reBotArm 控制器安全约束和保护文件。
+# 这是执行层最后一道边界；上层规划可以更保守，但不应放宽这些限制。
 
 reBotArmController:
   ros__parameters:
-    # 共享总线反馈
+    # 共享总线反馈：过期反馈不得继续作为安全判断依据。
     hardware_feedback_rate_hz: 50.0
     feedback_stale_timeout_sec: 0.15
-    # 机械臂夹爪安全约束
+    # 夹爪动作安全约束，限制力矩、速度和动态超时。
     gripper_position_torque_cap_nm: 1.0
     gripper_position_max_speed_rad_s: 1.5
     gripper_position_timeout_margin_sec: 1.5
@@ -14,7 +15,7 @@ reBotArmController:
     # 夹持超时
     grasp_hold_timeout_sec: 30.0
 
-    # 最终硬件边界。保持这些不低于MoveIt的限制。
+    # 最终硬件边界。上层规划可更窄，但不能绕过这些执行层限制。
     trajectory_safety.position_min_rad: [-2.8, -3.14, -3.14, -1.87, -1.57, -3.14]
     trajectory_safety.position_max_rad: [2.8, 0.0, 0.0, 1.57, 1.57, 3.14]
     trajectory_safety.max_velocity_rad_s: [3.0, 3.0, 3.0, 1.8, 1.8, 1.8]

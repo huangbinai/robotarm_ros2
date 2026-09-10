@@ -6,6 +6,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 真实视觉候选 + 仿真执行的联调入口，强制 use_hardware=false，避免误连真机。
     bringup_share = FindPackageShare("rebotarm_bringup")
     sim_arm_namespace = LaunchConfiguration("sim_arm_namespace")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
@@ -23,6 +24,7 @@ def generate_launch_description():
                 launch_arguments={
                     "arm_namespace": sim_arm_namespace,
                     "use_hardware": "false",
+                    "hardware_mode": "sim",
                     "use_local_rviz": use_local_rviz,
                     "execution_mode": "execute",
                     "start_vision": "true",

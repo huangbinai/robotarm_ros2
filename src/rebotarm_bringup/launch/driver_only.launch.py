@@ -8,6 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 最小真机入口：只启动 reBotArmController，不启动 RViz、MoveIt、网页或视觉节点。
     bringup_share = FindPackageShare("rebotarm_bringup")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
@@ -15,6 +16,7 @@ def generate_launch_description():
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     arm_namespace = LaunchConfiguration("arm_namespace")
+    # 即使是最小驱动入口，也必须同时加载运行参数和控制器安全边界。
     controller_safety_params = PathJoinSubstitution(
         [bringup_share, "config", "controller_safety.yaml"]
     )

@@ -1,6 +1,7 @@
-# reBotArm 夹爪配置文件
+# reBotArm 夹爪电机配置文件。
+# 夹爪动作的力矩、速度和超时边界在 controller_safety.yaml 中维护。
 
-channel: /dev/ttyACM0
+channel: /dev/ttyACM0  # 与六轴共享总线时，应与 arm.yaml 使用一致的通道。
 
 gripper:
   - name: gripper

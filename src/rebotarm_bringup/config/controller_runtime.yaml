@@ -1,8 +1,9 @@
-# reBotArm 机械臂运行参数文件
+# reBotArm 控制器运行参数文件。
+# launch 中传入的同名参数会覆盖这里的默认值；电机 PID 和安全边界不放在这里。
 
 reBotArmController:
   ros__parameters:
-    arm_namespace: rebotarm
-    joint_state_rate: 100.0
-    cmd_arbitration: reject # reject的意思是当收到一个新的命令时，如果当前正在执行一个命令，则拒绝新的命令，直到当前命令完成。
-    channel: ""
+    arm_namespace: rebotarm       # ROS 命名空间，不是硬件通道名。
+    joint_state_rate: 100.0       # ROS 状态发布频率；底层 SDK 频率由 arm.yaml 控制。
+    cmd_arbitration: reject       # 执行命令时拒绝新命令，避免多个来源抢占控制权。
+    channel: ""                   # 空值表示使用 arm.yaml/gripper.yaml 中的通道。

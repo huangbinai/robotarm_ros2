@@ -10,6 +10,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def _bool_text(value: str) -> str:
+    # LaunchConfiguration 通常是字符串；统一转换，避免字符串 false 被当成真值。
     return "true" if str(value).strip().lower() in {"1", "true", "yes", "on"} else "false"
 
 
@@ -18,6 +19,7 @@ def _as_bool(value: str) -> bool:
 
 
 def _record_path(name: str, explicit_path: str) -> str:
+    # 记录名只保留文件名部分，避免网页输入路径穿越到 teleop_records 之外。
     if explicit_path:
         return explicit_path
     safe_name = name.strip() or "teach_record"
@@ -28,6 +30,7 @@ def _record_path(name: str, explicit_path: str) -> str:
 
 
 def _resolve_channel(channel: str) -> str:
+    # 显式设备路径优先；auto 时按常用 ACM 设备顺序探测。
     if channel and channel != "auto":
         return channel
     for candidate in ("/dev/ttyACM0", "/dev/ttyACM1"):
@@ -46,6 +49,7 @@ def _panel_node(
     execution_mode: str,
     panel_mode: str,
 ):
+    # 网页面板和 Teach 卡片共用 teleop_control.yaml 的回放/安全参数。
     return Node(
         package="rebotarm_dashboard",
         executable="TeleopStatusPanelNode",
@@ -66,6 +70,7 @@ def _panel_node(
 
 
 def _keyboard_node(*, teleop_config, arm_namespace: str, keyboard_prefix: str):
+    # 保留键盘节点构造器，供后续组合入口复用；当前完整网页入口默认不启动它。
     return Node(
         package="rebotarm_teleop",
         executable="TeleopKeyboardNode",
@@ -90,7 +95,9 @@ def _launch_setup(context, *args, **kwargs):
     keyboard_prefix = LaunchConfiguration("keyboard_prefix").perform(context)
     teleop_config = LaunchConfiguration("teleop_config")
     bringup_share = FindPackageShare("rebotarm_bringup")
-    moveit_launch = PathJoinSubstitution([bringup_share, "launch", "moveit_hardware.launch.py"])
+    interactive_launch = PathJoinSubstitution(
+        [bringup_share, "launch", "core.launch.py"]
+    )
     web_rviz_config = PathJoinSubstitution([bringup_share, "rviz", "web_teleop_status.rviz"])
     resolved_channel = _resolve_channel(channel)
 
@@ -99,14 +106,19 @@ def _launch_setup(context, *args, **kwargs):
             "rebotarm_app.launch.py is the full hardware app and requires use_hardware:=true"
         )
 
+    # 先启动 MoveIt/控制器，再启动网页面板，保证面板连接的服务和动作已存在。
     actions = [
         LogInfo(msg="reBotArm app: starting full MoveIt + web teleop workbench"),
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(moveit_launch),
+            PythonLaunchDescriptionSource(interactive_launch),
             launch_arguments={
+                "use_hardware": "true",
+                "hardware_mode": "real",
+                "use_moveit_preview": "true",
+                "use_moveit_fake_joint_states": "false",
+                "use_local_rviz": "false",
                 "arm_namespace": arm_namespace,
                 "channel": resolved_channel,
-                "use_rviz": "false",
                 "teach_record_path": record_path,
             }.items(),
         ),
@@ -120,6 +132,7 @@ def _launch_setup(context, *args, **kwargs):
         ),
     ]
 
+    # 关闭 panel 时仍可用该入口做底层 MoveIt/控制器联调。
     if panel == "true":
         actions.append(
             _panel_node(

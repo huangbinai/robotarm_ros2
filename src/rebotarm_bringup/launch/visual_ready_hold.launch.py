@@ -7,6 +7,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 启动控制器并移动到视觉准备位；一次性动作退出后保留常驻准备位服务。
+    # 该入口不负责完整视觉抓取。
     bringup_share = FindPackageShare("rebotarm_bringup")
     vision_share = FindPackageShare("rebotarm_vision")
 
@@ -30,6 +32,7 @@ def generate_launch_description():
         [bringup_share, "config", "controller_runtime.yaml"]
     )
 
+    # 控制器必须先启动，视觉准备节点才能发送关节轨迹。
     controller = Node(
         package="rebotarmcontroller",
         executable="reBotArmController",
@@ -49,6 +52,7 @@ def generate_launch_description():
             }
         ],
     )
+    # 一次性移动到准备位；退出事件负责启动后续常驻服务。
     visual_ready_startup = Node(
         package="rebotarm_vision",
         executable="rebotarm_visual_ready",
@@ -68,6 +72,7 @@ def generate_launch_description():
             }
         ],
     )
+    # 常驻服务不自动移动，只响应后续视觉准备位请求。
     visual_ready_service = Node(
         package="rebotarm_vision",
         executable="rebotarm_visual_ready",

@@ -1,4 +1,5 @@
-﻿# 鏍囧噯瀹屾暣鍚姩鏂囦欢锛屽寘鍚満姊拌噦鎺у埗鍣ㄣ€佹満鍣ㄤ汉鐘舵€佸彂甯冨櫒鍜屽彲閫夌殑RViz鍙鍖栥€?
+﻿# 机器人系统启动文件
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -9,6 +10,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 基础整机入口：控制器、夹爪可视状态、URDF/TF 发布器，以及可选 RViz。
+    # 真机参数来自 arm.yaml、gripper.yaml、controller_runtime.yaml 和 controller_safety.yaml。
     bringup_share = FindPackageShare("rebotarm_bringup")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
@@ -20,6 +23,7 @@ def generate_launch_description():
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
 
+    # 所有资源通过已安装包的 share 目录定位，不依赖当前 shell 工作目录。
     urdf_file = PathJoinSubstitution(
         [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
@@ -49,6 +53,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
+            # 底层控制器：连接电机总线并提供 ROS 控制接口。
             Node(
                 package="rebotarmcontroller",
                 executable="reBotArmController",
@@ -68,6 +73,7 @@ def generate_launch_description():
                     }
                 ],
             ),
+            # 将夹爪状态转换为可用于机器人模型显示的 visual_joint_states。
             Node(
                 package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
@@ -75,6 +81,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[{"arm_namespace": arm_namespace}],
             ),
+            # robot_state_publisher 消费视觉关节状态并发布 TF。
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
@@ -83,6 +90,7 @@ def generate_launch_description():
                 parameters=[{"robot_description": robot_description}],
                 remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
             ),
+            # RViz 只是可选观察工具，不影响控制器运行。
             Node(
                 package="rviz2",
                 executable="rviz2",

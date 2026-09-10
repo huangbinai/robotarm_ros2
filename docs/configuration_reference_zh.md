@@ -8,7 +8,7 @@
 | `gripper.yaml` | 夹爪电机与控制器参数 | 与六轴共享总线设置保持一致 |
 | `controller_runtime.yaml` | ROS 控制器运行参数 | 用于日常覆盖 |
 | `controller_safety.yaml` | 最后一层轨迹和反馈安全边界 | 不得比规划层更宽松 |
-| `replay_profiles.yaml` | 示教滤波、重定时和回放限制 | 按轨迹质量选择 profile |
+| `rebotarm_interactive_control/config/teleop_control.yaml` | 遥操作、示教录制与回放参数 | 统一在此文件维护遥操作和回放限制 |
 | `rebotarm_moveit_config/config/*` | MoveIt 规划与模型限制 | 与 URDF 和真机边界同步 |
 | `rebotarm_vision/config/*` | 相机、候选、夹爪、撤退和重试策略 | 先 `plan_only` 验证 |
 | `rebotarm_simulation/config/*` | MuJoCo、Real2Sim 和随机化 | 不覆盖真机安全边界 |

@@ -6,6 +6,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 独立示教回放入口；默认 dry_run=true，真机回放前应显式确认参数和启动链路。
+    # 同名 launch 参数会覆盖 teleop_control.yaml 中的默认值。
     arm_namespace = LaunchConfiguration("arm_namespace")
     record_path = LaunchConfiguration("record_path")
     dry_run = LaunchConfiguration("dry_run")
@@ -95,6 +97,7 @@ def generate_launch_description():
                     [interactive_share, "config", "teleop_control.yaml"]
                 ),
             ),
+            # 只启动回放节点；MoveIt、控制器和网页面板由外部整机入口负责。
             Node(
                 package="rebotarm_teach",
                 executable="TeachReplayNode",

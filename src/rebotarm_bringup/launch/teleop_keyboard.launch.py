@@ -1,15 +1,16 @@
-﻿from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # Keyboard teleop wrapper. The core entry owns the robot runtime chain.
     arm_namespace = LaunchConfiguration("arm_namespace")
     use_hardware = LaunchConfiguration("use_hardware")
+    hardware_mode = LaunchConfiguration("hardware_mode")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
@@ -20,27 +21,26 @@ def generate_launch_description():
     teleop_config = LaunchConfiguration("teleop_config")
     keyboard_prefix = LaunchConfiguration("keyboard_prefix")
     bringup_share = FindPackageShare("rebotarm_bringup")
-    interactive_share = FindPackageShare("rebotarm_interactive_control")
-    urdf_file = PathJoinSubstitution(
-        [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
-    )
-    rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
-    robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
-    controller_safety_params = PathJoinSubstitution(
-        [bringup_share, "config", "controller_safety.yaml"]
-    )
-    controller_runtime_params = PathJoinSubstitution(
-        [bringup_share, "config", "controller_runtime.yaml"]
+    core_launch = PathJoinSubstitution(
+        [bringup_share, "launch", "core.launch.py"]
     )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("use_hardware", default_value="false"),
+            DeclareLaunchArgument(
+                "hardware_mode",
+                default_value="auto",
+                description="none, sim, real, or auto (legacy use_hardware)",
+            ),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
-            DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
+            DeclareLaunchArgument(
+                "teach_record_path",
+                default_value="teleop_records/teach_record.jsonl",
+            ),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
             DeclareLaunchArgument(
                 "keyboard_prefix",
@@ -52,57 +52,39 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "gripper_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+                default_value=PathJoinSubstitution(
+                    [bringup_share, "config", "gripper.yaml"]
+                ),
             ),
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
-                    [interactive_share, "config", "teleop_control.yaml"]
+                    [
+                        FindPackageShare("rebotarm_interactive_control"),
+                        "config",
+                        "teleop_control.yaml",
+                    ]
                 ),
             ),
-            Node(
-                package="rebotarmcontroller",
-                executable="reBotArmController",
-                name="reBotArmController",
-                output="screen",
-                condition=IfCondition(use_hardware),
-                parameters=[
-                    controller_runtime_params,
-                    controller_safety_params,
-                    {
-                        "arm_config": arm_config,
-                        "gripper_config": gripper_config,
-                        "channel": channel,
-                        "joint_state_rate": joint_state_rate,
-                        "teach_record_path": teach_record_path,
-                        "teach_record_rate_hz": teach_record_rate_hz,
-                        "arm_namespace": arm_namespace,
-                    }
-                ],
-            ),
-            Node(
-                package="rebotarm_teleop",
-                executable="GripperVisualJointStateNode",
-                name="gripper_visual_joint_state_node",
-                output="screen",
-                parameters=[teleop_config, {"arm_namespace": arm_namespace}],
-            ),
-            Node(
-                package="robot_state_publisher",
-                executable="robot_state_publisher",
-                name="robot_state_publisher",
-                output="screen",
-                parameters=[{"robot_description": robot_description}],
-                remappings=[("/joint_states", ["/", arm_namespace, "/visual_joint_states"])],
-            ),
-            Node(
-                package="joint_state_publisher",
-                executable="joint_state_publisher",
-                name="teleop_joint_state_publisher",
-                output="screen",
-                condition=UnlessCondition(use_hardware),
-                parameters=[{"robot_description": robot_description}, {"rate": 30.0}],
-                remappings=[("/joint_states", ["/", arm_namespace, "/joint_states"])],
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(core_launch),
+                launch_arguments={
+                    "arm_namespace": arm_namespace,
+                    "arm_config": arm_config,
+                    "gripper_config": gripper_config,
+                    "channel": channel,
+                    "joint_state_rate": joint_state_rate,
+                    "teach_record_path": teach_record_path,
+                    "teach_record_rate_hz": teach_record_rate_hz,
+                    "use_hardware": use_hardware,
+                    "hardware_mode": hardware_mode,
+                    "use_moveit_preview": "false",
+                    "use_local_rviz": use_local_rviz,
+                    "rviz_config": PathJoinSubstitution(
+                        [bringup_share, "rviz", "rebotarm.rviz"]
+                    ),
+                    "interactive_config": teleop_config,
+                }.items(),
             ),
             Node(
                 package="rebotarm_teleop",
@@ -111,14 +93,6 @@ def generate_launch_description():
                 output="screen",
                 prefix=keyboard_prefix,
                 parameters=[teleop_config, {"arm_namespace": arm_namespace}],
-            ),
-            Node(
-                package="rviz2",
-                executable="rviz2",
-                name="rviz2",
-                output="screen",
-                arguments=["-d", rviz_config],
-                condition=IfCondition(use_local_rviz),
             ),
         ]
     )

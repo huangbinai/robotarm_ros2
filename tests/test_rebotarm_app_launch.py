@@ -60,29 +60,7 @@ def test_web_teleop_rviz_is_robot_status_only() -> None:
     assert "EndEffectorTarget" not in rviz_text
 
 
-def test_replay_profiles_keep_safe_defaults_in_config() -> None:
-    profiles = yaml.safe_load(
-        _read("src/rebotarm_bringup/config/replay_profiles.yaml")
-    )
-
-    assert profiles["default_profile"] == "safe"
-    assert {"safe", "normal", "large"}.issubset(profiles["profiles"])
-
-    safe = profiles["profiles"]["safe"]
-    assert safe["dry_run"] is False
-    assert safe["speed"] <= 0.2
-    assert safe["collision_check_enabled"] is True
-    assert safe["use_moveit_start_align"] is True
-    assert safe["max_replay_velocity_rad_s"] <= 3.0
-    assert safe["max_replay_acceleration_rad_s2"] <= 5.0
-    assert safe["max_replay_jerk_rad_s3"] <= 30.0
-
-    large = profiles["profiles"]["large"]
-    assert large["speed"] <= profiles["profiles"]["normal"]["speed"]
-    assert large["large_motion_max_speed"] <= 1.0
-
-
-def test_teach_recording_uses_higher_sampling_defaults() -> None:
+def test_teach_recording_and_replay_defaults_are_kept_in_teleop_config() -> None:
     teleop_config = yaml.safe_load(
         _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
     )
@@ -91,6 +69,13 @@ def test_teach_recording_uses_higher_sampling_defaults() -> None:
     assert params["sample_rate_hz"] == 150.0
     assert params["filter_sample_rate_hz"] == 150.0
     assert params["resample_rate_hz"] == 150.0
+    assert params["max_replay_velocity_rad_s"] == 3.0
+    assert params["max_replay_acceleration_rad_s2"] == 5.0
+    assert params["max_replay_jerk_rad_s3"] == 20.0
+    assert params["collision_check_enabled"] is True
+    assert params["smoothing_enabled"] is True
+    assert params["filter_enabled"] is True
+    assert params["resample_enabled"] is True
 
     for launch_path in (
         "src/rebotarm_bringup/launch/moveit_hardware.launch.py",

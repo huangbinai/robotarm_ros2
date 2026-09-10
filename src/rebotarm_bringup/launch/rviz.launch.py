@@ -9,6 +9,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 仅查看 URDF/TF/视觉关节状态，不启动 reBotArmController，也不连接电机。
     bringup_share = FindPackageShare("rebotarm_bringup")
     arm_namespace = LaunchConfiguration("arm_namespace")
     urdf_file = PathJoinSubstitution(
@@ -20,6 +21,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
+            # 夹爪视觉状态与 robot_state_publisher 共同生成 RViz 模型显示所需状态。
             Node(
                 package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",

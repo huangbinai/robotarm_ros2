@@ -8,6 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 键盘、示教录制和网页状态面板的组合入口；完整真机网页工作台优先使用 rebotarm_app。
     arm_namespace = LaunchConfiguration("arm_namespace")
     use_hardware = LaunchConfiguration("use_hardware")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
@@ -41,6 +42,7 @@ def generate_launch_description():
                     [interactive_share, "config", "teleop_control.yaml"]
                 ),
             ),
+            # 复用键盘入口，避免重复维护控制器、模型和键盘节点。
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([bringup_share, "launch", "teleop_keyboard.launch.py"])
@@ -55,6 +57,7 @@ def generate_launch_description():
                     "keyboard_prefix": keyboard_prefix,
                 }.items(),
             ),
+            # 仿真模式下额外启动独立录制器；真机通常使用控制器内置录制服务。
             Node(
                 package="rebotarm_teach",
                 executable="TeachRecorderNode",
@@ -71,6 +74,7 @@ def generate_launch_description():
                     },
                 ],
             ),
+            # 网页面板读取同一份 teleop_control.yaml，并提供录制/回放操作。
             Node(
                 package="rebotarm_dashboard",
                 executable="TeleopStatusPanelNode",

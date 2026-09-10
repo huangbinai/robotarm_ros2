@@ -6,6 +6,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 独立示教录制入口；使用 teleop_control.yaml 的采样率、关节列表和重力补偿默认值。
+    # 它不负责启动控制器，真机控制器应由其他整机入口先启动。
     arm_namespace = LaunchConfiguration("arm_namespace")
     record_path = LaunchConfiguration("record_path")
     auto_start_gravity_comp = LaunchConfiguration("auto_start_gravity_comp")
@@ -28,6 +30,7 @@ def generate_launch_description():
                     [interactive_share, "config", "teleop_control.yaml"]
                 ),
             ),
+            # 只启动 TeachRecorderNode，record_path 和自动重力补偿由 launch 参数覆盖。
             Node(
                 package="rebotarm_teach",
                 executable="TeachRecorderNode",

@@ -3,10 +3,11 @@
 # 通信方式: CAN (can0 / can1) 或 串口桥 (/dev/ttyACM0)
 channel: /dev/ttyACM0
 
-# 控制循环频率 (Hz)
+# 控制循环频率 (Hz)。这是底层 SDK 频率，不等同于 ROS joint_state 发布频率。
 rate: 100
 
 joints:
+  # J1-J3 使用 4340P；参数需要结合真实负载和控制模式标定。
   # joint1:
   - name: joint1
     motor_id: 0x01
@@ -55,6 +56,7 @@ joints:
       pos_ki: 0.5
       vlim: 5.0
 
+  # J4-J6 使用 4310；vlim 仍受 controller_safety.yaml 的轨迹速度边界约束。
   # joint4:
   - name: joint4
     motor_id: 0x04

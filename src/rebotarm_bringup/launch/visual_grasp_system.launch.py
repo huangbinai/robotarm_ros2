@@ -9,9 +9,12 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 完整视觉抓取入口：基础交互/MoveIt、视觉感知、IK 过滤、抓取执行和可选仿真后端。
+    # 视觉策略配置仍由 rebotarm_vision 维护，bringup 只负责跨包编排。
     bringup_share = FindPackageShare("rebotarm_bringup")
     vision_share = FindPackageShare("rebotarm_vision")
     simulation_share = FindPackageShare("rebotarm_simulation")
+    # 算法参数来自视觉包，避免在 bringup 中复制策略配置。
     grasp_pose_policy_params = PathJoinSubstitution([vision_share, "config", "grasp_pose_policy.yaml"])
     gripper_policy_params = PathJoinSubstitution([vision_share, "config", "gripper_policy.yaml"])
     retry_policy_params = PathJoinSubstitution([vision_share, "config", "retry_policy.yaml"])
@@ -25,6 +28,7 @@ def generate_launch_description():
     arm_namespace = LaunchConfiguration("arm_namespace")
     channel = LaunchConfiguration("channel")
     use_hardware = LaunchConfiguration("use_hardware")
+    hardware_mode = LaunchConfiguration("hardware_mode")
     simulation_backend = LaunchConfiguration("simulation_backend")
     shutdown_safe_home = LaunchConfiguration("shutdown_safe_home")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
@@ -147,14 +151,16 @@ def generate_launch_description():
         "failure_recovery_return_velocity_scaling"
     )
 
+    # 基础层：真机时启动控制器 + MoveIt，仿真时切换到 fake/simulation 后端。
     interactive_system = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            PathJoinSubstitution([bringup_share, "launch", "interactive_system.launch.py"])
+            PathJoinSubstitution([bringup_share, "launch", "core.launch.py"])
         ),
         launch_arguments={
             "arm_namespace": arm_namespace,
             "use_moveit_preview": "true",
             "use_hardware": use_hardware,
+            "hardware_mode": hardware_mode,
             "channel": channel,
             "shutdown_safe_home": shutdown_safe_home,
             "use_local_rviz": use_local_rviz,
@@ -163,6 +169,7 @@ def generate_launch_description():
             "rviz_config": PathJoinSubstitution([bringup_share, "rviz", "visual_grasp.rviz"]),
         }.items(),
     )
+    # 可选的一次性视觉准备位动作；完成后由退出事件切换到常驻服务节点。
     visual_ready_startup = Node(
         package="rebotarm_vision",
         executable="rebotarm_visual_ready",
@@ -480,6 +487,11 @@ def generate_launch_description():
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value="auto"),
             DeclareLaunchArgument("use_hardware", default_value="true"),
+            DeclareLaunchArgument(
+                "hardware_mode",
+                default_value="auto",
+                description="none, sim, real, or auto (legacy use_hardware)",
+            ),
             DeclareLaunchArgument(
                 "simulation_backend",
                 default_value="rviz",

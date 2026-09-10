@@ -1386,7 +1386,7 @@ def test_teach_replay_prepared_pipeline_defaults_to_150hz():
     replay_node_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teach_replay_node.py")
     panel_text = _read("src/rebotarm_interactive_control/rebotarm_interactive_control/teleop_status_panel_node.py")
     parameters_text = _read("src/rebotarm_teach/rebotarm_teach/teach_replay_parameters.py")
-    profiles_text = _read("src/rebotarm_bringup/config/replay_profiles.yaml")
+    config_text = _read("src/rebotarm_interactive_control/config/teleop_control.yaml")
 
     assert 'DeclareLaunchArgument("filter_sample_rate_hz", default_value="150.0")' in replay_launch_text
     assert 'DeclareLaunchArgument("resample_rate_hz", default_value="150.0")' in replay_launch_text
@@ -1394,9 +1394,9 @@ def test_teach_replay_prepared_pipeline_defaults_to_150hz():
     assert '("resample_rate_hz", 150.0)' in parameters_text
     for text in (replay_node_text, panel_text):
         assert "declare_teach_replay_parameters(" in text
-    assert "filter_sample_rate_hz: 150.0" in profiles_text
-    assert "resample_rate_hz: 150.0" in profiles_text
-    assert "time_parameterization_method: auto" in profiles_text
+    assert "filter_sample_rate_hz: 150.0" in config_text
+    assert "resample_rate_hz: 150.0" in config_text
+    assert "time_parameterization_method: auto" in config_text
     assert '("time_parameterization_method", "auto")' in parameters_text
 
 

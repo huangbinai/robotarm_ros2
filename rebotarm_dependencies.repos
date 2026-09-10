@@ -3,3 +3,15 @@ repositories:
     type: git
     url: https://github.com/huangbinai/rebotarm_control.git
     version: 6a49302804f25e624995e771acb6d61896d1856d
+  pyorbbecsdk:
+    type: git
+    url: https://github.com/orbbec/pyorbbecsdk.git
+    version: 727ba3b269fba8161fe045839af972a37c52242c
+  graspnet-baseline:
+    type: git
+    url: https://github.com/graspnet/graspnet-baseline.git
+    version: 280c215129f759ed8649cb4e89fc5dfee55f4f80
+  graspnetAPI:
+    type: git
+    url: https://github.com/graspnet/graspnetAPI.git
+    version: bd6783c3effdebd895abfba8b96dc22a42ec3b5a

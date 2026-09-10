@@ -42,8 +42,20 @@ source /opt/ros/jazzy/setup.bash
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
 python3 -m pip install --user -r requirements-runtime.txt
-mkdir -p third_party
-vcs import third_party < rebotarm_dependencies.repos
+bash tools/bootstrap_ubuntu_dependencies.sh
+```
+
+初始化脚本会按照 `rebotarm_dependencies.repos` 中锁定的 commit 获取
+`reBotArm_control_py`、`pyorbbecsdk`、`graspnet-baseline` 和 `graspnetAPI`，
+并自动应用 `patches/` 中由本项目维护的 GraspNet 兼容补丁。不要把 Windows
+的 `build/`、`.dll` 或 SDK 安装目录复制到 `third_party/`；Ubuntu 应从锁定的
+源码重新构建。
+
+GraspNet 权重不进入普通 Git 历史。将 `checkpoint-rs.tar` 放入
+`models/graspnet/` 后校验：
+
+```bash
+sha256sum --check models/MANIFEST.sha256
 ```
 
 如果底层 SDK 已按其他方式安装，可跳过重复导入，但必须确认当前 Python 实际加载的是预期版本：

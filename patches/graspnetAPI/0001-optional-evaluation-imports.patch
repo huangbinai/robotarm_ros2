@@ -1,0 +1,21 @@
+diff --git a/graspnetAPI/__init__.py b/graspnetAPI/__init__.py
+index b33e391..b15e66a 100644
+--- a/graspnetAPI/__init__.py
++++ b/graspnetAPI/__init__.py
+@@ -1,6 +1,14 @@
+ __author__ = 'mhgou'
+ __version__ = '1.2.11'
+ 
+-from .graspnet import GraspNet
+-from .graspnet_eval import GraspNetEval
+ from .grasp import Grasp, GraspGroup, RectGrasp, RectGraspGroup
++
++try:
++    from .graspnet import GraspNet
++except Exception:
++    GraspNet = None
++
++try:
++    from .graspnet_eval import GraspNetEval
++except Exception:
++    GraspNetEval = None

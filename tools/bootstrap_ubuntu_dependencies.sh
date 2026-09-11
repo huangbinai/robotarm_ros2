@@ -36,6 +36,9 @@ apply_managed_patch \
 apply_managed_patch \
     "graspnetAPI" \
     "patches/graspnetAPI/0001-optional-evaluation-imports.patch"
+apply_managed_patch \
+    "graspnetAPI" \
+    "patches/graspnetAPI/0002-separate-inference-and-evaluation-dependencies.patch"
 
 echo "Dependencies are ready in ${dependency_root}"
 echo "Place GraspNet weights under ${repo_root}/models/graspnet and verify them with:"

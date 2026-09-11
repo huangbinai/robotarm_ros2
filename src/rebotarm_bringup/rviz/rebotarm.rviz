@@ -21,7 +21,8 @@ Visualization Manager:
         end_link:
           Value: true
         grasp_tcp:
-          Value: true
+          # This model-only RViz launch has no calibrated grasp TCP publisher.
+          Value: false
       Marker Scale: 0.08
       Name: TCP TF
       Show Arrows: true

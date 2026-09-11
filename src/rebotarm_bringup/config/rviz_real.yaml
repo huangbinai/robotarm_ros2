@@ -1,0 +1,8 @@
+# 真机 RViz 日常入口配置。普通使用不必在命令行填写这些参数。
+# auto 优先识别唯一 HDSC 设备，其次使用唯一 ttyACM 设备；多设备时拒绝猜测。
+# 也可填写 /dev/serial/by-id/...，启动入口会解析为 SDK 支持的实际串口路径。
+channel: auto
+# 运动只使用 RViz MotionPlanning；Execute 校验轨迹后按需使能。
+# Ctrl+C 不自动回安全位，但控制器仍会执行关闭/失能流程。
+# 停机前将机械臂安全支撑或停放，不能把 Ctrl+C 当作保持位置。
+shutdown_safe_home: false

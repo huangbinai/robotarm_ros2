@@ -11,9 +11,10 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # 仅查看 URDF/TF/视觉关节状态，不启动 reBotArmController，也不连接电机。
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     arm_namespace = LaunchConfiguration("arm_namespace")
     urdf_file = PathJoinSubstitution(
-        [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
+        [description_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
     rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)

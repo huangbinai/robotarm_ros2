@@ -6,4 +6,4 @@
 
 推荐使用 `rebotarm_bringup` 中的当前 launch；RViz 末端拖动采用 MoveIt MotionPlanning 工作流。兼容层的保留和移除应配套旧导入测试及迁移说明。
 
-职责边界见[系统架构](../../docs/architecture.md)。
+交互配置已迁至 `rebotarm_bringup/config/`，正式包不再依赖本兼容包。旧 SDK `pose_preview_solver` 导入路径已退休，其余兼容转发继续保留。职责边界与迁移结果见[项目架构](../../docs/project_architecture_zh.md)。

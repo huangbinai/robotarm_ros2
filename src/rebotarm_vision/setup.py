@@ -8,8 +8,9 @@ setup(
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
-        (f"share/{package_name}", ["package.xml"]),
-        (f"share/{package_name}/launch", ["launch/vision.launch.py"]),
+        (f"share/{package_name}", ["package.xml", "requirements-local.txt", "constraints-ubuntu.txt", "README.md", "README_zh.md"]),
+        (f"share/{package_name}/models", ["models/yolo11n-seg.pt"]),
+        (f"share/{package_name}/launch", ["launch/vision.launch.py", "launch/graspnet_viewer.launch.py"]),
         (
             f"share/{package_name}/config",
             [
@@ -17,6 +18,7 @@ setup(
                 "config/flat_graspnet.yaml",
                 "config/grasp_pose_policy.yaml",
                 "config/graspnet_policy.yaml",
+                "config/graspnet_viewer.yaml",
                 "config/gripper_policy.yaml",
                 "config/handeye.yaml",
                 "config/retry_policy.yaml",
@@ -36,7 +38,9 @@ setup(
     entry_points={
         "console_scripts": [
             "rebotarm_vision_node = rebotarm_vision.vision_node:main",
+            "rebotarm_yolo_node = rebotarm_vision.yolo_node:main",
             "rebotarm_graspnet_baseline_node = rebotarm_vision.graspnet_baseline_node:main",
+            "rebotarm_graspnet_viewer = rebotarm_vision.graspnet_viewer_node:main",
             "rebotarm_send_grasp_preview = rebotarm_vision.grasp_preview_sender_node:main",
             "rebotarm_visual_grasp_markers = rebotarm_vision.visual_grasp_marker_node:main",
             "rebotarm_visual_grasp_executor = rebotarm_vision.visual_grasp_executor_node:main",

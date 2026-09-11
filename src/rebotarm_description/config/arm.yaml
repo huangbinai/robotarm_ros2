@@ -1,0 +1,106 @@
+# reBotArm 真机/仿真共用的机械臂电机配置文件
+
+# 通信方式: CAN (can0 / can1) 或 串口桥 (/dev/ttyACM0)
+channel: /dev/ttyACM0
+
+# 控制循环频率 (Hz)。这是底层 SDK 频率，不等同于 ROS joint_state 发布频率。
+rate: 100
+
+joints:
+  # J1-J3 使用 4340P；参数需要结合真实负载和控制模式标定。
+  # joint1:
+  - name: joint1
+    motor_id: 0x01
+    feedback_id: 0x11
+    model: "4340P"
+    vendor: "damiao"          # damiao | myactuator | robstride
+    MIT:
+      kp: 120.0
+      kd: 8.0
+    POS_VEL:
+      vel_kp: 0.0125
+      vel_ki: 0.004
+      pos_kp: 150.0
+      pos_ki: 0.5
+      vlim: 5.0
+
+  # joint2:
+  - name: joint2
+    motor_id: 0x02
+    feedback_id: 0x12
+    model: "4340P"
+    vendor: "damiao"
+    MIT:
+      kp: 120.0
+      kd: 8.0
+    POS_VEL:
+      vel_kp: 0.0125
+      vel_ki: 0.004
+      pos_kp: 150.0
+      pos_ki: 0.5
+      vlim: 5.0
+
+  # joint3:
+  - name: joint3
+    motor_id: 0x03
+    feedback_id: 0x13
+    model: "4340P"
+    vendor: "damiao"
+    MIT:
+      kp: 120.0
+      kd: 8.0
+    POS_VEL:
+      vel_kp: 0.0125
+      vel_ki: 0.004
+      pos_kp: 150.0
+      pos_ki: 0.5
+      vlim: 5.0
+
+  # J4-J6 使用 4310；vlim 仍受 controller_safety.yaml 的轨迹速度边界约束。
+  # joint4:
+  - name: joint4
+    motor_id: 0x04
+    feedback_id: 0x14
+    model: "4310"
+    vendor: "damiao"
+    MIT:
+      kp: 18.0
+      kd: 2.0
+    POS_VEL:
+      vel_kp: 0.0008
+      vel_ki: 0.002
+      pos_kp: 50.0
+      pos_ki: 1.0
+      vlim: 3.0
+
+  # joint5:
+  - name: joint5
+    motor_id: 0x05
+    feedback_id: 0x15
+    model: "4310"
+    vendor: "damiao"
+    MIT:
+      kp: 18.0
+      kd: 2.0
+    POS_VEL:
+      vel_kp: 0.0008
+      vel_ki: 0.002
+      pos_kp: 50.0
+      pos_ki: 1.0
+      vlim: 3.0
+
+  # joint6:
+  - name: joint6
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4310"
+    vendor: "damiao"
+    MIT:
+      kp: 18.0
+      kd: 2.0
+    POS_VEL:
+      vel_kp: 0.0008
+      vel_ki: 0.002
+      pos_kp: 50.0
+      pos_ki: 1.0
+      vlim: 3.0

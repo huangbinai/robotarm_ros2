@@ -21,6 +21,7 @@ from .candidate_motion_policy import JointMotionPolicyConfig, evaluate_joint_mot
 from .candidate_scoring_policy import CandidateScoringInput, score_candidate
 from .candidate_target_policy import CandidateTargetPolicyConfig, build_candidate_target_variants
 from .candidate_tf_adapter import transform_candidate_pose_to_target_frame
+from .perception_frames import require_fresh
 from .motion_feasibility_policy import evaluate_motion_feasibility
 from .pose_variant_policy import PoseVariantConfig
 from .visual_grasp_sequence import PoseTarget
@@ -54,6 +55,8 @@ class CandidateIkFilterNode(Node):
         self.declare_parameter("moveit_group_name", "arm")
         self.declare_parameter("ee_frame_id", "end_link")
         self.declare_parameter("service_timeout_sec", 5.0)
+        self.declare_parameter("candidate_source_max_age_sec", 1.5)
+        self._capture_stamp = None
         self.declare_parameter("pose_policy", "hybrid_geometry_with_base_axis_fallback")
         self.declare_parameter("fixed_grasp_orientation_xyzw", [0.0, 0.0, 0.0, 1.0])
         self.declare_parameter("base_approach_axis_xyz", [1.0, 0.0, 0.0])
@@ -180,6 +183,14 @@ class CandidateIkFilterNode(Node):
         if not msg.candidates:
             self._publish_filtered(msg, [])
             return
+        try:
+            require_fresh(msg.header, self.get_clock().now().nanoseconds,
+                          float(self.get_parameter("candidate_source_max_age_sec").value))
+        except ValueError as exc:
+            self.get_logger().warn(f"candidate source rejected: {exc}", throttle_duration_sec=5.0)
+            self._publish_filtered(msg, [])
+            return
+        self._capture_stamp = deepcopy(msg.header.stamp)
         ranked: list[tuple[float, int, object, tuple[PoseTarget, PoseTarget], str, str]] = []
         max_candidates = max(1, int(self.get_parameter("max_candidates_per_frame").value))
         for original_index, candidate in enumerate(msg.candidates[:max_candidates]):
@@ -217,6 +228,12 @@ class CandidateIkFilterNode(Node):
                     )
             except Exception as exc:
                 self.get_logger().warn(f"candidate IK filter rejected candidate: {exc}")
+        try:
+            require_fresh(msg.header, self.get_clock().now().nanoseconds,
+                          float(self.get_parameter("candidate_source_max_age_sec").value))
+        except ValueError:
+            self._publish_filtered(msg, [])
+            return
         self._publish_ranked(msg, ranked)
 
     def _candidate_gate_allows(self, candidate, *, grasp: PoseTarget) -> bool:
@@ -276,7 +293,7 @@ class CandidateIkFilterNode(Node):
         return self._tf_buffer.lookup_transform(
             target_frame,
             source_frame,
-            rclpy.time.Time(),
+            rclpy.time.Time.from_msg(self._capture_stamp) if self._capture_stamp is not None else rclpy.time.Time(),
             timeout=rclpy.duration.Duration(seconds=0.2),
         )
 
@@ -491,7 +508,7 @@ class CandidateIkFilterNode(Node):
         reachable_targets: list[tuple[PoseTarget, PoseTarget]],
     ) -> GraspPlan:
         plan = GraspPlan()
-        plan.header = filtered.header
+        plan.header = deepcopy(filtered.header)
         plan.source = "candidate_ik_filter"
         if filtered.best_index < 0 or not filtered.candidates:
             plan.valid = False

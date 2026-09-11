@@ -9,7 +9,7 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from moveit_msgs.msg import Constraints, JointConstraint, OrientationConstraint, PositionConstraint
 from moveit_msgs.srv import GetMotionPlan
-from rclpy.duration import Duration
+from rclpy.callback_groups import ReentrantCallbackGroup
 from shape_msgs.msg import SolidPrimitive
 
 
@@ -48,7 +48,8 @@ class MoveItMotionPlanner:
         self._num_attempts = int(num_attempts)
         self._goal_position_tolerance = float(goal_position_tolerance)
         self._goal_orientation_tolerance = float(goal_orientation_tolerance)
-        self._client = node.create_client(GetMotionPlan, planning_service)
+        self._response_group = ReentrantCallbackGroup()
+        self._client = node.create_client(GetMotionPlan, planning_service, callback_group=self._response_group)
 
     def plan_joint_positions(
         self,
@@ -244,8 +245,8 @@ class MoveItMotionPlanner:
         return constraints
 
     def _spin_until_future(self, future) -> None:
-        deadline = self._node.get_clock().now() + Duration(seconds=self._planning_time + 1.0)
-        while not future.done() and self._node.get_clock().now() < deadline:
+        deadline = time.monotonic() + self._planning_time + 1.0
+        while not future.done() and time.monotonic() < deadline:
             time.sleep(0.05)
 
 

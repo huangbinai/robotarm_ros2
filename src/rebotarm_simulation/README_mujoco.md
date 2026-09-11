@@ -1,14 +1,11 @@
 # reBotArm MuJoCo 仿真底座
 
-实机状态驱动 MuJoCo 的只读 Real2Sim Bridge、mirror/physics 模式和 Viewer 使用方法见
-[`../../docs/real2sim_bridge_zh.md`](../../docs/real2sim_bridge_zh.md)。
+当前 Real2Sim、Pick、Sim2Real 的能力范围与证据见[项目阶段](../../docs/project_stage_zh.md)，
+通过条件见[验收依据](../../docs/acceptance_criteria_zh.md)。旧专题文档在当前工作区已删除，
+本页保留仿真命令和背景说明；状态判断以当前基线记录为准。
 
-Pick 精细抓取环境、成功/失败判定和批量验收见
-[`../../docs/mujoco_pick_zh.md`](../../docs/mujoco_pick_zh.md)。
-
-Sim2Real/Real2Sim 的仿真侧随机化、JSONL 记录、确定性回放、轨迹比较和批量安全
-检查见 [`../../docs/sim2real_workflow_zh.md`](../../docs/sim2real_workflow_zh.md)。该流程
-不连接实机。
+Real2Sim Bridge 只读真机状态；仿真侧随机化、JSONL 记录、确定性回放和轨迹比较
+不构成真机执行验收。环境冒烟测试通过也不代表 Pick 任务成功。
 
 本目录提供可独立使用的 MuJoCo 物理仿真核心、桌面 Viewer 和 ROS 2
 适配层。已验证的目标环境是 Ubuntu 24.04、ROS 2 Jazzy、Python 3.12。
@@ -221,6 +218,16 @@ contacts
 ros2 launch rebotarm_simulation mujoco_sim.launch.py
 ```
 
+需要在 RViz/MoveIt 联调时查看**同一份** MuJoCo 物理状态，可改用：
+
+```bash
+ros2 launch rebotarm_simulation mujoco_sim.launch.py show_viewer:=true
+```
+
+该窗口与 ROS action、`/rebotarm/joint_states` 共享同一个 MuJoCo 实例；因此 RViz
+中的 `Plan & Execute` 会同步显示在窗口中。不要同时启动独立的
+`rebotarm_mujoco_viewer`，它会创建另一份仿真。
+
 节点默认从 Home+Hold 启动，提供标准控制接口、仿真模式服务、诊断和仿真时钟：
 
 - Action：`/rebotarm/follow_joint_trajectory`
@@ -429,12 +436,11 @@ ROS 2 联调和策略推理。现在只提供可复用物理/API 底座和 Reach
 模型在 `end_link` 下提供命名坐标系 `wrist_camera_mount`，作为后续手眼/末端 RGB-D
 相机的稳定安装基准。当前阶段只定义安装位，不绑定具体相机型号、内参或渲染传感器。
 
-## 双端同步规则
+## 当前运行环境
 
-Windows 仓库是受版本控制的主副本，Ubuntu VM 是构建与运行环境。每次同步前
-先备份 VM 上将被覆盖的明确文件；只传输本次文件清单，传后比较 SHA-256 哈希。
-禁止使用带 `--delete` 的目录镜像，也不反向同步 `.venv-mujoco-ros`、
-`build/`、`install/`、`log/` 或缓存。
+项目当前直接在 Ubuntu 开发与运行。真实相机、YOLO 与 GraspNet 通过 ROS 节点通信，
+不需要 Windows 主副本或双端 JSON/HTTP 同步。真实感知配合仿真执行的入口见
+[本机 ROS 视觉路线](../../docs/local_ros_vision_zh.md)。构建/安装缓存不作为模型权威来源。
 
 ## 排障
 
@@ -462,7 +468,7 @@ CAN 设备或串口已被占用时，停止联调并确认环境；MuJoCo 测试
 ## 从 URDF 生成本地 MJCF
 
 机器人结构的唯一权威来源是
-`src/rebotarm_moveit_config/config/rebotarm.urdf`，MuJoCo 日常运行读取本地文件
+`src/rebotarm_description/description/urdf/reBot-DevArm_fixend.urdf`，MuJoCo 日常运行读取本地文件
 `src/rebotarm_simulation/models/rebotarm/robot.xml`。后者是自动生成并随仓库提交的
 MJCF，不需要联网加载。当前支持范围固定为 `mujoco>=3.3,<4`。
 
@@ -483,11 +489,7 @@ rebotarm_urdf_to_mjcf --repo-root . --check
 双指联动、传感器、末端 site 和接触过滤由确定性后处理补入。不要手工修改
 `robot.xml`；应修改 URDF、碰撞配置或生成器后重新生成。
 
-Windows 与 Ubuntu VM 同步后，可分别检查受控文件哈希：
-
-```powershell
-Get-FileHash src/rebotarm_simulation/models/rebotarm/robot.xml -Algorithm SHA256
-```
+模型生成或升级后检查受控文件哈希：
 
 ```bash
 sha256sum src/rebotarm_simulation/models/rebotarm/robot.xml

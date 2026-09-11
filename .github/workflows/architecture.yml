@@ -1,0 +1,16 @@
+name: Architecture boundaries
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check package boundaries and deployment dependencies
+        run: python3 tools/check_architecture.py --strict-deployment
+      - name: Verify the guard without ROS or hardware
+        run: python3 -m unittest discover -s tests -p 'test_architecture_guard.py' -v

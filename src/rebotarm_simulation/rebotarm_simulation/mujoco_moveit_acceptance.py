@@ -103,7 +103,7 @@ def run_acceptance(
     from control_msgs.action import FollowJointTrajectory
     from moveit_msgs.srv import GetMotionPlan
     from rclpy.action import ActionClient
-    from rclpy.executors import MultiThreadedExecutor
+    from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
     from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import JointState
@@ -117,7 +117,10 @@ def run_acceptance(
     executor = None
     try:
         node = Node("rebotarm_mujoco_moveit_acceptance_probe")
-        executor = MultiThreadedExecutor(num_threads=2)
+        # This probe only receives state and asynchronous service/action replies.
+        # Keep callbacks on the polling thread so shutdown cannot leave queued
+        # worker callbacks accessing a node that is already being destroyed.
+        executor = SingleThreadedExecutor()
         executor.add_node(node)
         joint_messages: list[JointState] = []
         clock_messages: list[Clock] = []

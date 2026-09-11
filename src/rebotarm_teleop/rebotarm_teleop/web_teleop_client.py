@@ -43,6 +43,8 @@ class WebTeleopClient:
         follow_goal_factory: Callable[[], Any],
         gripper_action_client: Any | None = None,
         gripper_goal_factory: Callable[[], Any] | None = None,
+        gripper_sim_service_client: Any | None = None,
+        gripper_sim_request_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._action_client = action_client
         self._joint_names = tuple(joint_names)
@@ -54,6 +56,8 @@ class WebTeleopClient:
         self._gripper_client = WebGripperClient(
             action_client=gripper_action_client,
             goal_factory=gripper_goal_factory,
+            sim_service_client=gripper_sim_service_client,
+            sim_request_factory=gripper_sim_request_factory,
         )
 
     def execute(

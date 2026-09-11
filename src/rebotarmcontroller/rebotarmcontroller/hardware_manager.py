@@ -497,6 +497,31 @@ class HardwareManager:
                     ) from exc
                 raise RuntimeError(f"enable failed and was rolled back: {exc}") from exc
 
+    def prepare_trajectory_execution(self, *, allow_enable: bool, is_current) -> None:
+        """Enter execution only after trajectory validation and command ownership.
+
+        The RViz entrypoint opts in to enable-on-Execute. Startup, planning,
+        other motion interfaces and recovery from a hardware fault do not enable.
+        Serialize this transition with explicit disable and feedback updates.
+        """
+        with self._motor_lifecycle_lock:
+            if not is_current():
+                raise RuntimeError("trajectory canceled or preempted before execution")
+            if not self.ready_for_motion:
+                if not (
+                    allow_enable
+                    and self.connected
+                    and not self.enabled
+                    and self.lifecycle_state == "CONNECTED_DISABLED"
+                    and not self.error_codes
+                ):
+                    raise RuntimeError("hardware is not ready for trajectory execution")
+                self.enable()
+            if not is_current() or not self.ready_for_motion:
+                raise RuntimeError("trajectory canceled or hardware no longer ready")
+            self.ensure_pos_vel_control()
+            self.set_state_machine("TRAJ_RUNNING")
+
     def _rollback_failed_enable(self) -> str | None:
         attempt = attempt_verified_disable(
             stop_control_loop=self._stop_control_loop,

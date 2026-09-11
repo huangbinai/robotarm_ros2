@@ -58,9 +58,14 @@ def detect_aruco_center_in_camera(
 
     dictionary_id = resolve_aruco_dictionary_id(dictionary_name)
     aruco_dict = cv2.aruco.getPredefinedDictionary(dictionary_id)
-    parameters = cv2.aruco.DetectorParameters()
-    detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
-    corners, ids, _ = detector.detectMarkers(color_bgr)
+    if hasattr(cv2.aruco, "ArucoDetector"):
+        parameters = cv2.aruco.DetectorParameters()
+        detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+        corners, ids, _ = detector.detectMarkers(color_bgr)
+    else:
+        # Ubuntu ROS may load the system OpenCV 4.6 before the venv wheel.
+        parameters = cv2.aruco.DetectorParameters_create()
+        corners, ids, _ = cv2.aruco.detectMarkers(color_bgr, aruco_dict, parameters=parameters)
     if ids is None or len(ids) == 0:
         raise ValueError("target ArUco marker not detected")
 
@@ -73,13 +78,18 @@ def detect_aruco_center_in_camera(
     if dist_coeffs is not None:
         distortion = np.asarray(list(dist_coeffs), dtype=np.float64).reshape(-1, 1)
 
-    rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-        [corners[index]],
-        float(marker_length_m),
-        camera_matrix,
-        distortion,
+    half = float(marker_length_m) / 2.0
+    object_points = np.array([
+        [-half, half, 0.0], [half, half, 0.0],
+        [half, -half, 0.0], [-half, -half, 0.0],
+    ], dtype=np.float64)
+    solved, _rotation, translation = cv2.solvePnP(
+        object_points, np.asarray(corners[index], dtype=np.float64).reshape(4, 2),
+        camera_matrix, distortion, flags=cv2.SOLVEPNP_IPPE_SQUARE,
     )
-    tvec = np.asarray(tvecs[0][0], dtype=np.float64)
+    if not solved or not np.isfinite(translation).all() or float(translation[2, 0]) <= 0:
+        raise ValueError("ArUco pose estimation failed")
+    tvec = np.asarray(translation, dtype=np.float64).reshape(3)
     return (float(tvec[0]), float(tvec[1]), float(tvec[2]))
 
 

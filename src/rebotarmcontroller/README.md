@@ -1,6 +1,6 @@
 # rebotarmcontroller
 
-真机控制和最后一道执行安全边界。该包独占 MotorBridge 与底层机械臂 SDK，负责连接、显式使能、反馈缓存、控制模式、轨迹执行、夹爪控制和安全关闭。
+真机控制和最后一道执行安全边界。该包独占主 ROS 系统的 MotorBridge 与硬件通信 SDK，负责连接、使能、反馈缓存、控制模式、轨迹执行、夹爪控制和安全关闭。默认需要显式使能；真机 RViz 入口开启 `enable_on_trajectory`，合法轨迹执行时按需使能。
 
 ## 主要入口
 
@@ -22,4 +22,6 @@
 
 外部 SDK 的定位与临时通道配置由 `sdk_runtime.py` 管理；六轴和夹爪共享总线的方法加锁由 `bus_synchronization.py` 管理。`HardwareManager` 只调用这些适配边界，不再直接修改导入路径或包装 SDK 方法。
 
-参数见[配置参考](../../docs/configuration_reference_zh.md)，接口见[ROS 2 接口参考](../../docs/ros_api_reference_zh.md)。
+本包不再创建录制服务或写示教 JSONL；应用启动由 bringup 组合 `rebotarm_teach/TeachRecorderNode`。电机配置由 launch 从 description 注入，控制器自身仍负责执行与安全边界。
+
+配置归属和关键接口见[项目架构](../../docs/project_architecture_zh.md)，实机退出条件见[验收依据](../../docs/acceptance_criteria_zh.md)。

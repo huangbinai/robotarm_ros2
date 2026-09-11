@@ -195,10 +195,10 @@ def load_motor_control_parameters(repo_root: str | Path) -> MotorControlParamete
     """Compatibility loader for tools/tests that still operate on a repository."""
     root = Path(repo_root)
     return load_motor_control_parameters_from_files(
-        root / "src/rebotarm_bringup/config/arm.yaml",
-        root / "src/rebotarm_bringup/config/gripper.yaml",
+        root / "src/rebotarm_description/config/arm.yaml",
+        root / "src/rebotarm_description/config/gripper.yaml",
         root / "src/rebotarm_simulation/config/motor_control_calibration.yaml",
-        root / "src/rebotarm_moveit_config/config/rebotarm.urdf",
+        root / "src/rebotarm_description/description/urdf/reBot-DevArm_fixend.urdf",
     )
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .perception_frames import require_fresh
+
 from copy import deepcopy
 import math
 import threading
@@ -318,6 +320,13 @@ class VisualGraspExecutorNode(Node):
         )
 
     def _on_plan(self, plan: GraspPlan) -> None:
+        if plan.valid:
+            try:
+                require_fresh(plan.header, self.get_clock().now().nanoseconds,
+                              float(self.get_parameter("plan_max_age_sec").value))
+            except ValueError:
+                self._plan_store.invalidate_all()
+                return
         self._plan_store.update_plan(plan)
 
     def _on_candidates(self, candidates: GraspCandidateArray) -> None:
@@ -529,13 +538,22 @@ class VisualGraspExecutorNode(Node):
         return response
 
     def _candidate_plans_for_attempts(self) -> list[tuple[int, GraspPlan]]:
-        return self._plan_store.candidate_attempts(
+        attempts = self._plan_store.candidate_attempts(
             plan_max_age_sec=float(self.get_parameter("plan_max_age_sec").value),
             candidates_max_age_sec=float(
                 self.get_parameter("candidates_max_age_sec").value
             ),
             retry_config=self._visual_grasp_config.retry(),
         )
+        fresh_attempts = []
+        for index, plan in attempts:
+            try:
+                require_fresh(plan.header, self.get_clock().now().nanoseconds,
+                              float(self.get_parameter("plan_max_age_sec").value))
+            except ValueError:
+                continue
+            fresh_attempts.append((index, plan))
+        return fresh_attempts
 
     def _execute_stages(self, stages: list[VisualGraspStage]) -> tuple[bool, str, str]:
         stage_index = 0

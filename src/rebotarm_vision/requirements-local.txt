@@ -1,0 +1,15 @@
+# Install torch/torchvision from the cu121 index first, then this file with
+# -c constraints-ubuntu.txt. Camera SDK uses the official pyorbbecsdk2 wheel;
+# the Python import remains pyorbbecsdk. GraspNet source builds are separate.
+# This is a tested direct-dependency baseline, not a transitive lockfile.
+ultralytics
+torch
+torchvision
+open3d
+scipy
+Pillow
+pyorbbecsdk2
+pybind11
+ninja
+grasp-nms
+Cython

@@ -28,7 +28,8 @@ Visualization Manager:
         end_link:
           Value: true
         grasp_tcp:
-          Value: true
+          # This generic status view does not launch the vision TCP frame.
+          Value: false
       Marker Scale: 0.08
       Name: TCP TF
       Show Arrows: true

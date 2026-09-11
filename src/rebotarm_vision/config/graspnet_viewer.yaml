@@ -1,0 +1,13 @@
+rebotarm_graspnet_viewer:
+  ros__parameters:
+    input_color_topic: /grasp/preview/color
+    input_depth_topic: /grasp/preview/depth
+    input_camera_info_topic: /grasp/preview/camera_info
+    input_candidates_topic: /grasp/graspnet_candidates
+    top_n: 5
+    max_points: 30000
+    sync_queue_size: 30
+    max_frame_age_sec: 1.5
+    min_depth_m: 0.15
+    max_depth_m: 1.2
+    point_size: 2.0

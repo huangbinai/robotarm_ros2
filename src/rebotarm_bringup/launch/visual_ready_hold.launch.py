@@ -10,6 +10,7 @@ def generate_launch_description():
     # 启动控制器并移动到视觉准备位；一次性动作退出后保留常驻准备位服务。
     # 该入口不负责完整视觉抓取。
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     vision_share = FindPackageShare("rebotarm_vision")
 
     arm_config = LaunchConfiguration("arm_config")
@@ -95,11 +96,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "gripper.yaml"]),
             ),
             DeclareLaunchArgument("channel", default_value="auto"),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),

@@ -30,8 +30,7 @@ RViz MotionPlanning
 
 ```bash
 cd ~/robotarm_ros2
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source tools/source_ubuntu_env.bash
 
 ros2 launch rebotarm_bringup rviz_ee_drag_real.launch.py
 ```
@@ -46,10 +45,9 @@ ros2 launch rebotarm_bringup rviz_ee_drag_real.launch.py channel:=/dev/ttyACM1
 
 ```bash
 cd ~/robotarm_ros2
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source tools/source_ubuntu_env.bash
 
-ros2 launch rebotarm_bringup rviz_ee_drag_sim.launch.py
+
 ```
 
 预期现象：
@@ -78,8 +76,7 @@ Web Dashboard
 
 ```bash
 cd ~/robotarm_ros2
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
+source tools/source_ubuntu_env.bash
 
 ros2 launch rebotarm_bringup rebotarm_app.launch.py
 ```
@@ -111,7 +108,7 @@ http://127.0.0.1:8088/
 网页关节 Preview / Execute / Stop
 网页 Safe Home / Enable / Disable
 网页夹爪控制和 joint7 状态显示
-键盘遥操作
+网页键盘适配（完整 app 不启动独立终端键盘节点）
 示教录制、轨迹检查、优化回放
 MoveIt 起点对齐和碰撞预检查
 RViz 轻量机械臂实时状态显示

@@ -36,7 +36,9 @@ class TeachReplaySession:
         self._replay_client = replay_client or TeachReplayClient()
         self._runtime_monitor = runtime_monitor or ReplayRuntimeMonitor()
         self._monotonic = monotonic
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._generation = 0
+        self._terminal = False
         self._goal_handle = None
         self._trajectory = None
         self._started_at: float | None = None
@@ -69,6 +71,8 @@ class TeachReplaySession:
                 "message": f"failed to send teach replay goal: {exc}",
             }
         with self._lock:
+            self._generation += 1
+            self._terminal = False
             self._info_payload = dict(info_payload)
             self._trajectory_points = len(getattr(trajectory, "points", []))
             self._monitor_config = monitor_config
@@ -79,13 +83,14 @@ class TeachReplaySession:
     def stop(self) -> dict:
         with self._lock:
             goal_handle = self._goal_handle
+            generation = self._generation
         result = self._replay_client.stop(
             goal_handle,
             trajectory_stop_client=self._trajectory_stop_client,
         )
         future = result.pop("cancel_future", None)
         if future is not None:
-            future.add_done_callback(self._on_cancel_response)
+            future.add_done_callback(lambda completed: self._on_cancel_response(completed, generation))
         return result
 
     def check_tracking(self, joints: dict) -> None:
@@ -153,26 +158,29 @@ class TeachReplaySession:
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._on_result)
 
-    def _on_cancel_response(self, future: Any) -> None:
+    def _on_cancel_response(self, future: Any, generation: int) -> None:
         try:
             response = future.result()
             goals_canceling = len(getattr(response, "goals_canceling", []))
         except Exception as exc:
-            self._status_sink({"state": "failed", "message": str(exc)})
+            with self._lock:
+                if generation == self._generation and not self._terminal:
+                    self._status_sink({"state": "cancel_unconfirmed", "message": str(exc)})
             return
-        state = "cancel_requested" if goals_canceling else "done"
+        state = "cancel_requested" if goals_canceling else "cancel_unconfirmed"
         message = (
             "teach replay cancel accepted"
             if goals_canceling
-            else "teach replay already finished before cancel"
+            else "cancel response did not confirm cancellation; waiting for replay result"
         )
-        self._status_sink({"state": state, "message": message})
-        if not goals_canceling:
-            self._clear()
+        with self._lock:
+            if generation == self._generation and not self._terminal:
+                self._status_sink({"state": state, "message": message})
 
     def _on_result(self, future: Any) -> None:
         previous_replay = self._status_source()
         with self._lock:
+            self._terminal = True
             monitor_stop_requested = self._runtime_monitor.stop_requested
             info_payload = dict(self._info_payload)
             points = self._trajectory_points

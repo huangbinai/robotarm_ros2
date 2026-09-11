@@ -10,13 +10,12 @@ def generate_launch_description():
     bringup_share = FindPackageShare("rebotarm_bringup")
     sim_arm_namespace = LaunchConfiguration("sim_arm_namespace")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
-    graspnet_candidates_url = LaunchConfiguration("graspnet_candidates_url")
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("sim_arm_namespace", default_value="rebotarm_sim"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
-            DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json"),
+            DeclareLaunchArgument("show_open3d", default_value="false"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution([bringup_share, "launch", "visual_grasp_system.launch.py"])
@@ -26,14 +25,13 @@ def generate_launch_description():
                     "use_hardware": "false",
                     "hardware_mode": "sim",
                     "use_local_rviz": use_local_rviz,
+                    "show_open3d": LaunchConfiguration("show_open3d"),
                     "execution_mode": "execute",
                     "start_vision": "true",
                     "start_visual_ready": "false",
                     "ordinary_depth_quality_enabled": "true",
                     "start_graspnet_baseline": "true",
-                    "graspnet_source_mode": "network",
-                    "graspnet_candidates_url": graspnet_candidates_url,
-                    "graspnet_network_poll_hz": "0.5",
+                    "graspnet_source_mode": "ros",
                     "candidate_ik_input_topic": "/grasp/graspnet_candidates",
                     "start_candidate_ik_filter": "true",
                     "candidate_pose_policy": "preserve_candidate_pose",

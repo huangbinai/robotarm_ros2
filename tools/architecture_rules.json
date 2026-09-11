@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "hardware_sdk_modules": ["motorbridge", "reBotArm_control_py"],
+  "hardware_owner": "rebotarmcontroller",
+  "compatibility_package": "rebotarm_interactive_control",
+  "sdk_import_debt": [],
+  "external_modules": {
+    "ament_index_python": "ament_index_python",
+    "rclpy": "rclpy",
+    "builtin_interfaces": "builtin_interfaces",
+    "control_msgs": "control_msgs",
+    "geometry_msgs": "geometry_msgs",
+    "moveit_msgs": "moveit_msgs",
+    "sensor_msgs": "sensor_msgs",
+    "shape_msgs": "shape_msgs",
+    "std_msgs": "std_msgs",
+    "std_srvs": "std_srvs",
+    "tf2_ros": "tf2_ros",
+    "tf_transformations": "tf_transformations",
+    "trajectory_msgs": "trajectory_msgs",
+    "visualization_msgs": "visualization_msgs",
+    "rosgraph_msgs": "rosgraph_msgs",
+    "diagnostic_msgs": "diagnostic_msgs",
+    "launch": "launch",
+    "launch_ros": "launch_ros",
+    "moveit_configs_utils": "moveit_configs_utils",
+    "message_filters": "message_filters",
+    "numpy": "python3-numpy",
+    "yaml": "python3-yaml",
+    "cv2": "python3-opencv"
+  },
+  "service_owners": {"teleop/teach_record/": ["rebotarm_teach"]},
+  "publisher_owners": {
+    "/gripper/state": ["rebotarmcontroller", "rebotarm_simulation"],
+    "/joint_states": ["rebotarmcontroller", "rebotarm_simulation"]
+  },
+  "packages": {
+    "rebotarm_msgs": {"imports": [], "resources": []},
+    "rebotarm_calibration": {"imports": [], "resources": []},
+    "rebotarm_description": {"imports": [], "resources": []},
+    "rebotarmcontroller": {"imports": ["rebotarm_msgs"], "resources": []},
+    "rebotarm_motion": {"imports": ["rebotarm_msgs"], "resources": []},
+    "rebotarm_teach": {"imports": ["rebotarm_motion", "rebotarm_msgs"], "resources": []},
+    "rebotarm_teleop": {"imports": ["rebotarm_motion", "rebotarm_msgs"], "resources": []},
+    "rebotarm_dashboard": {
+      "imports": ["rebotarm_motion", "rebotarm_msgs", "rebotarm_teach", "rebotarm_teleop"],
+      "resources": ["rebotarm_description", "rebotarm_moveit_config"]
+    },
+    "rebotarm_vision": {"imports": ["rebotarm_calibration", "rebotarm_motion", "rebotarm_msgs"], "resources": []},
+    "rebotarm_simulation": {"imports": ["rebotarm_msgs"], "resources": ["rebotarm_description"]},
+    "rebotarm_moveit_config": {"imports": [], "resources": ["rebotarm_description", "rebotarm_teleop"]},
+    "rebotarm_interactive_control": {
+      "imports": ["rebotarm_dashboard", "rebotarm_motion", "rebotarm_msgs", "rebotarm_teach", "rebotarm_teleop"],
+      "resources": []
+    },
+    "rebotarm_bringup": {
+      "imports": [],
+      "resources": ["rebotarm_dashboard", "rebotarm_description", "rebotarm_motion", "rebotarm_moveit_config", "rebotarm_simulation", "rebotarm_teach", "rebotarm_teleop", "rebotarm_vision", "rebotarmcontroller"]
+    }
+  },
+  "undeclared_resource_debt": []
+}

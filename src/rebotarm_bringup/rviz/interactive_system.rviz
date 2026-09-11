@@ -1,14 +1,6 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
-  - Class: moveit_rviz_plugin/MotionPlanning
-    Name: MotionPlanning
-  - Class: rviz_common/Selection
-    Name: Selection
-  - Class: rviz_common/Tool Properties
-    Name: Tool Properties
-  - Class: rviz_common/Views
-    Name: Views
 Visualization Manager:
   Class: ""
   Displays:
@@ -17,15 +9,6 @@ Visualization Manager:
       Name: Grid
       Plane Cell Count: 20
       Reference Frame: base_link
-    - Class: rviz_default_plugins/RobotModel
-      Description Source: Topic
-      Description Topic:
-        Value: /robot_description
-      Enabled: true
-      Name: RobotModel
-      Visual Enabled: true
-      Collision Enabled: false
-      Alpha: 1
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
@@ -36,7 +19,10 @@ Visualization Manager:
         end_link:
           Value: true
         grasp_tcp:
-          Value: true
+          # The generic MoveIt launch does not publish the vision/calibration
+          # TCP frame.  Keep it disabled here; visual_grasp.rviz enables it
+          # together with rebotarm_grasp_tcp_frame.
+          Value: false
       Marker Scale: 0.08
       Name: TCP TF
       Show Arrows: true
@@ -66,6 +52,9 @@ Visualization Manager:
     Fixed Frame: base_link
   Name: root
   Tools:
+    # MoveIt's end-effector marker only accepts drag commands while this tool
+    # is active.  Keep it first so it is the default toolbar tool.
+    - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
   Value: true

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import signal
 import time
+import threading
 from contextlib import suppress
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from control_msgs.action import FollowJointTrajectory
 from moveit_msgs.srv import GetStateValidity
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
@@ -53,9 +56,12 @@ from .teach_replay_workflow import (
 class TeachReplayNode(Node):
     def __init__(self) -> None:
         super().__init__("teach_replay_node")
+        self._response_group = ReentrantCallbackGroup()
         self.declare_parameter("arm_namespace", "rebotarm")
         self.declare_parameter("record_path", "teleop_records/teach_record.jsonl")
         self.declare_parameter("dry_run", True)
+        self.declare_parameter("startup_timeout_sec", 15.0)
+        self._startup_deadline = time.monotonic() + float(self.get_parameter("startup_timeout_sec").value)
         declare_teach_replay_parameters(
             self.declare_parameter,
             speed_parameter_name="speed",
@@ -81,6 +87,7 @@ class TeachReplayNode(Node):
         self._tracking_violation_since: float | None = None
         self._monitor_stop_requested = False
         self._stop_requested = False
+        self._dispatch_lock = threading.RLock()
         self._stop_reason = ""
         self._moveit_align_message = ""
         self._collision_precheck = {"state": "not_run", "message": "collision precheck not run"}
@@ -88,14 +95,17 @@ class TeachReplayNode(Node):
             self,
             FollowJointTrajectory,
             f"/{self._arm_namespace}/follow_joint_trajectory",
+            callback_group=self._response_group,
         )
         self._trajectory_stop_client = self.create_client(
             Trigger,
             f"/{self._arm_namespace}/trajectory_stop",
+            callback_group=self._response_group,
         )
         self._state_validity_client = self.create_client(
             GetStateValidity,
             str(self.get_parameter("collision_check_service").value),
+            callback_group=self._response_group,
         )
         self._moveit_planner = MoveItMotionPlanner(
             self,
@@ -150,6 +160,7 @@ class TeachReplayNode(Node):
             f"/{self._arm_namespace}/joint_states",
             self._on_joint_state,
             sensor_qos,
+            callback_group=self._response_group,
         )
         self.create_timer(0.2, self._maybe_start)
         self.create_timer(
@@ -224,6 +235,18 @@ class TeachReplayNode(Node):
 
     def _maybe_start(self) -> None:
         if self._started:
+            return
+        dependencies = []
+        if bool(self.get_parameter("use_moveit_start_align").value):
+            dependencies.append(self._moveit_planner._client)
+        if bool(self.get_parameter("collision_check_enabled").value):
+            dependencies.append(self._state_validity_client)
+        if any(not client.service_is_ready() for client in dependencies):
+            if time.monotonic() >= self._startup_deadline:
+                self._started = True
+                self._publish_status("blocked", "startup timed out waiting for MoveIt planning/collision services")
+            else:
+                self._publish_status("waiting", "waiting for MoveIt planning/collision service discovery")
             return
         if self._latest_joint_state is None:
             self._publish_status("waiting", "waiting for current joint_states")
@@ -400,9 +423,13 @@ class TeachReplayNode(Node):
         if not self._action_client.wait_for_server(timeout_sec=2.0):
             self._publish_status("failed", "follow_joint_trajectory action unavailable")
             return
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory = trajectory
-        future = self._action_client.send_goal_async(goal)
+        with self._dispatch_lock:
+            if self._stop_requested:
+                self._publish_status("canceled", "replay stopped before trajectory dispatch")
+                return
+            goal = FollowJointTrajectory.Goal()
+            goal.trajectory = trajectory
+            future = self._action_client.send_goal_async(goal)
         future.add_done_callback(lambda fut: self._on_goal_response(fut, trajectory))
 
     def _on_goal_response(self, future, trajectory: JointTrajectory) -> None:
@@ -422,6 +449,8 @@ class TeachReplayNode(Node):
         self._publish_status("replaying", "trajectory goal accepted")
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._on_replay_result)
+        if self._stop_requested:
+            goal_handle.cancel_goal_async()
 
     def _on_replay_result(self, future) -> None:
         try:
@@ -451,8 +480,9 @@ class TeachReplayNode(Node):
         self._monitor_stop_requested = False
 
     def request_stop(self, reason: str) -> None:
-        self._stop_requested = True
-        self._stop_reason = reason
+        with self._dispatch_lock:
+            self._stop_requested = True
+            self._stop_reason = reason
 
     @property
     def stop_requested(self) -> bool:
@@ -472,7 +502,7 @@ class TeachReplayNode(Node):
                 self._publish_status("failed", f"failed to request replay cancel: {exc}")
                 return stop_requested
             with suppress(Exception, KeyboardInterrupt):
-                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=timeout_sec)
+                self._wait_response(cancel_future, timeout_sec)
         return stop_requested or cancel_requested
 
     def _check_active_replay_tracking(self) -> None:
@@ -521,13 +551,19 @@ class TeachReplayNode(Node):
             if not self._trajectory_stop_client.wait_for_service(timeout_sec=0.1):
                 return False
             future = self._trajectory_stop_client.call_async(Trigger.Request())
-            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
+            self._wait_response(future, timeout_sec)
             if not future.done():
                 return False
             response = future.result()
             return bool(response is not None and response.success)
         except Exception:
             return False
+
+    @staticmethod
+    def _wait_response(future, timeout_sec):
+        deadline = time.monotonic() + timeout_sec
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
 
     def _build_trajectory(
         self,
@@ -637,6 +673,10 @@ class TeachReplayNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = TeachReplayNode()
+    executor = MultiThreadedExecutor(num_threads=3)
+    executor.add_node(node)
+    executor_thread = threading.Thread(target=executor.spin, daemon=True)
+    executor_thread.start()
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -647,13 +687,15 @@ def main(args=None) -> None:
     signal.signal(signal.SIGTERM, _request_signal_stop)
     try:
         while rclpy.ok() and not node.stop_requested:
-            rclpy.spin_once(node, timeout_sec=0.1)
+            time.sleep(0.05)
         if node.stop_requested:
             node.cancel_active_goal(timeout_sec=2.0)
     except KeyboardInterrupt:
         node.request_stop("KeyboardInterrupt received")
         node.cancel_active_goal(timeout_sec=2.0)
     finally:
+        executor.shutdown()
+        executor_thread.join(timeout=2.0)
         with suppress(Exception):
             signal.signal(signal.SIGINT, previous_sigint)
             signal.signal(signal.SIGTERM, previous_sigterm)

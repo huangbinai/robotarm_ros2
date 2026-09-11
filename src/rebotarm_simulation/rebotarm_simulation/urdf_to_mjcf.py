@@ -18,13 +18,13 @@ from .model_contract import (
 )
 
 
-PACKAGE_MESH_PREFIX = "package://rebotarm_bringup/description/meshes/"
+PACKAGE_MESH_PREFIX = "package://rebotarm_description/description/meshes/"
 JOINTS = list(JOINT_NAMES)
 SUPPORTED_COLLISION_TYPES = {"box", "capsule", "cylinder", "mesh"}
 
 
 def authoritative_urdf_path(repo_root: Path) -> Path:
-    return repo_root / "src/rebotarm_moveit_config/config/rebotarm.urdf"
+    return repo_root / "src/rebotarm_description/description/urdf/reBot-DevArm_fixend.urdf"
 
 
 def _model_directory(repo_root: Path) -> Path:

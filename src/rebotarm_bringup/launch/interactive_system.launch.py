@@ -9,9 +9,10 @@ def generate_launch_description():
     # Deprecated compatibility entrypoint.
     # Prefer: ros2 launch rebotarm_bringup core.launch.py
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     argument_defaults = {
-        "arm_config": PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
-        "gripper_config": PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+        "arm_config": PathJoinSubstitution([description_share, "config", "arm.yaml"]),
+        "gripper_config": PathJoinSubstitution([description_share, "config", "gripper.yaml"]),
         "arm_namespace": "rebotarm",
         "channel": "",
         "shutdown_safe_home": "true",
@@ -24,6 +25,7 @@ def generate_launch_description():
         "use_sim_time": "false",
         "teach_record_path": "teleop_records/teach_record.jsonl",
         "teach_record_rate_hz": "150.0",
+        "start_teach_recorder": "false",
         "frame_id": "base_link",
         "ee_frame_id": "end_link",
         "start_passive_joint_state_publisher": "true",
@@ -33,7 +35,7 @@ def generate_launch_description():
         ),
         "interactive_config": PathJoinSubstitution(
             [
-                FindPackageShare("rebotarm_interactive_control"),
+                FindPackageShare("rebotarm_bringup"),
                 "config",
                 "interactive_control.yaml",
             ]

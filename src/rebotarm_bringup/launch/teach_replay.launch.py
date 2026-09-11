@@ -48,7 +48,7 @@ def generate_launch_description():
     max_tracking_error_rad = LaunchConfiguration("max_tracking_error_rad")
     max_live_velocity_rad_s = LaunchConfiguration("max_live_velocity_rad_s")
     teleop_config = LaunchConfiguration("teleop_config")
-    interactive_share = FindPackageShare("rebotarm_interactive_control")
+    config_share = FindPackageShare("rebotarm_bringup")
 
     return LaunchDescription(
         [
@@ -94,7 +94,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
-                    [interactive_share, "config", "teleop_control.yaml"]
+                    [config_share, "config", "teleop_control.yaml"]
                 ),
             ),
             # 只启动回放节点；MoveIt、控制器和网页面板由外部整机入口负责。

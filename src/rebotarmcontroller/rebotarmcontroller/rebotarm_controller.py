@@ -14,7 +14,6 @@ from .ros_actions import ArmActions
 from .ros_publishers import JointStatePublisher
 from .ros_services import ArmServices
 from .runtime_parameters import arm_namespace, command_arbitration, finite_rate_hz
-from .teach_recorder import InternalTeachRecorder
 
 
 class reBotArmController(Node):
@@ -41,6 +40,7 @@ class reBotArmController(Node):
         self.declare_parameter("frame_id", "base_link")
         self.declare_parameter("ee_frame_id", "end_link")
         self.declare_parameter("shutdown_safe_home", True)
+        self.declare_parameter("enable_on_trajectory", False)
         self.declare_parameter(
             "trajectory_safety.position_min_rad",
             [-2.8, -3.14, -3.14, -1.87, -1.57, -3.14],
@@ -61,9 +61,6 @@ class reBotArmController(Node):
         self.declare_parameter("trajectory_safety.goal_tolerance_rad", 0.03)
         self.declare_parameter("trajectory_safety.settle_timeout_sec", 2.0)
         self.declare_parameter("trajectory_safety.sample_period_sec", 0.01)
-        self.declare_parameter("teach_record_path", "teleop_records/teach_record.jsonl")
-        self.declare_parameter("teach_record_rate_hz", 150.0)
-        self.declare_parameter("teach_record_require_gravity_comp", True)
 
         arm_config = self.get_parameter("arm_config").value or None
         gripper_config = self.get_parameter("gripper_config").value or None
@@ -94,21 +91,12 @@ class reBotArmController(Node):
         gripper_contact_torque_min_nm = float(
             self.get_parameter("gripper_contact_torque_min_nm").value
         )
-        teach_record_path = str(self.get_parameter("teach_record_path").value)
-        teach_record_rate_hz = finite_rate_hz(
-            "teach_record_rate_hz",
-            self.get_parameter("teach_record_rate_hz").value,
-        )
-        teach_record_require_gravity_comp = bool(
-            self.get_parameter("teach_record_require_gravity_comp").value
-        )
         cmd_arbitration = command_arbitration(
             self.get_parameter("cmd_arbitration").value
         )
         self.hardware = None
         self.joint_state_publisher = None
         self.arm_services = None
-        self.teach_recorder = None
         self.arm_actions = None
         self.motor_passthrough = None
         self.hardware = HardwareManager(
@@ -136,15 +124,10 @@ class reBotArmController(Node):
             joint_state_rate,
         )
         self.arm_services = ArmServices(self, self.hardware, self.arm_namespace)
-        self.teach_recorder = InternalTeachRecorder(
-            self,
-            self.hardware,
-            self.arm_namespace,
-            record_path=teach_record_path,
-            rate_hz=teach_record_rate_hz,
-            require_gravity_comp=teach_record_require_gravity_comp,
+        self.arm_actions = ArmActions(
+            self, self.hardware, self.arm_namespace,
+            enable_on_trajectory=bool(self.get_parameter("enable_on_trajectory").value),
         )
-        self.arm_actions = ArmActions(self, self.hardware, self.arm_namespace)
         self.motor_passthrough = MotorPassthrough(
             self,
             self.hardware,
@@ -155,15 +138,14 @@ class reBotArmController(Node):
         self.get_logger().info(
             f"reBotArmController started: namespace=/{self.arm_namespace}, "
             f"joints={self.hardware.joint_names}, "
-            f"lifecycle={self.hardware.lifecycle_state}; explicit enable required"
+            f"lifecycle={self.hardware.lifecycle_state}; "
+            f"enable_on_trajectory={self.get_parameter('enable_on_trajectory').value}"
         )
 
     def publish_arm_status(self) -> None:
         self.joint_state_publisher.publish_status()
 
     def shutdown(self) -> None:
-        if self.teach_recorder is not None:
-            self.teach_recorder.shutdown()
         if self.hardware is None:
             return
         if bool(self.get_parameter("shutdown_safe_home").value):

@@ -1,0 +1,39 @@
+--- a/setup.py
++++ b/setup.py
+@@ -12,25 +12,18 @@
+     url='https://graspnet.net',
+     packages=find_packages(),
+     install_requires=[
+-        'numpy==1.23.4',
++        'numpy>=1.26,<2',
+         'scipy',
+-        'transforms3d==0.3.1',
+-        'open3d>=0.8.0.0',
+-        'trimesh',
+-        'tqdm',
++        'transforms3d>=0.4.1',
++        'open3d>=0.19,<0.20',
+         'Pillow',
+         'opencv-python',
+-        'pillow',
+-        'matplotlib',
+-        'pywavefront',
+-        'trimesh',
+-        'scikit-image',
+-        'autolab_core',
+-        'autolab-perception',
+-        'cvxopt',
+-        'dill',
+-        'h5py',
+-        'sklearn',
+-        'grasp_nms'
+-    ]
++    ],
++    extras_require={
++        'evaluation': [
++            'trimesh', 'tqdm', 'matplotlib', 'pywavefront', 'scikit-image',
++            'autolab_core', 'autolab-perception', 'cvxopt', 'dill', 'h5py',
++            'scikit-learn', 'grasp_nms',
++        ],
++    },
+ )

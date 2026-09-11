@@ -23,10 +23,14 @@ class WebGripperClient:
         action_client: Any | None,
         goal_factory: Callable[[], Any] | None,
         status_sink: Callable[[dict], None] | None = None,
+        sim_service_client: Any | None = None,
+        sim_request_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._action_client = action_client
         self._goal_factory = goal_factory
         self._status_sink = status_sink
+        self._sim_service_client = sim_service_client
+        self._sim_request_factory = sim_request_factory
 
     def set_position(
         self,
@@ -50,19 +54,24 @@ class WebGripperClient:
                 status={"state": "rejected", "message": decision.message},
             )
         if not use_hardware:
+            client = self._sim_service_client
+            if client is None or self._sim_request_factory is None:
+                return self._unavailable_result(decision)
+            if not client.wait_for_service(timeout_sec=0.1):
+                return self._unavailable_result(decision)
+            request = self._sim_request_factory()
+            request.position = float(decision.position)
+            request.max_effort = float(decision.max_effort)
             return self._result(
                 accepted=True,
                 decision=decision,
                 status={
-                    "state": "done",
-                    "message": (
-                        f"simulated gripper position={decision.position:.4f} m"
-                    ),
+                    "state": "active",
+                    "message": "gripper request sent to simulation backend",
                     "position": decision.position,
                     "max_effort": decision.max_effort,
-                    "simulated": True,
                 },
-                simulated_position=float(decision.position),
+                service_future=client.call_async(request),
             )
         if self._action_client is None or self._goal_factory is None:
             return self._unavailable_result(decision)
@@ -87,6 +96,10 @@ class WebGripperClient:
     def observe_result(self, result: dict) -> None:
         if self._status_sink is None or not result.get("accepted"):
             return
+        service_future = result.get("service_future")
+        if service_future is not None:
+            service_future.add_done_callback(self._on_service_result)
+            return
         future = result.get("goal_future")
         if future is None:
             return
@@ -94,6 +107,19 @@ class WebGripperClient:
         future.add_done_callback(
             lambda completed: self._on_goal_response(completed, decision)
         )
+
+    def _on_service_result(self, future: Any) -> None:
+        try:
+            response = future.result()
+            success = bool(response.success)
+            status = {
+                "state": "done" if success else "failed",
+                "message": f"gripper backend result success={success}",
+                "position": float(response.reached_position),
+            }
+        except Exception as exc:
+            status = {"state": "failed", "message": str(exc)}
+        self._publish_status(status)
 
     def _on_goal_response(
         self,
@@ -154,7 +180,7 @@ class WebGripperClient:
         decision: WebGripperDecision,
         status: dict,
         goal_future: Any | None = None,
-        simulated_position: float | None = None,
+        service_future: Any | None = None,
     ) -> dict:
         return {
             "accepted": accepted,
@@ -162,11 +188,11 @@ class WebGripperClient:
             "response": gripper_decision_response(decision),
             "status": status,
             "goal_future": goal_future,
-            "simulated_position": simulated_position,
+            "service_future": service_future,
         }
 
     def _unavailable_result(self, decision: WebGripperDecision) -> dict:
-        message = "gripper command action unavailable"
+        message = "gripper execution backend unavailable"
         result = self._result(
             accepted=False,
             decision=decision,

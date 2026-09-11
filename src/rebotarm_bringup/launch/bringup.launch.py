@@ -13,6 +13,7 @@ def generate_launch_description():
     # 基础整机入口：控制器、夹爪可视状态、URDF/TF 发布器，以及可选 RViz。
     # 真机参数来自 arm.yaml、gripper.yaml、controller_runtime.yaml 和 controller_safety.yaml。
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
@@ -25,7 +26,7 @@ def generate_launch_description():
 
     # 所有资源通过已安装包的 share 目录定位，不依赖当前 shell 工作目录。
     urdf_file = PathJoinSubstitution(
-        [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
+        [description_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
     rviz_config = PathJoinSubstitution([bringup_share, "rviz", "rebotarm.rviz"])
     controller_safety_params = PathJoinSubstitution(
@@ -40,11 +41,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "gripper.yaml"]),
             ),
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),

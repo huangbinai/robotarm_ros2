@@ -13,7 +13,7 @@ def generate_launch_description():
     auto_start_gravity_comp = LaunchConfiguration("auto_start_gravity_comp")
     teleop_config = LaunchConfiguration("teleop_config")
     keyboard_prefix = LaunchConfiguration("keyboard_prefix")
-    interactive_share = FindPackageShare("rebotarm_interactive_control")
+    config_share = FindPackageShare("rebotarm_bringup")
 
     return LaunchDescription(
         [
@@ -27,7 +27,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
-                    [interactive_share, "config", "teleop_control.yaml"]
+                    [config_share, "config", "teleop_control.yaml"]
                 ),
             ),
             # 只启动 TeachRecorderNode，record_path 和自动重力补偿由 launch 参数覆盖。

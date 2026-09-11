@@ -88,6 +88,14 @@ def result_to_detection_array_msg(results, stamp, frame_id: str) -> Detection2DA
             det.x_max = x2
             det.y_max = y2
 
+            masks = getattr(result, "masks", None)
+            polygons = getattr(masks, "xy", None) if masks is not None else None
+            if polygons is not None and index < len(polygons):
+                polygon = np.asarray(polygons[index], dtype=float).reshape(-1, 2)
+                if len(polygon) >= 3 and np.isfinite(polygon).all():
+                    det.has_mask = True
+                    det.mask_polygon_xy = polygon.reshape(-1).tolist()
+
             obb_meta = _obb_metadata(result, index)
             if obb_meta is not None:
                 det.has_obb = True

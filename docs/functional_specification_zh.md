@@ -2,18 +2,17 @@
 
 ## 1. 文档目的
 
-本文说明当前仓库已经具备的功能、模块边界、输入输出、正常流程和失败处理。它用于项目交接、功能评审和二次开发，不替代具体设备的安全操作规程。
+本文说明当前仓库的实现范围、模块边界、输入输出、正常流程和失败处理。实现存在不表示已经验收；当前证据与阶段以[项目阶段](project_stage_zh.md)为准，判据见[验收依据](acceptance_criteria_zh.md)。
 
 ## 2. 系统范围
 
-系统以 ROS 2 为集成总线。真机通信只由 `rebotarmcontroller` 持有；规划、示教、遥操作、视觉和语音模块通过 ROS 接口提出目标，不能直接访问电机 SDK。
+系统以 ROS 2 为集成总线。主 ROS 系统的真机通信只由 `rebotarmcontroller` 持有；规划、示教、遥操作和视觉模块通过 ROS 接口提出目标。运动层的旧 SDK 预览依赖已退休，共用模型和电机参数由 `rebotarm_description` 提供。语音包已删除，未来另行设计。
 
 ```text
 操作员 / 任务输入
   ├─ 网页、键盘、RViz ──> teleop / dashboard
   ├─ 示教文件 ─────────> teach
-  ├─ RGB-D / GraspNet ─> vision
-  └─ 文本与语音 ───────> voice_control
+  └─ RGB-D / GraspNet ─> vision
                             │
                             v
                  motion / MoveIt 安全规划
@@ -31,7 +30,7 @@ MuJoCo 可以替换最后两层作为仿真执行后端。一个 ROS 命名空�
 
 ### 3.1 连接与使能
 
-控制器启动后连接总线并读取反馈，但连接成功不代表电机已使能。操作员或上层程序必须先检查 `/rebotarm/arm_status`，再调用 `/rebotarm/enable`。使能过程按当前位置建立保持目标，避免把历史目标直接下发给机械臂。
+控制器启动后连接总线并读取反馈，但连接成功不代表电机已使能。默认入口由操作员或上层程序检查 `/rebotarm/arm_status` 后显式使能。真机 RViz 入口设置 `enable_on_trajectory=true`：启动和 Plan 不使能，合法轨迹通过校验、命令仲裁和执行前复查后按需使能。此策略适用于该 Action 的所有客户端，不能识别请求是否来自 RViz。使能过程按当前位置建立保持目标。
 
 生命周期状态用于区分连接、使能、保持、运动、失能和断开过程。进入 `DISABLING` 或 `DISCONNECTED` 后，动作收尾不能再次把状态写回已使能保持。
 
@@ -47,7 +46,7 @@ J2、J3 的反馈接受范围允许到 `+0.02 rad`，用于兼容零点附近的
 
 - `MoveToPose`：输入末端 Pose 和持续时间，执行笛卡尔目标轨迹。
 - `FollowJointTrajectory`：接收标准关节轨迹，适配 MoveIt、示教回放和任务规划。
-- `MoveToPoseIK`：完成 IK 求解和目标更新，适合预检查或小步位姿控制。
+- `MoveToPoseIK`：会切换控制状态、调用 SDK 运动接口并更新目标，应按运动命令使用；只读预检查应使用 MoveIt 规划/IK 接口。
 
 轨迹在执行前检查有限数值、关节范围、起点误差、时间单调性、速度和加速度。执行时按轨迹时间插值，并在结束后检查最终关节误差。取消、抢占、超时、反馈异常或保护性失能都会终止成功判定。
 
@@ -82,13 +81,13 @@ J2、J3 的反馈接受范围允许到 `+0.02 rad`，用于兼容零点附近的
 - 真实任务失败后的保持、返回起点或受控失能策略；
 - 成对轨迹记录与对比协议。
 
-MoveIt 的 URDF、SRDF、规划组、碰撞模型和关节限制只由 `rebotarm_moveit_config` 管理。运动算法不能复制到 Dashboard 或示教节点中。
+MoveIt 的规划配置由 `rebotarm_moveit_config` 管理，URDF/mesh 的唯一维护来源为 `rebotarm_description`。MoveIt、仿真和 Dashboard 不再从 bringup 读取物理资源。运动算法不能复制到 Dashboard 或示教节点中。
 
 ## 7. 示教录制与回放
 
 ### 7.1 录制
 
-`TeachRecorderNode` 订阅关节状态，按反馈批次去重，将样本写入 JSONL 文件。录制可配合重力补偿，但录制节点不直接访问硬件。
+`TeachRecorderNode` 是唯一录制实现，控制器不再提供内置录制服务。节点订阅关节状态，使用消息 `header.stamp` 保存时间并跳过重复/倒退的时间戳，计时器回调不会凭空产生新样本。这是 ROS 消息级去重，不代表能识别硬件发布器复用缓存生成的新消息。真机应用要求重力补偿状态，仿真应用不依赖硬件重力补偿；录制节点不直接访问 SDK。
 
 ### 7.2 准备轨迹
 
@@ -104,6 +103,8 @@ MoveIt 的 URDF、SRDF、规划组、碰撞模型和关节限制只由 `rebotarm
 
 Dashboard 只显示状态和调用接口，不拥有轨迹生成、碰撞检测、示教重定时或 SDK 代码。网页预览和真实执行必须是可区分的操作。
 
+仿真夹爪也必须通过后端 `SetGripper` 服务执行，网页不能把目标位置发布到 `/gripper/state`。后端缺失或失败不会报告完成；正式夹爪反馈仅由选中的真机或仿真后端发布。
+
 RViz 末端拖动使用 MoveIt MotionPlanning 工作流。旧 `rebotarm_interactive_control` 仅保留兼容导入和旧入口，不应继续添加业务实现。
 
 ## 9. 视觉抓取
@@ -111,9 +112,11 @@ RViz 末端拖动使用 MoveIt MotionPlanning 工作流。旧 `rebotarm_interact
 正式链路为：
 
 ```text
-Gemini 2 RGB-D
-  -> YOLO 检测
-  -> GraspNet 6D 候选
+Ubuntu Gemini 2 RGB-D 节点（完整帧、C2D、去畸变、真实内参）
+  -> ROS Image + CameraInfo
+  -> YOLO 节点发布 Detection2DArray（含分割 polygon）
+  -> GraspNet 节点同帧同步、整场景推理、YOLO 投影筛选
+  -> ROS GraspCandidateArray
   -> 新鲜度、工作空间、姿态、IK 和碰撞筛选
   -> GraspPlan
   -> 预抓取、接近、闭合、抬升、放置或撤退
@@ -121,11 +124,15 @@ Gemini 2 RGB-D
 
 候选和计划都有新鲜度限制。无候选、无效候选或输入断流时必须清除/拒绝旧计划，不能继续执行缓存目标。执行器使用互斥锁避免两个抓取请求同时进入状态机，停止请求会同时终止运动和夹爪步骤。
 
+正式节点不使用 Windows HTTP/JSON。图像、检测、候选和计划保留采集时间戳；GraspNet 推理前后检查年龄，过滤器使用采集时刻 TF。相机不给缺失内参生成估计值，也不以旧色深图补齐新帧。当前部署要求和未完成的设备验收见[本机 ROS 视觉路线](local_ros_vision_zh.md)。
+
 `execution_mode=plan_only` 只规划和显示；`execute`/`real` 才允许进入执行流程。第一次部署必须先完成相机内参、手眼标定、TCP、坐标系、桌面边界和 MoveIt 可达性检查。
 
 ## 10. 标定
 
 `rebotarm_calibration` 集中维护手眼配置加载、刚体变换、TCP 标定和残差分析。视觉模块通过配置读取标定结果，不再各自复制标定算法。标定文件应保存采集日期、设备、坐标系方向、样本数和残差结果。
+
+ArUco 参考点采样改为订阅 ROS 图像及对应 CameraInfo，不再拉取 HTTP 快照或使用写死的相机内参。
 
 ## 11. MuJoCo、Real2Sim 和 Sim2Real
 
@@ -133,15 +140,9 @@ Gemini 2 RGB-D
 
 硬件、MoveIt 和 MuJoCo 模型的关节范围及 effort 应同步。当前 J1–J3 effort 为 `27`，J4–J6 为 `7`。仿真通过不代表实机安全，Sim2Real 前仍需检查速度、力矩、碰撞和坐标系差异。
 
-## 12. 文本与语音控制
+## 12. 暂缓的语音控制
 
-语音模块将文本、音频或实时事件解析为受约束的任务意图，再由安全守卫检查动作类型、方向、距离、速度比例和执行模式。
-
-- `dry_run`：只解析和输出计划，推荐默认模式。
-- `sim`：发送给仿真动作接口。
-- `real`：允许调用真机链路，必须在其他安全层已通过后显式启用。
-
-自然语言模型输出属于不可信输入，必须经过结构化 schema 和安全限制，不能直接拼接为底层电机命令。
+2026-09-11 按维护者决定删除尚未完成的语音包、配置和启动入口。语音不属于当前可用功能、维护范围或验收门槛；未来按新的任务接口重新设计和实现。历史源码可以从 Git 找回。共享消息中的任务 Action 定义保留，但不代表已有可用的任务 server。
 
 ## 13. 独立主从跟随工具
 

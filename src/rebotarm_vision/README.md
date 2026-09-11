@@ -1,9 +1,15 @@
 # rebotarm_vision
 
-RGB-D 感知、YOLO/GraspNet 候选、筛选、显示和视觉抓取执行包。
+Ubuntu 本机 RGB-D、YOLO 分割、GraspNet 6D 候选、筛选和抓取执行包。
 
-推荐先以 `execution_mode:=plan_only` 验证相机、TF、TCP、工作空间、IK 和碰撞，再开放真机执行。候选和计划必须满足新鲜度要求，无有效输入时不允许执行旧缓存。
+正式链路使用三个 ROS 节点：
 
-视觉 Python 可通过 `REBOTARM_VISION_PYTHON` 与 ROS 构建解释器分离；模型路径在运行时显式提供。
+- `rebotarm_vision_node`：Gemini 2 完整 RGB-D，彩色对齐到深度并去畸变，发布 Image/CameraInfo。
+- `rebotarm_yolo_node`：订阅图像，发布保留采集时间戳的 Detection2DArray 和分割 polygon。
+- `rebotarm_graspnet_baseline_node`：精确同步 RGB-D/内参/检测，整场景 GraspNet 推理，再用 YOLO 筛选，发布 GraspCandidateArray。
 
-完整中文说明见 [README_zh.md](README_zh.md)，参数见[视觉抓取七层参数](../../docs/visual_grasp_seven_layer_params.md)。
+正式入口不再使用 Windows JSON/HTTP；GraspNet 推理封装安装在包内。候选、计划和 TF 保留采集时间；输入陈旧、断流或失败时清空/拒绝。
+
+旧 Windows 启动/网络适配文件已删除。Open3D 彩色点云和夹爪候选窗口由可选只读节点 `rebotarm_graspnet_viewer` 提供：`ros2 launch rebotarm_vision graspnet_viewer.launch.py`。感知组合入口也支持 `show_open3d:=true`；窗口按 `S` 保存 PNG/PLY。
+
+启动、依赖、模型路径、标定和验收限制见[Ubuntu 本机 ROS 视觉路线](../../docs/local_ros_vision_zh.md)。本机 GPU 和 Gemini 2 USB 3 采集已通过验证，已生成实拍点云/候选预览；实际标定精度及机械臂抓取仍待验收。

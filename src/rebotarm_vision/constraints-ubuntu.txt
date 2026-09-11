@@ -1,0 +1,14 @@
+# Ubuntu 24.04 / Python 3.12 / driver 535 / CUDA 12.1 baseline.
+# Keep NumPy 1.x compatible with the installed ROS/OpenCV binary modules.
+numpy==1.26.4
+torch==2.5.1
+torchvision==0.20.1
+opencv-python==4.11.0.86
+open3d==0.19.0
+ultralytics==8.4.147
+setuptools==79.0.1
+pybind11==2.13.6
+pyorbbecsdk2==2.0.18
+ninja==1.13.2
+grasp-nms==1.0.2
+Cython==3.0.12

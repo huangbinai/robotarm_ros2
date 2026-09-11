@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,29 +60,51 @@ def inspect_checkout(source: Path) -> str:
     if untracked:
         raise RuntimeError("SDK checkout contains untracked files: " + untracked)
 
-    actual = _run(
-        source,
-        "diff",
-        "--binary",
-        "--no-ext-diff",
-        "HEAD",
-        "--",
-        *PATCHED_PATHS,
-    ).stdout
-    expected = PATCH_PATH.read_text(encoding="utf-8")
-    other = _run(
-        source,
-        "diff",
-        "--name-only",
-        "HEAD",
-        "--",
-        *(":(exclude)" + path for path in PATCHED_PATHS),
-    ).stdout.strip()
-    if other:
-        raise RuntimeError("SDK checkout contains unrelated tracked changes: " + other)
-    if _normalise(actual) == _normalise(expected):
+    with tempfile.TemporaryDirectory(prefix="rebotarm-sdk-index-") as temp_name:
+        actual_env = os.environ.copy()
+        actual_env["GIT_INDEX_FILE"] = str(Path(temp_name) / "actual-index")
+        subprocess.run(
+            ["git", "-C", str(source), "read-tree", "HEAD"],
+            check=True,
+            env=actual_env,
+        )
+        subprocess.run(
+            ["git", "-C", str(source), "add", "-A", "--", "."],
+            check=True,
+            env=actual_env,
+        )
+        actual_tree = subprocess.run(
+            ["git", "-C", str(source), "write-tree"],
+            check=True,
+            env=actual_env,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout.strip()
+
+        expected_env = os.environ.copy()
+        expected_env["GIT_INDEX_FILE"] = str(Path(temp_name) / "expected-index")
+        subprocess.run(
+            ["git", "-C", str(source), "read-tree", "HEAD"],
+            check=True,
+            env=expected_env,
+        )
+        subprocess.run(
+            ["git", "-C", str(source), "apply", "--cached", str(PATCH_PATH)],
+            check=True,
+            env=expected_env,
+        )
+        expected_tree = subprocess.run(
+            ["git", "-C", str(source), "write-tree"],
+            check=True,
+            env=expected_env,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout.strip()
+
+    if actual_tree == expected_tree:
         return "already_applied"
-    if actual.strip():
+    actual = _run(source, "diff", "--name-only", "HEAD", "--").stdout.strip()
+    if actual:
         raise RuntimeError("SDK checkout contains changes other than the reviewed patch")
     forward = _run(source, "apply", "--check", str(PATCH_PATH), check=False)
     if forward.returncode != 0:

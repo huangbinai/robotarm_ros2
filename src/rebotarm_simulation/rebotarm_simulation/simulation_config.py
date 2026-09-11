@@ -62,12 +62,12 @@ class SimulationConfig:
                 if model_path is not None
                 else _package_resource("rebotarm_simulation", DEFAULT_SCENE_RESOURCE)
             ),
-            arm_config_path=_package_resource("rebotarm_bringup", "config/arm.yaml"),
-            gripper_config_path=_package_resource("rebotarm_bringup", "config/gripper.yaml"),
+            arm_config_path=_package_resource("rebotarm_description", "config/arm.yaml"),
+            gripper_config_path=_package_resource("rebotarm_description", "config/gripper.yaml"),
             motor_calibration_path=_package_resource(
                 "rebotarm_simulation", "config/motor_control_calibration.yaml"
             ),
             robot_urdf_path=_package_resource(
-                "rebotarm_moveit_config", "config/rebotarm.urdf"
+                "rebotarm_description", "description/urdf/reBot-DevArm_fixend.urdf"
             ),
         )

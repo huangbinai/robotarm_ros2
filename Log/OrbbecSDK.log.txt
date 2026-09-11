@@ -1,0 +1,372 @@
+[09/11 13:14:52.695852][info][179710][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:14:52.695897][info][179710][DeviceManager.cpp:25] Current found device(s): (0)
+[09/11 13:14:52.695906][info][179710][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:14:54.700254][info][179710][DeviceManager.cpp:25] Current device(s) list: (0)
+[09/11 13:21:00.116035][info][180774][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:21:00.116070][info][180774][DeviceManager.cpp:25] Current found device(s): (0)
+[09/11 13:21:00.116076][info][180774][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:21:02.125198][info][180774][DeviceManager.cpp:25] Current device(s) list: (0)
+[09/11 13:28:25.432850][info][181653][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:28:25.432900][info][181653][DeviceManager.cpp:25] Current found device(s): (0)
+[09/11 13:28:25.432907][info][181653][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:28:27.437372][info][181653][DeviceManager.cpp:25] Current device(s) list: (0)
+[09/11 13:30:00.272355][info][182041][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:30:00.272388][info][182041][DeviceManager.cpp:25] Current found device(s): (0)
+[09/11 13:30:00.272394][info][182041][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:30:02.295031][info][182041][DeviceManager.cpp:25] Current device(s) list: (0)
+[09/11 13:42:24.038381][warning][183465][UsbEnumeratorLibusb.cpp:399] Failed to open USB device: error=Access denied (insufficient permissions). Try again
+[09/11 13:42:24.088550][warning][183465][UsbEnumeratorLibusb.cpp:403] Failed to open USB device (Access denied (insufficient permissions)), skipping, info.serial and infName may be empty
+[09/11 13:42:24.090079][info][183465][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:42:24.090146][info][183465][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 13:42:24.090161][info][183465][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: , Connection: USB2.0
+[09/11 13:42:24.090175][info][183465][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:42:26.094934][info][183465][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 13:42:26.094985][info][183465][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: , Connection: USB2.0
+[09/11 13:42:26.096090][warning][183465][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 13:42:26.096111][warning][183465][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 13:42:26.096134][warning][183465][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 13:42:26.096532][warning][183465][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:42:26.096951][warning][183465][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:42:26.096978][warning][183465][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:42:26.096986][warning][183465][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:42:26.096991][warning][183465][ObException.hpp:48] usbEnumerator openUsbDevice failed!
+[09/11 13:42:26.098350][warning][183465][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:42:26.098402][warning][183465][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:42:26.098427][warning][183465][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:42:26.098434][warning][183465][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:42:26.098438][warning][183465][ObException.hpp:48] usbEnumerator openUsbDevice failed!
+[09/11 13:42:26.098450][warning][183465][DeviceBase.cpp:343] Execute failure! A libobsensor_exception has occurred!
+ - where: DeviceBase.cpp(343):getComponent
+ - msg: usbEnumerator openUsbDevice failed!
+ - type: N11libobsensor29camera_disconnected_exceptionE
+[09/11 13:59:19.393186][warning][186051][UsbEnumeratorLibusb.cpp:399] Failed to open USB device: error=Access denied (insufficient permissions). Try again
+[09/11 13:59:19.443303][warning][186051][UsbEnumeratorLibusb.cpp:403] Failed to open USB device (Access denied (insufficient permissions)), skipping, info.serial and infName may be empty
+[09/11 13:59:19.443855][info][186051][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 13:59:19.443872][info][186051][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 13:59:19.443877][info][186051][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: , Connection: USB3.0
+[09/11 13:59:19.443883][info][186051][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 13:59:21.448004][info][186051][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 13:59:21.448050][info][186051][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: , Connection: USB3.0
+[09/11 13:59:21.448148][warning][186051][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 13:59:21.448156][warning][186051][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 13:59:21.448169][warning][186051][PropertyServer.cpp:87] [] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 13:59:21.448224][warning][186051][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:59:21.448283][warning][186051][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:59:21.448299][warning][186051][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:59:21.448307][warning][186051][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:59:21.448312][warning][186051][ObException.hpp:48] usbEnumerator openUsbDevice failed!
+[09/11 13:59:21.448374][warning][186051][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:59:21.448381][warning][186051][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:59:21.448390][warning][186051][ObException.cpp:8] Open device failed: Access denied (insufficient permissions)
+[09/11 13:59:21.448395][warning][186051][UsbEnumeratorLibusb.cpp:458] Execute failure! A libobsensor_exception has occurred!
+ - where: UsbEnumeratorLibusb.cpp(458):openUsbDevice
+ - msg: Open device failed: Access denied (insufficient permissions)
+ - type: N11libobsensor23invalid_value_exceptionE
+[09/11 13:59:21.448399][warning][186051][ObException.hpp:48] usbEnumerator openUsbDevice failed!
+[09/11 13:59:21.448415][warning][186051][DeviceBase.cpp:343] Execute failure! A libobsensor_exception has occurred!
+ - where: DeviceBase.cpp(343):getComponent
+ - msg: usbEnumerator openUsbDevice failed!
+ - type: N11libobsensor29camera_disconnected_exceptionE
+[09/11 14:02:11.430116][info][186881][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 14:02:11.430157][info][186881][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 14:02:11.430163][info][186881][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:02:11.430168][info][186881][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 14:02:13.455692][info][186881][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 14:02:13.455736][info][186881][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:02:13.455855][warning][186881][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 14:02:13.455870][warning][186881][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 14:02:13.455893][warning][186881][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 14:02:13.460073][info][186881][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 14:02:13.465658][info][186881][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 14:02:13.465696][info][186881][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 14:02:39.975555][info][187078][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 14:02:39.975595][info][187078][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 14:02:39.975601][info][187078][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:02:39.975606][info][187078][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 14:02:41.980455][info][187078][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 14:02:41.980488][info][187078][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:02:41.980545][warning][187078][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 14:02:41.980552][warning][187078][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 14:02:41.980566][warning][187078][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 14:02:41.984648][info][187078][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 14:02:41.985356][info][187078][Pipeline.cpp:42] [AY6V16300BP] Pipeline created with device: {name: Gemini 2, sn: AY6V16300BP}, @0x2ED18F50
+[09/11 14:02:41.994580][info][187078][Pipeline.cpp:216] [AY6V16300BP] Check and set config done!
+[09/11 14:02:41.995016][info][187078][Pipeline.cpp:254] [AY6V16300BP] Try to start streams!
+[09/11 14:02:41.995045][info][187078][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Color, format: RGB, width: 640, height: 480, fps: 30}
+[09/11 14:02:41.995055][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Color
+[09/11 14:02:41.995064][info][187078][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Color, format: MJPG, width: 640, height: 480, fps: 30}
+[09/11 14:02:42.000533][info][187078][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 14:02:42.000581][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Depth
+[09/11 14:02:42.000595][info][187078][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 14:02:42.005027][info][187078][Pipeline.cpp:270] [AY6V16300BP] Start streams done!
+[09/11 14:02:42.005043][info][187078][Pipeline.cpp:238] [AY6V16300BP] Pipeline start done!
+[09/11 14:02:42.147171][info][187128][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Color
+[09/11 14:02:42.163807][info][187129][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Depth
+[09/11 14:02:42.489400][info][187078][Pipeline.cpp:336] [AY6V16300BP] Try to stop pipeline!
+[09/11 14:02:42.489435][info][187078][Pipeline.cpp:312] [AY6V16300BP] Try to stop streams!
+[09/11 14:02:42.489456][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Depth
+[09/11 14:02:42.496220][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Depth
+[09/11 14:02:42.496261][info][187078][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Depth
+[09/11 14:02:42.496269][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Color
+[09/11 14:02:42.504594][info][187078][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Color
+[09/11 14:02:42.504711][info][187078][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Color
+[09/11 14:02:42.504724][info][187078][Pipeline.cpp:332] [AY6V16300BP] Stop streams done!
+[09/11 14:02:42.504873][info][187078][Pipeline.cpp:356] [AY6V16300BP] Stop pipeline done!
+[09/11 14:02:42.504902][info][187078][Pipeline.cpp:53] [AY6V16300BP] Pipeline destroyed! @0x2ED18F50
+[09/11 14:02:42.504980][info][187078][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 14:02:42.505809][info][187078][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 14:02:42.505816][info][187078][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 14:02:42.505857][info][187078][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 14:02:42.506117][info][187078][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 14:02:42.506123][info][187078][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 14:14:13.106153][info][188682][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 14:14:13.106197][info][188682][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 14:14:13.106202][info][188682][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:14:13.106208][info][188682][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 14:14:15.109999][info][188682][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 14:14:15.110068][info][188682][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:14:15.110191][warning][188682][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 14:14:15.110218][warning][188682][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 14:14:15.110255][warning][188682][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 14:14:15.114873][info][188682][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 14:14:15.114912][info][188682][Pipeline.cpp:42] [AY6V16300BP] Pipeline created with device: {name: Gemini 2, sn: AY6V16300BP}, @0x442E36D0
+[09/11 14:14:15.123353][info][188682][Pipeline.cpp:216] [AY6V16300BP] Check and set config done!
+[09/11 14:14:15.123505][info][188682][Pipeline.cpp:254] [AY6V16300BP] Try to start streams!
+[09/11 14:14:15.123516][info][188682][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Color, format: RGB, width: 640, height: 480, fps: 30}
+[09/11 14:14:15.123523][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Color
+[09/11 14:14:15.123530][info][188682][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Color, format: MJPG, width: 640, height: 480, fps: 30}
+[09/11 14:14:15.128791][info][188682][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 14:14:15.128832][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Depth
+[09/11 14:14:15.128841][info][188682][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 14:14:15.146029][info][188682][Pipeline.cpp:270] [AY6V16300BP] Start streams done!
+[09/11 14:14:15.146060][info][188682][Pipeline.cpp:238] [AY6V16300BP] Pipeline start done!
+[09/11 14:14:15.201658][warning][188892][VideoSensor.cpp:184] [AY6V16300BP] This frame will be dropped because jpg format verification failure! @Color
+[09/11 14:14:15.209951][warning][188893][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=49088, expected=2048000 @Depth
+[09/11 14:14:15.261610][info][188893][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Depth
+[09/11 14:14:15.267576][info][188892][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Color
+[09/11 14:14:15.698569][warning][188895][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset!
+[09/11 14:14:17.624552][info][188682][Pipeline.cpp:336] [AY6V16300BP] Try to stop pipeline!
+[09/11 14:14:17.624580][info][188682][Pipeline.cpp:312] [AY6V16300BP] Try to stop streams!
+[09/11 14:14:17.624599][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Depth
+[09/11 14:14:17.633866][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Depth
+[09/11 14:14:17.633946][info][188682][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Depth
+[09/11 14:14:17.633953][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Color
+[09/11 14:14:17.641390][info][188682][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Color
+[09/11 14:14:17.641489][info][188682][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Color
+[09/11 14:14:17.641494][info][188682][Pipeline.cpp:332] [AY6V16300BP] Stop streams done!
+[09/11 14:14:17.641623][info][188682][Pipeline.cpp:356] [AY6V16300BP] Stop pipeline done!
+[09/11 14:14:17.641676][info][188682][Pipeline.cpp:53] [AY6V16300BP] Pipeline destroyed! @0x442E36D0
+[09/11 14:14:17.641809][info][188682][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 14:14:17.642602][info][188682][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 14:14:17.642611][info][188682][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 14:14:17.642645][info][188682][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 14:14:17.642939][info][188682][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 14:14:17.642949][info][188682][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 14:14:18.117595][warning][188894][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=65212, expected=2048000 @Depth [**10 logs in 2907ms, last: 14:14:15.230274**]
+[09/11 14:14:18.117884][warning][188900][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**55 logs in 2419ms, last: 14:14:17.602440**]
+[09/11 14:24:08.267491][info][191069][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 14:24:08.267536][info][191069][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 14:24:08.267546][info][191069][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 14:24:08.267552][info][191069][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 14:24:10.272076][info][191069][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 14:24:10.272115][info][191069][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 16:57:29.771080][info][201319][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 16:57:29.771125][info][201319][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 16:57:29.771138][info][201319][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 16:57:29.771143][info][201319][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 16:57:31.775742][info][201319][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 16:57:31.775788][info][201319][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 16:57:31.775925][warning][201319][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 16:57:31.775948][warning][201319][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 16:57:31.775969][warning][201319][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 16:57:31.780012][info][201319][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 16:57:31.780056][info][201319][Pipeline.cpp:42] [AY6V16300BP] Pipeline created with device: {name: Gemini 2, sn: AY6V16300BP}, @0xF595790
+[09/11 16:57:31.788382][info][201319][Pipeline.cpp:216] [AY6V16300BP] Check and set config done!
+[09/11 16:57:31.788527][info][201319][Pipeline.cpp:254] [AY6V16300BP] Try to start streams!
+[09/11 16:57:31.788537][info][201319][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Color, format: RGB, width: 640, height: 480, fps: 30}
+[09/11 16:57:31.788544][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Color
+[09/11 16:57:31.788551][info][201319][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Color, format: MJPG, width: 640, height: 480, fps: 30}
+[09/11 16:57:31.793942][info][201319][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 16:57:31.793983][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Depth
+[09/11 16:57:31.793995][info][201319][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 16:57:31.811179][info][201319][Pipeline.cpp:270] [AY6V16300BP] Start streams done!
+[09/11 16:57:31.811209][info][201319][Pipeline.cpp:238] [AY6V16300BP] Pipeline start done!
+[09/11 16:57:31.909106][info][201449][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Depth
+[09/11 16:57:31.948632][info][201448][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Color
+[09/11 16:57:32.645221][warning][201458][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset!
+[09/11 16:57:35.652231][warning][201458][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**45 logs in 3007ms**]
+[09/11 16:57:36.917174][info][201449][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=30.151758fps
+[09/11 16:57:36.920605][info][201458][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=30.193962fps
+[09/11 16:57:36.961846][info][201448][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=30.121683fps
+[09/11 16:57:36.963635][info][201462][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=30.121683fps
+[09/11 16:57:41.697397][warning][201458][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**90 logs in 6045ms**]
+[09/11 16:57:41.927351][info][201449][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.940119fps
+[09/11 16:57:41.932671][info][201458][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.928171fps
+[09/11 16:57:41.971909][info][201448][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.940119fps
+[09/11 16:57:41.974208][info][201462][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.934143fps
+[09/11 16:57:46.938889][info][201449][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.934143fps
+[09/11 16:57:46.947833][info][201458][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.910271fps
+[09/11 16:57:46.982073][info][201448][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.934143fps
+[09/11 16:57:46.984019][info][201462][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.940119fps
+[09/11 16:57:50.889875][info][201319][Pipeline.cpp:336] [AY6V16300BP] Try to stop pipeline!
+[09/11 16:57:50.889949][info][201319][Pipeline.cpp:312] [AY6V16300BP] Try to stop streams!
+[09/11 16:57:50.889983][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Depth
+[09/11 16:57:50.898831][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Depth
+[09/11 16:57:50.898894][info][201319][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Depth
+[09/11 16:57:50.898915][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Color
+[09/11 16:57:50.906412][info][201319][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Color
+[09/11 16:57:50.906542][info][201319][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Color
+[09/11 16:57:50.906550][info][201319][Pipeline.cpp:332] [AY6V16300BP] Stop streams done!
+[09/11 16:57:50.906697][info][201319][Pipeline.cpp:356] [AY6V16300BP] Stop pipeline done!
+[09/11 16:57:50.910782][info][201319][Pipeline.cpp:53] [AY6V16300BP] Pipeline destroyed! @0xF595790
+[09/11 16:57:50.910935][info][201319][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 16:57:50.911982][info][201319][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 16:57:50.911998][info][201319][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 16:57:50.912066][info][201319][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 16:57:50.912386][info][201319][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 16:57:50.912397][info][201319][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 16:57:50.917019][warning][201632][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**137 logs in 9219ms, last: 16:57:50.851058**]
+[09/11 17:09:31.486008][info][205184][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 17:09:31.486042][info][205184][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 17:09:31.486047][info][205184][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 17:09:31.486051][info][205184][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 17:09:33.489878][info][205184][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 17:09:33.489925][info][205184][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 17:09:33.490008][warning][205184][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 17:09:33.490022][warning][205184][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 17:09:33.490040][warning][205184][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 17:09:33.493858][info][205184][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 17:09:33.493903][info][205184][Pipeline.cpp:42] [AY6V16300BP] Pipeline created with device: {name: Gemini 2, sn: AY6V16300BP}, @0x3DBCE620
+[09/11 17:09:33.502632][info][205184][Pipeline.cpp:216] [AY6V16300BP] Check and set config done!
+[09/11 17:09:33.502780][info][205184][Pipeline.cpp:254] [AY6V16300BP] Try to start streams!
+[09/11 17:09:33.502788][info][205184][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Color, format: RGB, width: 640, height: 480, fps: 30}
+[09/11 17:09:33.502795][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Color
+[09/11 17:09:33.502808][info][205184][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Color, format: MJPG, width: 640, height: 480, fps: 30}
+[09/11 17:09:33.508355][info][205184][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 17:09:33.508386][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Depth
+[09/11 17:09:33.508395][info][205184][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 17:09:33.525194][info][205184][Pipeline.cpp:270] [AY6V16300BP] Start streams done!
+[09/11 17:09:33.525220][info][205184][Pipeline.cpp:238] [AY6V16300BP] Pipeline start done!
+[09/11 17:09:33.589319][warning][205274][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=16300, expected=2048000 @Depth
+[09/11 17:09:33.636391][warning][205274][ObException.hpp:48] Update data size(2438632) > data buffer size! (2048000)
+[09/11 17:09:33.637148][warning][205274][ObLibuvcDevicePort.cpp:465] Execute failure! A libobsensor_exception has occurred!
+ - where: ObLibuvcDevicePort.cpp(465):onFrameCallback
+ - msg: Update data size(2438632) > data buffer size! (2048000)
+ - type: N11libobsensor16memory_exceptionE
+[09/11 17:09:33.647082][info][205273][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Color
+[09/11 17:09:33.669915][info][205274][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Depth
+[09/11 17:09:34.374489][warning][205279][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset!
+[09/11 17:09:36.589529][warning][205275][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=16216, expected=2048000 @Depth [**6 logs in 3000ms, last: 17:09:33.592016**]
+[09/11 17:09:37.380419][warning][205279][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**45 logs in 3005ms**]
+[09/11 17:09:38.612997][info][205274][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=31.057138fps
+[09/11 17:09:38.657034][info][205273][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=30.139719fps
+[09/11 17:09:38.658703][info][205277][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=30.151758fps
+[09/11 17:09:38.686763][info][205279][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=30.163803fps
+[09/11 17:09:43.392531][warning][205279][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**90 logs in 6012ms**]
+[09/11 17:09:43.623383][info][205274][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.934143fps
+[09/11 17:09:43.667238][info][205273][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.940119fps
+[09/11 17:09:43.669149][info][205277][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.934143fps
+[09/11 17:09:43.695128][info][205279][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.946098fps
+[09/11 17:09:48.632790][info][205274][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.946098fps
+[09/11 17:09:48.677310][info][205273][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.940119fps
+[09/11 17:09:48.679054][info][205277][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.940119fps
+[09/11 17:09:48.703418][info][205279][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.952078fps
+[09/11 17:09:52.619299][info][205184][Pipeline.cpp:336] [AY6V16300BP] Try to stop pipeline!
+[09/11 17:09:52.619333][info][205184][Pipeline.cpp:312] [AY6V16300BP] Try to stop streams!
+[09/11 17:09:52.619353][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Depth
+[09/11 17:09:52.628520][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Depth
+[09/11 17:09:52.628591][info][205184][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Depth
+[09/11 17:09:52.628600][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Color
+[09/11 17:09:52.635818][info][205184][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Color
+[09/11 17:09:52.635933][info][205184][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Color
+[09/11 17:09:52.635940][info][205184][Pipeline.cpp:332] [AY6V16300BP] Stop streams done!
+[09/11 17:09:52.636101][info][205184][Pipeline.cpp:356] [AY6V16300BP] Stop pipeline done!
+[09/11 17:09:52.709868][info][205184][Pipeline.cpp:53] [AY6V16300BP] Pipeline destroyed! @0x3DBCE620
+[09/11 17:09:52.710091][info][205184][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 17:09:52.710933][info][205184][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 17:09:52.710948][info][205184][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 17:09:52.710988][info][205184][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 17:09:52.711247][info][205184][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 17:09:52.711254][info][205184][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 17:09:52.715180][warning][205442][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**137 logs in 9322ms, last: 17:09:52.578726**]
+[09/11 18:33:51.841083][info][223533][LinuxUsbPal.cpp:335] Create PollingDeviceWatcher!
+[09/11 18:33:51.841118][info][223533][DeviceManager.cpp:25] Current found device(s): (1)
+[09/11 18:33:51.841124][info][223533][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 18:33:51.841129][info][223533][DeviceManager.cpp:339] Enable net device enumeration: true
+[09/11 18:33:53.845841][info][223533][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/11 18:33:53.845909][info][223533][DeviceManager.cpp:34] 	- Name: Gemini2, PID: 0x0670, SN/ID: AY6V16300BP, Connection: USB3.0
+[09/11 18:33:53.846016][warning][223533][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=108
+[09/11 18:33:53.846028][warning][223533][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=4035
+[09/11 18:33:53.846043][warning][223533][PropertyServer.cpp:87] [AY6V16300BP] Not added to property map, property not found in OBPropertyBaseInfoMap, id=5003
+[09/11 18:33:53.852464][info][223533][DeviceManager.cpp:194] Device created successfully! Name: Gemini 2, PID: 0x0670, SN/ID: AY6V16300BP FW: 1.4.92
+[09/11 18:33:53.852502][info][223533][Pipeline.cpp:42] [AY6V16300BP] Pipeline created with device: {name: Gemini 2, sn: AY6V16300BP}, @0x3F00D060
+[09/11 18:33:53.861215][info][223533][Pipeline.cpp:216] [AY6V16300BP] Check and set config done!
+[09/11 18:33:53.861425][info][223533][Pipeline.cpp:254] [AY6V16300BP] Try to start streams!
+[09/11 18:33:53.861439][info][223533][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Color, format: RGB, width: 640, height: 480, fps: 30}
+[09/11 18:33:53.861446][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Color
+[09/11 18:33:53.861453][info][223533][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Color, format: MJPG, width: 640, height: 480, fps: 30}
+[09/11 18:33:53.866661][info][223533][VideoSensor.cpp:58] [AY6V16300BP] Try to start stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 18:33:53.866715][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STARTING@Depth
+[09/11 18:33:53.866728][info][223533][VideoSensor.cpp:127] [AY6V16300BP] Start backend stream: {type: Depth, format: Y16, width: 1280, height: 800, fps: 30}
+[09/11 18:33:53.883754][info][223533][Pipeline.cpp:270] [AY6V16300BP] Start streams done!
+[09/11 18:33:53.883787][info][223533][Pipeline.cpp:238] [AY6V16300BP] Pipeline start done!
+[09/11 18:33:53.947939][warning][223675][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=16352, expected=2048000 @Depth
+[09/11 18:33:54.009606][info][223675][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Depth
+[09/11 18:33:54.020469][warning][223673][VideoSensor.cpp:184] [AY6V16300BP] This frame will be dropped because jpg format verification failure! @Color
+[09/11 18:33:54.087338][info][223673][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STREAMING@Color
+[09/11 18:33:54.747635][warning][223686][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset!
+[09/11 18:33:56.948155][warning][223680][VideoSensor.cpp:194] [AY6V16300BP] This frame will be dropped because the data size does not match the expectation! size=16384, expected=2048000 @Depth [**2 logs in 3000ms, last: 18:33:53.977898**]
+[09/11 18:33:57.020760][warning][223688][VideoSensor.cpp:184] [AY6V16300BP] This frame will be dropped because jpg format verification failure! @Color [**2 logs in 3000ms, last: 18:33:54.053933**]
+[09/11 18:33:57.754128][warning][223686][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**45 logs in 3006ms**]
+[09/11 18:33:58.952883][info][223675][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=30.369629fps
+[09/11 18:33:59.023951][info][223686][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=30.181892fps
+[09/11 18:33:59.032242][info][223673][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=30.327213fps
+[09/11 18:33:59.101110][info][223710][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=30.127693fps
+[09/11 18:34:03.800045][warning][223686][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**90 logs in 6045ms**]
+[09/11 18:34:03.963116][info][223675][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.934143fps
+[09/11 18:34:04.037979][info][223686][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.916235fps
+[09/11 18:34:04.042500][info][223673][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.940119fps
+[09/11 18:34:04.111526][info][223710][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.940119fps
+[09/11 18:34:08.973386][info][223675][VideoSensor.cpp:153] [AY6V16300BP] Depth backend frame callback, frameRate=29.940119fps
+[09/11 18:34:09.047829][info][223686][SensorBase.cpp:370] [AY6V16300BP] Depth Streaming... frameRate=29.940119fps
+[09/11 18:34:09.052760][info][223673][VideoSensor.cpp:153] [AY6V16300BP] Color backend frame callback, frameRate=29.940119fps
+[09/11 18:34:09.121419][info][223710][SensorBase.cpp:370] [AY6V16300BP] Color Streaming... frameRate=29.940119fps
+[09/11 18:34:12.976375][info][223533][Pipeline.cpp:336] [AY6V16300BP] Try to stop pipeline!
+[09/11 18:34:12.976457][info][223533][Pipeline.cpp:312] [AY6V16300BP] Try to stop streams!
+[09/11 18:34:12.976508][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Depth
+[09/11 18:34:12.985651][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Depth
+[09/11 18:34:12.985764][info][223533][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Depth
+[09/11 18:34:12.985780][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPING@Color
+[09/11 18:34:12.992593][info][223533][SensorBase.cpp:213] [AY6V16300BP] Stream state changed to STOPPED@Color
+[09/11 18:34:12.992904][info][223533][Pipeline.cpp:326] [AY6V16300BP] Sensor stream stopped, sensorType=Color
+[09/11 18:34:12.992916][info][223533][Pipeline.cpp:332] [AY6V16300BP] Stop streams done!
+[09/11 18:34:12.993063][info][223533][Pipeline.cpp:356] [AY6V16300BP] Stop pipeline done!
+[09/11 18:34:13.062685][info][223533][Pipeline.cpp:53] [AY6V16300BP] Pipeline destroyed! @0x3F00D060
+[09/11 18:34:13.063060][info][223533][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 18:34:13.063978][info][223533][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 18:34:13.064022][info][223533][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 18:34:13.064082][info][223533][SensorBase.cpp:47] [AY6V16300BP] SensorBase is destroyed
+[09/11 18:34:13.064376][info][223533][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[09/11 18:34:13.064384][info][223533][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[09/11 18:34:13.069030][warning][223920][Pipeline.cpp:295] [AY6V16300BP] Output frameset queue is full, drop oldest frameset! [**137 logs in 9268ms, last: 18:34:12.951288**]

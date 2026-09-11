@@ -24,8 +24,11 @@ class WebExecuteSession:
         self._status_sink = status_sink
         self._max_joint_speed_source = max_joint_speed_source
         self._successful_result_code = int(successful_result_code)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._goal_handle = None
+        self._generation = 0
+        self._terminal = False
+        self._stop_pending = False
 
     def observe_execution(self, execution: dict) -> None:
         if not execution.get("accepted"):
@@ -34,24 +37,39 @@ class WebExecuteSession:
         if future is None:
             return
         decision = execution["decision"]
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+            self._terminal = False
+            self._stop_pending = False
+            self._goal_handle = None
+            self._status_sink(execution["status"])
         future.add_done_callback(
-            lambda completed: self._on_goal_response(completed, decision)
+            lambda completed: self._on_goal_response(completed, decision, generation)
         )
-        self._status_sink(execution["status"])
+
+    def _publish(self, status, generation, *, terminal=False):
+        with self._lock:
+            if generation != self._generation or self._terminal:
+                return
+            if terminal:
+                self._terminal = True
+                self._goal_handle = None
+            self._status_sink(status)
 
     def stop(self) -> dict:
         with self._lock:
             goal_handle = self._goal_handle
+            generation = self._generation
+            self._stop_pending = True
         result = self._client.stop(
             goal_handle,
             trajectory_stop_client=self._trajectory_stop_client,
         )
         future = result.get("cancel_future")
+        self._publish(result["status"], generation)
         if future is not None:
-            future.add_done_callback(self._on_cancel_response)
-        self._status_sink(result["status"])
-        if result.get("clear_goal_handle"):
-            self.clear_goal_handle()
+            future.add_done_callback(lambda completed: self._on_cancel_response(completed, generation))
         return {
             "accepted": bool(result["accepted"]),
             "state": result.get("state", result["status"].get("state", "")),
@@ -64,52 +82,58 @@ class WebExecuteSession:
     def clear_goal_handle(self) -> None:
         with self._lock:
             self._goal_handle = None
+            self._generation += 1
+            self._terminal = True
 
-    def _on_cancel_response(self, future: Any) -> None:
+    def _on_cancel_response(self, future: Any, generation: int) -> None:
         try:
             response = future.result()
             goals_canceling = len(getattr(response, "goals_canceling", []))
         except Exception as exc:
-            self._status_sink({"state": "failed", "message": str(exc)})
+            self._publish({"state": "cancel_unconfirmed", "message": str(exc)}, generation)
             return
-        state = "cancel_requested" if goals_canceling else "done"
+        state = "cancel_requested" if goals_canceling else "cancel_unconfirmed"
         message = (
             "trajectory cancel accepted"
             if goals_canceling
-            else "trajectory already finished before cancel"
+            else "cancel response did not confirm cancellation; waiting for trajectory result"
         )
-        self._status_sink({"state": state, "message": message})
+        self._publish({"state": state, "message": message}, generation)
 
     def _on_goal_response(
         self,
         future: Any,
         decision: WebExecuteDecision,
+        generation: int,
     ) -> None:
         try:
             goal_handle = future.result()
         except Exception as exc:
-            self._status_sink({"state": "failed", "message": str(exc)})
+            self._publish({"state": "failed", "message": str(exc)}, generation, terminal=True)
             return
         if goal_handle is None or not goal_handle.accepted:
-            self._status_sink(
-                {"state": "rejected", "message": "trajectory goal rejected"}
-            )
+            self._publish({"state": "rejected", "message": "trajectory goal rejected"}, generation, terminal=True)
             return
         with self._lock:
+            if generation != self._generation:
+                return
             self._goal_handle = goal_handle
-        self._status_sink(
+            stop_pending = self._stop_pending
+        self._publish(
             {
                 "state": "accepted",
                 "message": "trajectory goal accepted by controller",
                 **self._decision_status(decision),
-            }
+            }, generation,
         )
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(
-            lambda completed: self._on_result(completed, decision)
+            lambda completed: self._on_result(completed, decision, generation)
         )
+        if stop_pending:
+            self.stop()
 
-    def _on_result(self, future: Any, decision: WebExecuteDecision) -> None:
+    def _on_result(self, future: Any, decision: WebExecuteDecision, generation: int) -> None:
         try:
             result_response = future.result()
             result = result_response.result
@@ -117,17 +141,22 @@ class WebExecuteSession:
             error_code = int(getattr(result, "error_code", 0))
             error_string = str(getattr(result, "error_string", ""))
         except Exception as exc:
-            self._status_sink({"state": "failed", "message": str(exc)})
-            self.clear_goal_handle()
+            self._publish({"state": "failed", "message": str(exc)}, generation, terminal=True)
             return
-        if error_code == self._successful_result_code:
-            state = "done"
-        elif status == 5:
+        if status == 5:
             state = "canceled"
+        elif (
+            status == 6 and self._stop_pending and error_code == -1
+            and error_string == "simulation trajectory stopped by service"
+        ):
+            # Service stop can win the race with Action cancellation. Only the
+            # backend's explicit stop result confirms this state, not the RPC ack.
+            state = "stopped"
+        elif status == 4 and error_code == self._successful_result_code:
+            state = "done"
         else:
             state = "failed"
-        self.clear_goal_handle()
-        self._status_sink(
+        self._publish(
             {
                 "state": state,
                 "message": (
@@ -135,7 +164,7 @@ class WebExecuteSession:
                     f"{error_string}"
                 ),
                 **self._decision_status(decision),
-            }
+            }, generation, terminal=True,
         )
 
     def _decision_status(self, decision: WebExecuteDecision) -> dict:

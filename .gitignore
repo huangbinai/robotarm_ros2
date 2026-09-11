@@ -1,5 +1,10 @@
 build/
 install/
+build-venv/
+install-venv/
+.venv-ros/
+.ros-overlay/
+build_motorbridge_fresh_feedback/
 log/
 .pytest_cache/
 __pycache__/

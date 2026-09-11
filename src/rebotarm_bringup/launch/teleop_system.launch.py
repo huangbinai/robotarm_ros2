@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -20,7 +20,7 @@ def generate_launch_description():
     teleop_config = LaunchConfiguration("teleop_config")
     keyboard_prefix = LaunchConfiguration("keyboard_prefix")
     bringup_share = FindPackageShare("rebotarm_bringup")
-    interactive_share = FindPackageShare("rebotarm_interactive_control")
+    config_share = FindPackageShare("rebotarm_bringup")
 
     return LaunchDescription(
         [
@@ -39,7 +39,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
-                    [interactive_share, "config", "teleop_control.yaml"]
+                    [config_share, "config", "teleop_control.yaml"]
                 ),
             ),
             # 复用键盘入口，避免重复维护控制器、模型和键盘节点。
@@ -53,17 +53,17 @@ def generate_launch_description():
                     "use_local_rviz": use_local_rviz,
                     "channel": channel,
                     "teach_record_path": record_path,
+                    "start_teach_recorder": "false",
                     "teleop_config": teleop_config,
                     "keyboard_prefix": keyboard_prefix,
                 }.items(),
             ),
-            # 仿真模式下额外启动独立录制器；真机通常使用控制器内置录制服务。
+            # 两种后端均由 teach 包提供唯一录制服务；core 默认不启动录制器。
             Node(
                 package="rebotarm_teach",
                 executable="TeachRecorderNode",
                 name="teach_recorder_node",
                 output="screen",
-                condition=UnlessCondition(use_hardware),
                 parameters=[
                     teleop_config,
                     {
@@ -71,6 +71,7 @@ def generate_launch_description():
                         "record_path": record_path,
                         "start_on_launch": False,
                         "keyboard_quit_enabled": False,
+                        "require_gravity_comp": use_hardware,
                     },
                 ],
             ),

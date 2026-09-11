@@ -13,5 +13,8 @@ sha256sum --check models/MANIFEST.sha256
 ```
 
 Expected assets and hashes are recorded in `MANIFEST.sha256`. The checked-in
-YOLO model remains at `tools/yolo26s-seg.pt` for compatibility with the current
-Windows vision launcher.
+YOLO model remains at `tools/yolo26s-seg.pt` and is the local workspace default
+for the ROS YOLO node. Perception runs entirely on Ubuntu through ROS topics;
+Windows HTTP/JSON services are no longer part of the active launch chain.
+See [local ROS perception](../docs/local_ros_vision_zh.md) for explicit model paths
+and the packaged YOLO11 fallback used outside a source workspace.

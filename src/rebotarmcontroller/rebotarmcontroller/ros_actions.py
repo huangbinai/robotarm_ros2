@@ -19,10 +19,11 @@ from .trajectory_safety import (
 
 
 class ArmActions:
-    def __init__(self, node, hardware, namespace: str) -> None:
+    def __init__(self, node, hardware, namespace: str, *, enable_on_trajectory: bool = False) -> None:
         self._node = node
         self._hardware = hardware
         self._command_arbiter = hardware.command_arbiter
+        self._enable_on_trajectory = enable_on_trajectory
         self._trajectory_limits = TrajectorySafetyLimits(
             position_min=np.asarray(
                 node.get_parameter("trajectory_safety.position_min_rad").value
@@ -67,7 +68,7 @@ class ArmActions:
             FollowJointTrajectory,
             f"/{namespace}/follow_joint_trajectory",
             execute_callback=self._execute_follow_joint_trajectory_exclusive,
-            goal_callback=self.arm_goal_callback,
+            goal_callback=self.trajectory_goal_callback,
             cancel_callback=self.cancel_follow_joint_trajectory,
             callback_group=node.reentrant_group,
         )
@@ -110,6 +111,29 @@ class ArmActions:
             if self._command_arbiter.available("gripper")
             else GoalResponse.REJECT
         )
+
+    def trajectory_goal_callback(self, goal_request):
+        if self._hardware.ready_for_motion:
+            return self.arm_goal_callback(goal_request)
+        if not (
+            self._enable_on_trajectory
+            and self._hardware.connected
+            and not self._hardware.enabled
+            and self._hardware.lifecycle_state == "CONNECTED_DISABLED"
+            and not self._hardware.error_codes
+            and self._command_arbiter.available("arm")
+        ):
+            return GoalResponse.REJECT
+        try:
+            trajectory = goal_request.trajectory
+            names = list(trajectory.joint_names)
+            self._validated_trajectory(names, trajectory.points, self._current_positions_for(names))
+        except Exception as exc:
+            self._node.get_logger().warning(f"Rejecting trajectory before enable: {exc}")
+            return GoalResponse.REJECT
+        # Acceptance is read-only. Enabling happens in the execution callback
+        # after acquiring the command lease and revalidating current feedback.
+        return GoalResponse.ACCEPT
 
     def cancel_move_to_pose(self, _goal_handle):
         self._stop_move_to_pose_motion()
@@ -310,7 +334,7 @@ class ArmActions:
             )
 
     def _execute_follow_joint_trajectory_exclusive(self, goal_handle):
-        lease = self._command_arbiter.acquire("arm", "follow_joint_trajectory")
+        lease = self._command_arbiter.acquire("arm", f"follow_joint_trajectory:{id(goal_handle)}")
         if lease is None:
             result = FollowJointTrajectory.Result()
             goal_handle.abort()
@@ -344,6 +368,19 @@ class ArmActions:
                 trajectory.points,
                 current,
             )
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+                result.error_string = "canceled"
+                return result
+            if getattr(self, "_enable_on_trajectory", False):
+                self._hardware.prepare_trajectory_execution(
+                    allow_enable=True,
+                    is_current=lambda: (
+                        not goal_handle.is_cancel_requested
+                        and self._goal_lease_is_current(goal_handle)
+                    ),
+                )
         except Exception as exc:
             goal_handle.abort()
             result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
@@ -435,6 +472,11 @@ class ArmActions:
             goal_handle.canceled()
             result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
             result.error_string = "canceled"
+            return True
+        if getattr(self, "_enable_on_trajectory", False) and not self._hardware.ready_for_motion:
+            goal_handle.abort()
+            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+            result.error_string = "hardware no longer ready"
             return True
         if self._hardware.state_machine != "TRAJ_RUNNING":
             self._hardware.hold_current_position()

@@ -2,16 +2,20 @@ rebotarm_graspnet_baseline_node:
   ros__parameters:
     input_color_topic: /camera/color/image_raw
     input_depth_topic: /camera/depth/image_raw
+    input_camera_info_topic: /camera/depth/camera_info
     input_detections_topic: /grasp/detections
     output_candidates_topic: /grasp/graspnet_candidates
     output_frame_id: camera_depth_frame
-    source_mode: network
-    network_candidates_url: http://192.168.145.1:8081/graspnet_candidates.json
-    network_timeout_ms: 1000
-    network_poll_hz: 5.0
+    source_mode: ros
+    # Empty values resolve under REBOTARM_WORKSPACE, never via HTTP.
     model_root: ""
     checkpoint_path: ""
     device: cuda:0
-    backend_module: graspnet_baseline_inference
-    max_grasps: 10
+    backend_module: rebotarm_vision.graspnet_inference
+    max_grasps: 5
     max_points: 20000
+    sync_queue_size: 30
+    inference_rate_hz: 2.0
+    max_frame_age_sec: 1.5
+    min_depth_m: 0.15
+    max_depth_m: 1.20

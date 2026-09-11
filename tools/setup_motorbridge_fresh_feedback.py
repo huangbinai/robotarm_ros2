@@ -107,20 +107,51 @@ def _verify_patch_file() -> None:
 
 def _checkout_matches_patched_snapshot() -> bool:
     try:
-        actual = _run(
-            [
-                "git", "-C", str(SOURCE_DIR), "diff", "--binary",
-                "--no-ext-diff", "HEAD", "--",
-            ],
-            capture=True,
-        ).stdout
-        expected = PATCH_PATH.read_text(encoding="utf-8")
-        # Git diff output is canonical LF text even when core.autocrlf produces
-        # a CRLF worktree.  Compare the complete reviewed patch, not just its
-        # touched path list, so any additional tracked edit still fails closed.
-        normalize = lambda value: value.replace("\r\n", "\n").rstrip("\n")
-        untracked = _git_output("ls-files", "--others")
-        return normalize(actual) == normalize(expected) and untracked == ""
+        # A plain ``git diff`` omits untracked files, and serializing a diff can
+        # reorder added files or normalize context-only blank lines.  Compare
+        # Git tree objects instead: one made from the complete worktree and one
+        # made by applying the reviewed patch to HEAD in an isolated index.
+        with tempfile.TemporaryDirectory(
+            prefix=".motorbridge-index-",
+            dir=BUILD_ROOT,
+        ) as temp_name:
+            actual_env = os.environ.copy()
+            actual_env["GIT_INDEX_FILE"] = str(Path(temp_name) / "actual-index")
+            _run(
+                ["git", "-C", str(SOURCE_DIR), "read-tree", "HEAD"],
+                env=actual_env,
+            )
+            _run(
+                ["git", "-C", str(SOURCE_DIR), "add", "-A", "-f", "--", "."],
+                env=actual_env,
+            )
+            actual_tree = _run(
+                [
+                    "git", "-C", str(SOURCE_DIR), "write-tree",
+                ],
+                env=actual_env,
+                capture=True,
+            ).stdout.strip()
+
+            expected_env = os.environ.copy()
+            expected_env["GIT_INDEX_FILE"] = str(Path(temp_name) / "expected-index")
+            _run(
+                ["git", "-C", str(SOURCE_DIR), "read-tree", "HEAD"],
+                env=expected_env,
+            )
+            _run(
+                [
+                    "git", "-C", str(SOURCE_DIR), "apply", "--cached",
+                    str(PATCH_PATH),
+                ],
+                env=expected_env,
+            )
+            expected_tree = _run(
+                ["git", "-C", str(SOURCE_DIR), "write-tree"],
+                env=expected_env,
+                capture=True,
+            ).stdout.strip()
+        return actual_tree == expected_tree
     except subprocess.CalledProcessError:
         return False
 

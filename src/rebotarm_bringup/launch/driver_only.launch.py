@@ -10,6 +10,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # 最小真机入口：只启动 reBotArmController，不启动 RViz、MoveIt、网页或视觉节点。
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
@@ -28,11 +29,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "gripper.yaml"]),
             ),
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),

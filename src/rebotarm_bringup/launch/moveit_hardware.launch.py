@@ -7,6 +7,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # 兼容入口：真实 MoveIt 链路统一由 interactive_system 维护。
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     arm_namespace = LaunchConfiguration("arm_namespace")
@@ -14,6 +15,7 @@ def generate_launch_description():
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     teach_record_path = LaunchConfiguration("teach_record_path")
     teach_record_rate_hz = LaunchConfiguration("teach_record_rate_hz")
+    start_teach_recorder = LaunchConfiguration("start_teach_recorder")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     frame_id = LaunchConfiguration("frame_id")
     ee_frame_id = LaunchConfiguration("ee_frame_id")
@@ -26,12 +28,12 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
                 default_value=PathJoinSubstitution(
-                    [bringup_share, "config", "gripper.yaml"]
+                    [description_share, "config", "gripper.yaml"]
                 ),
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
@@ -39,6 +41,7 @@ def generate_launch_description():
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("teach_record_path", default_value="teleop_records/teach_record.jsonl"),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
+            DeclareLaunchArgument("start_teach_recorder", default_value="false"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
@@ -58,6 +61,7 @@ def generate_launch_description():
                     "joint_state_rate": joint_state_rate,
                     "teach_record_path": teach_record_path,
                     "teach_record_rate_hz": teach_record_rate_hz,
+                    "start_teach_recorder": start_teach_recorder,
                     "cmd_arbitration": cmd_arbitration,
                     "frame_id": frame_id,
                     "ee_frame_id": ee_frame_id,

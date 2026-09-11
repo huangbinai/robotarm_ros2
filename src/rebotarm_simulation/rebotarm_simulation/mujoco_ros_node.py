@@ -158,6 +158,7 @@ def create_node_class():
             super().__init__("rebotarm_mujoco_node")
             self.declare_parameter("backend", "mujoco")
             self.declare_parameter("headless", True)
+            self.declare_parameter("show_viewer", False)
             self.declare_parameter("model_path", "")
             self.declare_parameter("arm_namespace", "rebotarm")
             self.declare_parameter("publish_rate_hz", 30.0)
@@ -174,7 +175,8 @@ def create_node_class():
             if self.get_parameter("backend").value != "mujoco":
                 raise ValueError("simulation backend must be mujoco")
             if self.get_parameter("headless").value is not True:
-                raise ValueError("ROS adapter is headless; run the viewer separately")
+                raise ValueError("the ROS adapter must keep headless=true")
+            self._show_viewer = bool(self.get_parameter("show_viewer").value)
 
             namespace = str(self.get_parameter("arm_namespace").value).strip("/")
             if not namespace or any(part in namespace for part in ("//", " ")):
@@ -287,6 +289,22 @@ def create_node_class():
                 callback_group=self._timer_callback_group,
                 clock=self._physics_clock,
             )
+            if self._show_viewer:
+                self.get_logger().info(
+                    "MuJoCo Viewer enabled: it shares this ROS node's simulation instance"
+                )
+
+        @property
+        def show_viewer(self) -> bool:
+            return self._show_viewer
+
+        def viewer_handles(self):
+            """Return native viewer handles while retaining serialized access."""
+            return self._sim_access.run(lambda sim: sim.render_adapter.handles())
+
+        def sync_viewer(self, viewer) -> None:
+            """Render the same MuJoCo data used by ROS execution callbacks."""
+            self._sim_access.run(lambda _sim: viewer.sync())
 
         def _current_arm_positions(self) -> tuple[float, ...]:
             return self._sim_access.run(
@@ -561,6 +579,7 @@ def create_node_class():
 
 
 def main(args=None) -> None:
+    import importlib
     import rclpy
     from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 
@@ -568,12 +587,38 @@ def main(args=None) -> None:
     node = create_node_class()()
     executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(node)
+    viewer = None
+    executor_thread = None
     try:
-        executor.spin()
+        if not node.show_viewer:
+            executor.spin()
+            return
+
+        # GLFW owns its event loop on the process main thread. ROS callbacks
+        # run in the executor thread, and sync_viewer serializes access to the
+        # exact same MuJoCo model/data pair used for trajectory execution.
+        model, data = node.viewer_handles()
+        launch_passive = importlib.import_module("mujoco.viewer").launch_passive
+        viewer = launch_passive(model, data)
+        executor_thread = threading.Thread(
+            target=executor.spin,
+            name="rebotarm-mujoco-ros-executor",
+            daemon=True,
+        )
+        executor_thread.start()
+        while rclpy.ok() and viewer.is_running():
+            node.sync_viewer(viewer)
+            time.sleep(0.01)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # The viewer must release native MuJoCo handles before the node closes
+        # the shared simulation instance.
+        if viewer is not None:
+            viewer.close()
         executor.shutdown()
+        if executor_thread is not None:
+            executor_thread.join(timeout=2.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

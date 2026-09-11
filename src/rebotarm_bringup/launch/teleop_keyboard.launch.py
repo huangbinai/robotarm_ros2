@@ -18,9 +18,11 @@ def generate_launch_description():
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     teach_record_path = LaunchConfiguration("teach_record_path")
     teach_record_rate_hz = LaunchConfiguration("teach_record_rate_hz")
+    start_teach_recorder = LaunchConfiguration("start_teach_recorder")
     teleop_config = LaunchConfiguration("teleop_config")
     keyboard_prefix = LaunchConfiguration("keyboard_prefix")
     bringup_share = FindPackageShare("rebotarm_bringup")
+    description_share = FindPackageShare("rebotarm_description")
     core_launch = PathJoinSubstitution(
         [bringup_share, "launch", "core.launch.py"]
     )
@@ -42,25 +44,26 @@ def generate_launch_description():
                 default_value="teleop_records/teach_record.jsonl",
             ),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
+            DeclareLaunchArgument("start_teach_recorder", default_value="false"),
             DeclareLaunchArgument(
                 "keyboard_prefix",
                 default_value="bash -lc 'exec \"$0\" \"$@\" < /dev/tty'",
             ),
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
                 default_value=PathJoinSubstitution(
-                    [bringup_share, "config", "gripper.yaml"]
+                    [description_share, "config", "gripper.yaml"]
                 ),
             ),
             DeclareLaunchArgument(
                 "teleop_config",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("rebotarm_interactive_control"),
+                        FindPackageShare("rebotarm_bringup"),
                         "config",
                         "teleop_control.yaml",
                     ]
@@ -76,6 +79,7 @@ def generate_launch_description():
                     "joint_state_rate": joint_state_rate,
                     "teach_record_path": teach_record_path,
                     "teach_record_rate_hz": teach_record_rate_hz,
+                    "start_teach_recorder": start_teach_recorder,
                     "use_hardware": use_hardware,
                     "hardware_mode": hardware_mode,
                     "use_moveit_preview": "false",

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import sys
+import threading
 
+import message_filters
 import rclpy
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformListener
 
 from .aruco_reference import (
@@ -12,7 +16,7 @@ from .aruco_reference import (
     detect_aruco_center_in_camera,
     transform_camera_point_to_base,
 )
-from .camera.network_mjpeg_driver import NetworkMjpegConfig, NetworkMjpegDriver
+from .perception_frames import camera_info_payload, color_image_to_array, require_fresh
 from .tcp_calibration import average_offsets, estimate_sample_offset, format_tcp_offset_yaml
 
 
@@ -42,29 +46,30 @@ class AutoArucoReferenceProvider:
     def __init__(
         self,
         *,
-        driver,
+        frame_supplier,
         tf_buffer,
         base_frame: str,
         camera_frame: str,
         lookup_timeout_sec: float,
         detector,
     ) -> None:
-        self.driver = driver
+        self.frame_supplier = frame_supplier
         self.tf_buffer = tf_buffer
         self.base_frame = base_frame
         self.camera_frame = camera_frame
         self.lookup_timeout_sec = lookup_timeout_sec
         self.detector = detector
+        self.capture_stamp = None
 
     def reference_position(self) -> tuple[float, float, float]:
-        color_bgr, _ = self.driver.get_frame()
-        if color_bgr is None:
-            raise RuntimeError("failed to capture color image for ArUco reference")
-        camera_point = self.detector(color_bgr)
+        color, info = self.frame_supplier()
+        color_bgr = color_image_to_array(color)
+        camera_point = self.detector(color_bgr, info)
+        self.capture_stamp = color.header.stamp
         tf_msg = self.tf_buffer.lookup_transform(
             self.base_frame,
             self.camera_frame,
-            rclpy.time.Time(),
+            rclpy.time.Time.from_msg(self.capture_stamp),
             timeout=rclpy.duration.Duration(seconds=self.lookup_timeout_sec),
         )
         return transform_camera_point_to_base(tf_msg, camera_point_xyz=camera_point)
@@ -79,16 +84,13 @@ class TcpCalibrationNode(Node):
         self.declare_parameter("tcp_reference_position", [0.0, 0.0, 0.0])
         self.declare_parameter("sample_count", 5)
         self.declare_parameter("lookup_timeout_sec", 0.5)
-        self.declare_parameter("aruco.snapshot_url", "http://192.168.145.1:8081/snapshot.jpg")
+        self.declare_parameter("aruco.image_topic", "/camera/color/image_raw")
+        self.declare_parameter("aruco.camera_info_topic", "/camera/color/camera_info")
+        self.declare_parameter("aruco.max_frame_age_sec", 1.5)
         self.declare_parameter("aruco.camera_frame", "camera_depth_frame")
         self.declare_parameter("aruco.dictionary", "DICT_4X4_50")
         self.declare_parameter("aruco.marker_id", 0)
         self.declare_parameter("aruco.marker_length_m", 0.10)
-        self.declare_parameter("aruco.fx", 692.562744140625)
-        self.declare_parameter("aruco.fy", 692.2272338867188)
-        self.declare_parameter("aruco.cx", 641.2417602539062)
-        self.declare_parameter("aruco.cy", 361.8166198730469)
-        self.declare_parameter("aruco.dist_coeffs", [0.0, 0.0, 0.0, 0.0, 0.0])
 
         self.reference_mode = str(self.get_parameter("reference_mode").value).strip().lower()
         self.base_frame = str(self.get_parameter("base_frame").value)
@@ -103,6 +105,7 @@ class TcpCalibrationNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.offset_samples: list[tuple[float, float, float]] = []
+        self._aruco_frame = None
         self.reference_provider = self._build_reference_provider()
 
     def _build_reference_provider(self):
@@ -111,39 +114,45 @@ class TcpCalibrationNode(Node):
         if self.reference_mode != "aruco":
             raise ValueError("reference_mode must be 'manual' or 'aruco'")
 
-        snapshot_url = str(self.get_parameter("aruco.snapshot_url").value)
         camera_frame = str(self.get_parameter("aruco.camera_frame").value)
         dictionary_name = str(self.get_parameter("aruco.dictionary").value)
         marker_id = int(self.get_parameter("aruco.marker_id").value)
         marker_length_m = float(self.get_parameter("aruco.marker_length_m").value)
-        dist_coeffs = list(self.get_parameter("aruco.dist_coeffs").value)
-        camera_matrix = build_camera_matrix(
-            fx=float(self.get_parameter("aruco.fx").value),
-            fy=float(self.get_parameter("aruco.fy").value),
-            cx=float(self.get_parameter("aruco.cx").value),
-            cy=float(self.get_parameter("aruco.cy").value),
-        )
-        driver = NetworkMjpegDriver(
-            NetworkMjpegConfig(
-                snapshot_url=snapshot_url,
-                stream_url="",
-                frame_timeout_ms=1000,
-            )
-        )
-        driver.open()
+        self._aruco_subscribers = [
+            message_filters.Subscriber(self, Image, str(self.get_parameter("aruco.image_topic").value), qos_profile=qos_profile_sensor_data),
+            message_filters.Subscriber(self, CameraInfo, str(self.get_parameter("aruco.camera_info_topic").value), qos_profile=qos_profile_sensor_data),
+        ]
+        self._aruco_sync = message_filters.TimeSynchronizer(self._aruco_subscribers, 10)
+        self._aruco_sync.registerCallback(lambda image, info: setattr(self, "_aruco_frame", (image, info)))
 
-        def detector(color_bgr):
+        def frame_supplier():
+            frame = self._aruco_frame
+            if frame is None:
+                raise RuntimeError("waiting for local ROS image and CameraInfo")
+            image, info = frame
+            require_fresh(image.header, self.get_clock().now().nanoseconds,
+                          float(self.get_parameter("aruco.max_frame_age_sec").value))
+            if image.header.frame_id != camera_frame or info.header.frame_id != camera_frame:
+                raise ValueError("ArUco optical frame does not match ROS CameraInfo")
+            if (image.width, image.height) != (info.width, info.height):
+                raise ValueError("ArUco image and CameraInfo dimensions differ")
+            camera_info_payload(info)
+            return frame
+
+        def detector(color_bgr, info):
+            intrinsics = camera_info_payload(info)
+            camera_matrix = build_camera_matrix(**{key: intrinsics[key] for key in ("fx", "fy", "cx", "cy")})
             return detect_aruco_center_in_camera(
                 color_bgr,
                 camera_matrix=camera_matrix,
                 marker_length_m=marker_length_m,
                 dictionary_name=dictionary_name,
                 marker_id=marker_id,
-                dist_coeffs=dist_coeffs,
+                dist_coeffs=list(info.d),
             )
 
         return AutoArucoReferenceProvider(
-            driver=driver,
+            frame_supplier=frame_supplier,
             tf_buffer=self.tf_buffer,
             base_frame=self.base_frame,
             camera_frame=camera_frame,
@@ -163,7 +172,7 @@ class TcpCalibrationNode(Node):
         tf_msg = self.tf_buffer.lookup_transform(
             self.base_frame,
             self.end_link_frame,
-            rclpy.time.Time(),
+            rclpy.time.Time.from_msg(self.reference_provider.capture_stamp) if self.reference_provider is not None else rclpy.time.Time(),
             timeout=rclpy.duration.Duration(seconds=self.lookup_timeout_sec),
         )
         offset = estimate_offset_from_transform(
@@ -177,21 +186,19 @@ class TcpCalibrationNode(Node):
         return average_offsets(self.offset_samples)
 
 
-def _spin_until_tf_ready(node: TcpCalibrationNode) -> None:
-    for _ in range(10):
-        rclpy.spin_once(node, timeout_sec=0.1)
-
-
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = TcpCalibrationNode()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
     try:
         node.get_logger().info(
             "TCP calibration ready. Align the real gripper center to "
             f"{node.reference_mode} reference in {node.base_frame}, then press Enter "
             f"for each of {node.sample_count} samples."
         )
-        _spin_until_tf_ready(node)
         for index in range(node.sample_count):
             input(f"Sample {index + 1}/{node.sample_count}: press Enter after alignment...")
             try:
@@ -204,7 +211,6 @@ def main(args=None) -> None:
                 f"{len(node.offset_samples)} offset="
                 f"({offset[0]:+.6f}, {offset[1]:+.6f}, {offset[2]:+.6f})"
             )
-            rclpy.spin_once(node, timeout_sec=0.1)
 
         result = node.average_result()
         print("")
@@ -215,6 +221,8 @@ def main(args=None) -> None:
     except (KeyboardInterrupt, EOFError, ExternalShutdownException):
         pass
     finally:
+        executor.shutdown()
+        thread.join(timeout=2.0)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

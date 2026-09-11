@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from ultralytics import YOLO
 
 
 class YoloDetector:
@@ -15,6 +14,8 @@ class YoloDetector:
         use_world: bool,
         custom_classes: Sequence[str],
     ) -> None:
+        from ultralytics import YOLO
+
         self._model = YOLO(model_path)
         self._device = device
         self._conf_threshold = conf_threshold

@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -24,9 +24,7 @@ def generate_launch_description():
 
     graspnet_candidates_topic = LaunchConfiguration("graspnet_candidates_topic")
     graspnet_source_mode = LaunchConfiguration("graspnet_source_mode")
-    graspnet_candidates_url = LaunchConfiguration("graspnet_candidates_url")
-    graspnet_network_timeout_ms = LaunchConfiguration("graspnet_network_timeout_ms")
-    graspnet_network_poll_hz = LaunchConfiguration("graspnet_network_poll_hz")
+    vision_python = LaunchConfiguration("vision_python_executable")
     graspnet_model_root = LaunchConfiguration("graspnet_model_root")
     graspnet_checkpoint_path = LaunchConfiguration("graspnet_checkpoint_path")
     graspnet_device = LaunchConfiguration("graspnet_device")
@@ -75,20 +73,25 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
+            DeclareLaunchArgument("show_open3d", default_value="false"),
+            Node(
+                package="rebotarm_vision", executable="rebotarm_graspnet_viewer",
+                name="rebotarm_graspnet_viewer", output="screen", prefix=vision_python,
+                condition=IfCondition(LaunchConfiguration("show_open3d")),
+                parameters=[PathJoinSubstitution([vision_share, "config", "graspnet_viewer.yaml"])],
+            ),
             DeclareLaunchArgument("start_vision", default_value="true"),
             DeclareLaunchArgument("start_graspnet_baseline", default_value="true"),
             DeclareLaunchArgument("start_candidate_ik_filter", default_value="true"),
             DeclareLaunchArgument("start_visual_grasp_markers", default_value="true"),
             DeclareLaunchArgument("graspnet_candidates_topic", default_value="/grasp/graspnet_candidates"),
-            DeclareLaunchArgument("graspnet_source_mode", default_value="network"),
-            DeclareLaunchArgument("graspnet_candidates_url", default_value="http://192.168.145.1:8081/graspnet_candidates.json"),
-            DeclareLaunchArgument("graspnet_network_timeout_ms", default_value="1000"),
-            DeclareLaunchArgument("graspnet_network_poll_hz", default_value="0.5"),
+            DeclareLaunchArgument("graspnet_source_mode", default_value="ros"),
+            DeclareLaunchArgument("vision_python_executable", default_value=EnvironmentVariable("REBOTARM_VISION_PYTHON", default_value="python3")),
             DeclareLaunchArgument("graspnet_model_root", default_value=""),
             DeclareLaunchArgument("graspnet_checkpoint_path", default_value=""),
             DeclareLaunchArgument("graspnet_device", default_value="cuda:0"),
-            DeclareLaunchArgument("graspnet_backend_module", default_value="graspnet_baseline_inference"),
-            DeclareLaunchArgument("graspnet_max_grasps", default_value="10"),
+            DeclareLaunchArgument("graspnet_backend_module", default_value="rebotarm_vision.graspnet_inference"),
+            DeclareLaunchArgument("graspnet_max_grasps", default_value="5"),
             DeclareLaunchArgument("graspnet_max_points", default_value="20000"),
             DeclareLaunchArgument("filtered_candidates_topic", default_value="/grasp/filtered_candidates"),
             DeclareLaunchArgument("filtered_plan_topic", default_value="/grasp/filtered_plan"),
@@ -136,6 +139,7 @@ def generate_launch_description():
             Node(
                 package="rebotarm_vision",
                 executable="rebotarm_graspnet_baseline_node",
+                prefix=vision_python,
                 name="rebotarm_graspnet_baseline_node",
                 output="screen",
                 condition=IfCondition(start_graspnet_baseline),
@@ -144,13 +148,11 @@ def generate_launch_description():
                     {
                         "input_color_topic": "/camera/color/image_raw",
                         "input_depth_topic": "/camera/depth/image_raw",
+                        "input_camera_info_topic": "/camera/depth/camera_info",
                         "input_detections_topic": "/grasp/detections",
                         "output_candidates_topic": graspnet_candidates_topic,
                         "output_frame_id": "camera_depth_frame",
                         "source_mode": graspnet_source_mode,
-                        "network_candidates_url": graspnet_candidates_url,
-                        "network_timeout_ms": graspnet_network_timeout_ms,
-                        "network_poll_hz": graspnet_network_poll_hz,
                         "model_root": graspnet_model_root,
                         "checkpoint_path": graspnet_checkpoint_path,
                         "device": graspnet_device,
@@ -242,4 +244,3 @@ def generate_launch_description():
             ),
         ]
     )
-

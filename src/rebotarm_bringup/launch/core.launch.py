@@ -24,21 +24,24 @@ def load_yaml(package_name, relative_path):
 
 def generate_launch_description():
     # 正式交互基础入口：支持真机控制器、MoveIt 预览、fake joint states 和 RViz。
-    # 网页遥操作/Teach 不在此处启动，完整网页入口是 rebotarm_app.launch.py。
+    # 网页入口按需开启独立 TeachRecorderNode；普通 RViz/控制器入口默认关闭。
     arm_namespace = LaunchConfiguration("arm_namespace")
     bringup_share = FindPackageShare("rebotarm_bringup")
-    interactive_share = FindPackageShare("rebotarm_interactive_control")
+    description_share = FindPackageShare("rebotarm_description")
+    config_share = FindPackageShare("rebotarm_bringup")
     moveit_share = FindPackageShare("rebotarm_moveit_config")
     arm_config = LaunchConfiguration("arm_config")
     gripper_config = LaunchConfiguration("gripper_config")
     channel = LaunchConfiguration("channel")
     shutdown_safe_home = LaunchConfiguration("shutdown_safe_home")
+    enable_on_trajectory = LaunchConfiguration("enable_on_trajectory")
     use_local_rviz = LaunchConfiguration("use_local_rviz")
     use_moveit_preview = LaunchConfiguration("use_moveit_preview")
     hardware_mode = LaunchConfiguration("hardware_mode")
     use_hardware = LaunchConfiguration("use_hardware")
     teach_record_path = LaunchConfiguration("teach_record_path")
     teach_record_rate_hz = LaunchConfiguration("teach_record_rate_hz")
+    start_teach_recorder = LaunchConfiguration("start_teach_recorder")
     joint_state_rate = LaunchConfiguration("joint_state_rate")
     cmd_arbitration = LaunchConfiguration("cmd_arbitration")
     frame_id = LaunchConfiguration("frame_id")
@@ -73,7 +76,7 @@ def generate_launch_description():
     )
     # URDF 来自 bringup；MoveIt 模型与规划参数来自 rebotarm_moveit_config。
     urdf_file = PathJoinSubstitution(
-        [bringup_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
+        [description_share, "description", "urdf", "reBot-DevArm_fixend.urdf"]
     )
     robot_description = ParameterValue(Command(["cat ", urdf_file]), value_type=str)
     controller_safety_params = PathJoinSubstitution(
@@ -84,7 +87,10 @@ def generate_launch_description():
     )
     moveit_config = (
         MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
-        .robot_description(file_path="config/rebotarm.urdf")
+        .robot_description(file_path=os.path.join(
+            get_package_share_directory("rebotarm_description"),
+            "description", "urdf", "reBot-DevArm_fixend.urdf",
+        ))
         .robot_description_semantic(file_path="config/rebotarm.srdf")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
@@ -108,15 +114,16 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "arm_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "arm.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "arm.yaml"]),
             ),
             DeclareLaunchArgument(
                 "gripper_config",
-                default_value=PathJoinSubstitution([bringup_share, "config", "gripper.yaml"]),
+                default_value=PathJoinSubstitution([description_share, "config", "gripper.yaml"]),
             ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("channel", default_value=""),
             DeclareLaunchArgument("shutdown_safe_home", default_value="true"),
+            DeclareLaunchArgument("enable_on_trajectory", default_value="false"),
             DeclareLaunchArgument("joint_state_rate", default_value="100.0"),
             DeclareLaunchArgument("cmd_arbitration", default_value="reject"),
             DeclareLaunchArgument("use_local_rviz", default_value="true"),
@@ -133,6 +140,7 @@ def generate_launch_description():
                 default_value="teleop_records/teach_record.jsonl",
             ),
             DeclareLaunchArgument("teach_record_rate_hz", default_value="150.0"),
+            DeclareLaunchArgument("start_teach_recorder", default_value="false"),
             DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("ee_frame_id", default_value="end_link"),
             DeclareLaunchArgument("start_passive_joint_state_publisher", default_value="true"),
@@ -144,7 +152,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "interactive_config",
                 default_value=PathJoinSubstitution(
-                    [interactive_share, "config", "interactive_control.yaml"]
+                    [config_share, "config", "interactive_control.yaml"]
                 ),
             ),
             # 仅在 use_moveit_preview=true 时引入 MoveIt。
@@ -174,8 +182,7 @@ def generate_launch_description():
                         "gripper_config": gripper_config,
                         "channel": channel,
                         "shutdown_safe_home": shutdown_safe_home,
-                        "teach_record_path": teach_record_path,
-                        "teach_record_rate_hz": teach_record_rate_hz,
+                        "enable_on_trajectory": enable_on_trajectory,
                         "joint_state_rate": joint_state_rate,
                         "cmd_arbitration": cmd_arbitration,
                         "arm_namespace": arm_namespace,
@@ -184,7 +191,23 @@ def generate_launch_description():
                     }
                 ],
             ),
-            # 非 MoveIt 预览模式下，使用视觉关节状态链路显示机器人模型。
+            # 录制服务归属 teach；应用入口显式开启，普通控制入口保持关闭。
+            Node(
+                package="rebotarm_teach",
+                executable="TeachRecorderNode",
+                name="teach_recorder_node",
+                output="screen",
+                condition=IfCondition(start_teach_recorder),
+                parameters=[{
+                    "arm_namespace": arm_namespace,
+                    "record_path": teach_record_path,
+                    "sample_rate_hz": teach_record_rate_hz,
+                    "start_on_launch": False,
+                    "keyboard_quit_enabled": False,
+                    "require_gravity_comp": ParameterValue(real_hardware, value_type=bool),
+                    "use_sim_time": use_sim_time,
+                }],
+            ),
             Node(
                 package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",

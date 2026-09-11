@@ -5,25 +5,11 @@ import importlib
 import math
 import sys
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Iterable
 
 import numpy as np
 
-from rebotarm_msgs.msg import Detection2D, GraspCandidate, GraspCandidateArray
-
-
-@dataclass(frozen=True)
-class CameraIntrinsics:
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-
-
-@dataclass(frozen=True)
-class PointCloudCrop:
-    points: np.ndarray
-    colors: np.ndarray
+from rebotarm_msgs.msg import GraspCandidate, GraspCandidateArray
 
 
 @dataclass(frozen=True)
@@ -33,57 +19,6 @@ class GraspNetPrediction:
     rotation_matrix: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
     width_m: float
     object_length_m: float = 0.0
-
-
-class GraspNetBackendProtocol(Protocol):
-    @property
-    def available(self) -> bool:
-        ...
-
-    def infer(self, *, points: np.ndarray, colors: np.ndarray, max_grasps: int) -> list[GraspNetPrediction]:
-        ...
-
-
-def build_point_cloud_for_detection(
-    depth_mm: np.ndarray,
-    color_bgr: np.ndarray | None,
-    detection: Detection2D,
-    intrinsics: CameraIntrinsics,
-    *,
-    min_depth_m: float,
-    max_depth_m: float,
-) -> PointCloudCrop:
-    depth = np.asarray(depth_mm)
-    if depth.ndim != 2:
-        raise ValueError("depth image must be a 2D array")
-    height, width = depth.shape
-    x_min = max(0, min(width - 1, int(detection.x_min)))
-    y_min = max(0, min(height - 1, int(detection.y_min)))
-    x_max = max(x_min + 1, min(width, int(detection.x_max)))
-    y_max = max(y_min + 1, min(height, int(detection.y_max)))
-
-    roi_depth_m = depth[y_min:y_max, x_min:x_max].astype(np.float32) * 0.001
-    valid = np.isfinite(roi_depth_m) & (roi_depth_m >= float(min_depth_m)) & (roi_depth_m <= float(max_depth_m))
-    v_local, u_local = np.nonzero(valid)
-    if len(u_local) == 0:
-        return PointCloudCrop(points=np.empty((0, 3), dtype=np.float32), colors=np.empty((0, 3), dtype=np.float32))
-
-    z = roi_depth_m[v_local, u_local]
-    u = u_local.astype(np.float32) + float(x_min)
-    v = v_local.astype(np.float32) + float(y_min)
-    x = (u - float(intrinsics.cx)) * z / float(intrinsics.fx)
-    y = (v - float(intrinsics.cy)) * z / float(intrinsics.fy)
-    points = np.column_stack((x, y, z)).astype(np.float32)
-
-    if color_bgr is None:
-        colors = np.ones_like(points, dtype=np.float32) * 0.5
-    else:
-        color = np.asarray(color_bgr)
-        if color.shape[:2] != depth.shape:
-            raise ValueError("color and depth image sizes must match")
-        bgr = color[v.astype(np.int32), u.astype(np.int32), :3].astype(np.float32) / 255.0
-        colors = bgr[:, ::-1].astype(np.float32)
-    return PointCloudCrop(points=points, colors=colors)
 
 
 def predictions_to_candidate_array(
@@ -120,43 +55,11 @@ def predictions_to_candidate_array(
     return array
 
 
-def payload_to_candidate_array(
-    payload: dict,
-    *,
-    fallback_frame_id: str,
-    max_candidates: int,
-) -> GraspCandidateArray:
-    predictions: list[GraspNetPrediction] = []
-    class_names: list[str] = []
-    for item in list(payload.get("candidates", []))[: max(0, int(max_candidates))]:
-        if not isinstance(item, dict):
-            continue
-        try:
-            predictions.append(_prediction_from_raw(item))
-            class_names.append(str(item.get("class_name", payload.get("class_name", ""))))
-        except Exception:
-            continue
-    source = str(payload.get("source", "windows_graspnet_baseline"))
-    frame_id = str(payload.get("frame_id", fallback_frame_id) or fallback_frame_id)
-    class_name = class_names[0] if class_names else str(payload.get("class_name", ""))
-    candidates = predictions_to_candidate_array(
-        predictions,
-        frame_id=frame_id,
-        class_name=class_name,
-        max_candidates=max_candidates,
-        source=source,
-    )
-    for candidate, name in zip(candidates.candidates, class_names):
-        candidate.class_name = name
-    return candidates
-
-
 class GraspNetBaselineBackend:
     """Thin optional wrapper around an installed GraspNet baseline inference module.
 
     The upstream GraspNet baseline repository is a research codebase, so this
-    adapter intentionally expects a tiny local wrapper module with a stable API:
-    `GraspNetBaselineInference(model_root, checkpoint_path, device).infer(...)`.
+    adapter uses the packaged full-scene inference wrapper and its RGB-D API.
     """
 
     def __init__(
@@ -165,7 +68,8 @@ class GraspNetBaselineBackend:
         model_root: str,
         checkpoint_path: str = "",
         device: str = "cuda:0",
-        module_name: str = "graspnet_baseline_inference",
+        module_name: str = "rebotarm_vision.graspnet_inference",
+        num_point: int = 20000,
     ) -> None:
         self.model_root = str(model_root).strip()
         self.checkpoint_path = str(checkpoint_path).strip()
@@ -183,16 +87,20 @@ class GraspNetBaselineBackend:
             model_root=self.model_root,
             checkpoint_path=self.checkpoint_path,
             device=self.device,
+            num_point=int(num_point),
         )
 
     @property
     def available(self) -> bool:
         return self._runner is not None
 
-    def infer(self, *, points: np.ndarray, colors: np.ndarray, max_grasps: int) -> list[GraspNetPrediction]:
+    def infer(self, *, color_bgr, depth_mm, detections, camera_info, max_grasps: int) -> list[GraspNetPrediction]:
         if self._runner is None:
             raise RuntimeError("GraspNet baseline backend is not configured")
-        raw_predictions = self._runner.infer(points=points, colors=colors, max_grasps=max_grasps)
+        raw_predictions = self._runner.infer(
+            color_bgr=color_bgr, depth_mm=depth_mm, detections=detections,
+            camera_info=camera_info, max_grasps=max_grasps,
+        )
         return [_prediction_from_raw(item) for item in raw_predictions]
 
 

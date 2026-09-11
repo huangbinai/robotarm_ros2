@@ -14,7 +14,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rebotarm_msgs.msg import ArmStatus, JointMotorState
-from rebotarm_msgs.srv import SetTeachRecordPath
+from rebotarm_msgs.srv import SetGripper, SetTeachRecordPath
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -139,9 +139,9 @@ class TeleopStatusPanelNode(Node):
         self.declare_parameter("web_gripper_max_effort_limit", 1.5)
         self._arm_namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._joint_names = tuple(str(v) for v in self.get_parameter("joint_names").value)
-        bringup_share = Path(get_package_share_directory("rebotarm_bringup"))
-        self._urdf_path = bringup_share / "description" / "urdf" / "reBot-DevArm_fixend.urdf"
-        self._mesh_dir = bringup_share / "description" / "meshes"
+        description_share = Path(get_package_share_directory("rebotarm_description"))
+        self._urdf_path = description_share / "description" / "urdf" / "reBot-DevArm_fixend.urdf"
+        self._mesh_dir = description_share / "description" / "meshes"
         lower = tuple(float(v) for v in self.get_parameter("joint_lower_limits").value)
         upper = tuple(float(v) for v in self.get_parameter("joint_upper_limits").value)
         fallback_limits = build_joint_limits(
@@ -176,7 +176,6 @@ class TeleopStatusPanelNode(Node):
         self._gripper_limits = (gripper_lower, gripper_upper)
         self._use_hardware = bool(self.get_parameter("use_hardware").value)
         self._web_command_gateway = WebCommandGateway()
-        self._sim_gripper_position = gripper_lower
         self._store = TeleopStatusStore()
         self._action_client = ActionClient(
             self,
@@ -208,6 +207,9 @@ class TeleopStatusPanelNode(Node):
             self,
             GripperCommand,
             f"/{self._arm_namespace}/gripper/command",
+        )
+        self._gripper_sim_service_client = self.create_client(
+            SetGripper, f"/{self._arm_namespace}/gripper/set",
         )
         self._gravity_start_client = self.create_client(
             Trigger,
@@ -307,6 +309,8 @@ class TeleopStatusPanelNode(Node):
         self._web_gripper_client = WebGripperClient(
             action_client=self._gripper_action_client,
             goal_factory=GripperCommand.Goal,
+            sim_service_client=self._gripper_sim_service_client,
+            sim_request_factory=SetGripper.Request,
             status_sink=lambda status: self._store.update_teleop_status(
                 "web_gripper",
                 status,
@@ -382,14 +386,6 @@ class TeleopStatusPanelNode(Node):
             self._on_gripper_state,
             sensor_qos,
         )
-        self._sim_gripper_state_pub = None
-        if not self._use_hardware:
-            self._sim_gripper_state_pub = self.create_publisher(
-                JointMotorState,
-                f"/{self._arm_namespace}/gripper/state",
-                sensor_qos,
-            )
-            self.create_timer(0.1, self._publish_simulated_gripper_state)
         self.create_timer(1.0, self._update_gravity_comp_status)
         self.create_timer(
             max(float(self.get_parameter("replay_monitor_period_sec").value), 0.02),
@@ -487,7 +483,7 @@ class TeleopStatusPanelNode(Node):
             return ()
         joints = self._store.snapshot().joints
         gripper_state = joints.get("gripper", {})
-        gripper_position = gripper_state.get("position", self._sim_gripper_position)
+        gripper_position = gripper_state.get("position", self._gripper_limits[0])
         left, right = gripper_opening_to_finger_joint_positions(
             float(gripper_position),
             self._gripper_limits,
@@ -1003,29 +999,12 @@ class TeleopStatusPanelNode(Node):
         if not decision.accepted:
             self._store.update_teleop_status("web_gripper", result["status"])
             return result["response"]
-        if result.get("simulated_position") is not None:
-            self._sim_gripper_position = float(result["simulated_position"])
-            self._publish_simulated_gripper_state()
-            self._store.update_teleop_status("web_gripper", result["status"])
-            return gripper_decision_response(decision)
         if not result["accepted"]:
             self._store.update_teleop_status("web_gripper", result["status"])
             return result["response"]
         self._web_gripper_client.observe_result(result)
         self._store.update_teleop_status("web_gripper", result["status"])
         return gripper_decision_response(decision)
-
-    def _publish_simulated_gripper_state(self) -> None:
-        if self._sim_gripper_state_pub is None:
-            return
-        msg = JointMotorState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.joint_name = "gripper"
-        msg.position = float(self._sim_gripper_position)
-        msg.velocity = 0.0
-        msg.torque = 0.0
-        msg.status_code = 1
-        self._sim_gripper_state_pub.publish(msg)
 
     def _on_joint_state(self, msg: JointState) -> None:
         self._store.update_joint_state(
@@ -1144,4 +1123,3 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
-

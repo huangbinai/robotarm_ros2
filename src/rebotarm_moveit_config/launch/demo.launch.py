@@ -28,7 +28,10 @@ def generate_launch_description():
 
     moveit_config = (
         MoveItConfigsBuilder("rebotarm", package_name="rebotarm_moveit_config")
-        .robot_description(file_path="config/rebotarm.urdf")
+        .robot_description(file_path=os.path.join(
+            get_package_share_directory("rebotarm_description"),
+            "description", "urdf", "reBot-DevArm_fixend.urdf",
+        ))
         .robot_description_semantic(file_path="config/rebotarm.srdf")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
@@ -89,7 +92,7 @@ def generate_launch_description():
                 parameters=[{"use_sim_time": use_sim_time}],
             ),
             Node(
-                package="rebotarm_interactive_control",
+                package="rebotarm_teleop",
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",

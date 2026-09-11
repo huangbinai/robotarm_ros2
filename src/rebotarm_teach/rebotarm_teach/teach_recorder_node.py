@@ -19,6 +19,7 @@ from std_srvs.srv import Trigger
 
 from .parameter_helpers import sensor_qos_kwargs
 from .teach_recording import TeachSample, encode_teach_sample, is_quit_key
+from .record_joint_selection import select_record_joints
 
 
 class TeachRecorderNode(Node):
@@ -51,6 +52,7 @@ class TeachRecorderNode(Node):
         self._samples_written = 0
         self._first_sample_stamp: float | None = None
         self._last_sample_stamp: float | None = None
+        self._last_recorded_source_stamp_ns: int | None = None
         self._writing_state = "open"
         self._last_write_error = ""
         self._auto_start_attempts = 0
@@ -139,6 +141,8 @@ class TeachRecorderNode(Node):
         self._samples_written = 0
         self._first_sample_stamp = None
         self._last_sample_stamp = None
+        self._last_recorded_source_stamp_ns = None
+        self._latest_joint_state = None
         self._writing_state = "open"
         self._last_write_error = ""
 
@@ -306,14 +310,29 @@ class TeachRecorderNode(Node):
             self._writing_state = "waiting_gravity_comp"
             self._publish_status("waiting", "waiting for GRAVITY_COMP state")
             return
-        sample_stamp = self.get_clock().now().nanoseconds / 1_000_000_000.0
+        # Preserve the producer timestamp. A timer tick is not a new sample.
+        source_stamp_ns = (
+            int(joint_state.header.stamp.sec) * 1_000_000_000
+            + int(joint_state.header.stamp.nanosec)
+        )
+        if source_stamp_ns < 0 or (
+            self._last_recorded_source_stamp_ns is not None
+            and source_stamp_ns <= self._last_recorded_source_stamp_ns
+        ):
+            return
+        sample_stamp = source_stamp_ns / 1_000_000_000.0
+        try:
+            positions, velocities, efforts = select_record_joints(joint_state, self._joint_names)
+        except ValueError as exc:
+            self._publish_status("waiting", str(exc))
+            return
         sample = TeachSample(
             stamp=sample_stamp,
-            joint_names=tuple(str(v) for v in joint_state.name),
-            positions=tuple(float(v) for v in joint_state.position),
-            velocities=tuple(float(v) for v in joint_state.velocity),
-            efforts=tuple(float(v) for v in joint_state.effort),
-            motor_status=dict(self._motor_status),
+            joint_names=self._joint_names,
+            positions=positions,
+            velocities=velocities,
+            efforts=efforts,
+            motor_status={name: value for name, value in self._motor_status.items() if name in self._joint_names},
             arm_state=self._arm_state,
         )
         if self._first_sample_stamp is None:
@@ -331,6 +350,7 @@ class TeachRecorderNode(Node):
             return
         self._writing_state = "writing"
         self._last_write_error = ""
+        self._last_recorded_source_stamp_ns = source_stamp_ns
         self._samples_written += 1
         self._publish_status("recording", f"samples={self._samples_written}")
 

@@ -25,6 +25,7 @@ class GripperVisualJointStateNode(Node):
             "required_arm_joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
         )
+        self.declare_parameter("publish_default_arm_state", False)
 
         namespace = str(self.get_parameter("arm_namespace").value).strip("/")
         self._namespace = namespace
@@ -38,6 +39,9 @@ class GripperVisualJointStateNode(Node):
         self._required_arm_joints = {
             str(name) for name in list(self.get_parameter("required_arm_joint_names").value)
         }
+        self._publish_default_arm_state = bool(
+            self.get_parameter("publish_default_arm_state").value
+        )
         self._latest_arm_state: JointState | None = None
         self._latest_gripper_position = lower
         self._warned_invalid_arm_state = False
@@ -63,6 +67,12 @@ class GripperVisualJointStateNode(Node):
             self._on_arm_joint_state,
             sensor_qos,
         )
+        if self._publish_default_arm_state:
+            self._default_state_timer = self.create_timer(
+                0.1, self._publish_default_arm_state_once
+            )
+        else:
+            self._default_state_timer = None
         self.create_subscription(
             JointMotorState,
             f"/{namespace}/gripper/state",
@@ -72,6 +82,17 @@ class GripperVisualJointStateNode(Node):
         self.get_logger().info(
             f"publishing RViz visual joint states on /{namespace}/visual_joint_states"
         )
+
+    def _publish_default_arm_state_once(self) -> None:
+        if self._latest_arm_state is not None:
+            self._default_state_timer.cancel()
+            return
+        state = JointState()
+        state.header.stamp = self.get_clock().now().to_msg()
+        state.name = sorted(self._required_arm_joints)
+        state.position = [0.0] * len(state.name)
+        self._latest_arm_state = state
+        self._publish_visual_state(state.header)
 
     def _on_arm_joint_state(self, msg: JointState) -> None:
         if not self._valid_arm_joint_state(msg):

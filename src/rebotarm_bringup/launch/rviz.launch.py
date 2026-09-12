@@ -28,7 +28,14 @@ def generate_launch_description():
                 executable="GripperVisualJointStateNode",
                 name="gripper_visual_joint_state_node",
                 output="screen",
-                parameters=[{"arm_namespace": arm_namespace}],
+                parameters=[
+                    {
+                        "arm_namespace": arm_namespace,
+                        # This view-only entry has no hardware source; show a zero pose
+                        # until a real joint-state publisher is present.
+                        "publish_default_arm_state": True,
+                    }
+                ],
             ),
             Node(
                 package="robot_state_publisher",

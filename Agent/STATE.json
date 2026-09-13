@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-06T22:32:22+08:00",
+  "generated_at": "2026-09-13T14:28:02+08:00",
   "plan_source": "Agent/PROJECT_STATUS.md",
   "completion_basis": "weighted verified checklist; not code volume or hardware readiness",
   "overall_completion_percent": 100.0,
-  "active_phase": "P0-P6 已按当前工程范围关闭，等待 operator 提供下一份规划；不得自行创建 P7",
+  "active_phase": "2026-09-13 一次性基线迁移与软件验证完成，等待后续开发范围；历史 P0-P6 记录不代表本机验收，不创建 P7",
   "phases": [
     {
       "id": "P0",
@@ -163,8 +163,8 @@
   ],
   "git": {
     "branch": "main",
-    "head": "e4eb754",
+    "head": "aa1dcc5",
     "working_tree_dirty": true
   },
-  "last_event": "- 2026-09-06T22:32:22+08:00 | actor=Codex | event=complete | note=安装脚本/模型可选打包/README已同步当前架构，独立构建验证完成，准备提交推送main | verification=无PT/engine副本13包构建通过；新install+SDK全量811 passed/7 skipped；分层20、compileall/bash/diff和3类launch参数解析通过；未重装环境或操作硬件"
+  "last_event": "- 2026-09-13T14:28:02+08:00 | actor=Codex | event=complete | note=One-time baseline migration complete; personal origin only; old local and remote history preserved; no hardware operations | verification=13-package build; system pytest 811/7; MuJoCo 817/1; vision wrapper 15/0; 818 unique cases covered; layering/resources 26; three venvs and patched MotorBridge verified; colcon package-local tests absent (documented)"
 }

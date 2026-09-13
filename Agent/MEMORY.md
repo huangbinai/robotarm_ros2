@@ -4,11 +4,13 @@
 
 ## 当前焦点
 
-- Active phase / 当前阶段：P0-P6 已按当前工程范围关闭，等待 operator 提供下一份规划；不得自行创建 P7。
+- Active phase / 当前阶段：2026-09-13 一次性基线迁移与软件验证完成，等待后续开发范围；历史 P0-P6 记录不代表本机验收，不创建 P7。
 - Completed phase / 已完成阶段：P0 机械臂安全启动与执行门控、P1 MuJoCo 基线巩固与差距整合、P2 Gemini 2 SDK 与真实 RGB-D 验收、P3 完整单 Ubuntu 视觉链路、P4 Ubuntu 本地 GraspNet、P5 hand-eye/nominal TCP/MuJoCo 标定检查，以及 P6 当前工程范围均已关闭。
 - Hardware gate / 硬件门：当前没有新的硬件动作授权。P6 关闭不授权 approach、gripper、lift、retreat、自动抓取或其他后续规划中的动作。
 
 ## 当前事实
+
+- 2026-09-13：本机新路径 `/home/huangbin/robotarm_ros2` 从源 main `aa1dcc52c7e7046f8040c2b9becd767df4d07265` 全新检出，初始工作树干净。旧目录整体移动到 `/home/huangbin/robotarm_ros2_backup_20260913_132122`，包括 .git、5 个未提交修改和全部生成文件；未恢复旧业务代码。个人远程旧 main `f2b0095a0da959b56e10140b292295b9ad9b8269` 已保存并核验为 `backup-before-rebase-20260913-132122`，通过绑定该 SHA 的 force-with-lease 替换 main。现在唯一 remote 是个人 `origin=https://github.com/huangbinai/robotarm_ros2.git`，无源仓库 remote、partial-fetch 配置或旧目录 alternates。新 13 包构建成功；系统 pytest 811 passed/7 skipped，MuJoCo pytest 817 passed/1 skipped，视觉 wrapper 15 passed，XML 去重覆盖 818 个用例。分层/资源 26、compileall、三类 launch 参数解析和 MuJoCo EGL health 通过。新 vision/GraspNet/MuJoCo venv 安装及 pip check 通过，MotorBridge 新编译为 0.4.6+rebotarm.2、feedback_sequence=true。Pinocchio 4.1.0 从新下载 ROS deb 隔离解包；日常 source `tools/source_local_environment.bash`，不 source 备份。colcon test 对 12 Python 包报无包内测试（根 tests 才是实际回归），系统 rosdep 仍不识别本地解包为 apt 安装。GraspNet 模型/原生扩展和专属 engine 未迁回；没有硬件、相机、运动、使能或校零。本轮证据及 A/B/C 差异分类见 `docs/LOCAL_PROJECT_DIFF.md`，原始日志在 `log/migration-*`。下一步先独立完善 CI/测试接线，再人工评审旧功能是否迁移。
 
 - 2026-09-06 用户要求同步安装流程与README：视觉setup改为仅打包构建时存在的默认模型，缺少PT/engine不再阻塞源码构建；启用检测时的模型路径校验保留，不静默回退。视觉依赖脚本仅安装/检查环境，不再以venv构建ROS包，PyTorch/torchvision固定到当前已安装的2.11.0+cu128/0.26.0+cu128；启动脚本通过REBOTARM_VISION_PYTHON按进程选择解释器，不激活venv、不注入全局视觉PYTHONPATH。主README、SDK说明、安装/视觉/解释器/仿真文档统一为系统Python构建、分环境运行，SDK固定版本、PT显式启动、可选外部engine、GraspNet --prefix和当前P0-P6范围状态同步；基础驱动/RViz-only预览/MuJoCo入口明确区分。TDD先复现4项旧契约失败，新增无模型/仅PT/两模型打包与文档一致性回归。无PT、无engine、无旧install的暂存源码副本在/tmp/rebot-install-audit-v5xUJa完成13包独立构建（25.2s）；仅接入已有厂商SDK后，用新install全量811 passed/7 skipped，主目录相同，分层20、compileall/bash/diff检查通过；安装后3类launch --show-args通过，无节点执行。只使用本机已有系统依赖，没有全新系统网络安装/engine导出/推理或真机验收；未改主目录build/install、现有venv、模型或其他开发工作树。准备普通提交同步main。
 - 2026-09-06 用户批准仓库历史材料整理：112个文件退出Git跟踪并保留本机，包含11份P1证据、主项目11份及Star Arm 6份历史计划/规格、P1 gap matrix、22文件旧仿真实现归档、57文件上游比较快照、未引用的yolo11n-seg.pt，以及3份只校验历史材料的测试。混合测试test_simulation_source_swap.py仅移除2个归档断言，保留正式入口/模型与无双后端检查；当前有效软件回归及Agent状态文件保留。所有退出跟踪文件与清理前HEAD逐字节一致且被忽略。现行文档入口已同步，过期双后端命令和PROVISIONAL授权说明更正，来源/固定commit/授权说明保留。yolo26s-seg.pt仍被视觉安装流程依赖，本次不撤下；不改运行代码、不访问硬件。第一次发布副本检查暴露7项本机历史计划校验（已随对应测试撤下）及4项缺少SDK/install环境；最终只补充既有SDK和install环境、不补历史材料，发布副本全量807 passed/7 skipped（含分层20），compileall和diff检查通过。准备普通提交同步main，其他分支及开发工作树不变；历史仍可从清理前f060d68追溯，模型分发流程留待单独整理。

@@ -39,14 +39,14 @@ rebotarm_mujoco_node:
     # 离屏传感默认关闭：纯运动仿真因此不依赖 EGL/GPU 渲染，无显卡环境也能直接跑。
     virtual_camera.enabled: false
     # 场景 XML 中定义的相机名，必须与模型里的 <camera name=...> 一致。
-    virtual_camera.camera_name: fixed_camera
+    virtual_camera.camera_name: wrist_camera
     # 发布图像时使用的光学坐标系名；下游按该 frame_id 做 TF 查询。
-    virtual_camera.frame_id: mujoco_fixed_camera_optical_frame
+    virtual_camera.frame_id: mujoco_wrist_camera_optical_frame
     # 相机在物理模型中所挂载的 body 名（模型内部坐标系）。
-    virtual_camera.parent_body_name: base_link
+    virtual_camera.parent_body_name: end_link
     # 相机静态 TF 的父坐标系名（ROS 侧）；图像据此接入 TF 树，
     # 与 parent_body_name 不一致时视觉结果会整体偏移。
-    virtual_camera.parent_frame_id: base_link
+    virtual_camera.parent_frame_id: end_link
     # 离屏图像宽度（像素）。与高度一起决定渲染开销与内参。
     virtual_camera.width: 640
     # 离屏图像高度（像素）。

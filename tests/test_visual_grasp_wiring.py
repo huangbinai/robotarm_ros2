@@ -1339,9 +1339,14 @@ def test_moveit_ompl_uses_ruckig_response_adapter_with_jerk_limits():
     joint_limits_text = _read("src/rebotarm_moveit_config/config/joint_limits.yaml")
     assert "default_planning_response_adapters/AddTimeOptimalParameterization" in ompl_text
     assert "default_planning_response_adapters/AddRuckigTrajectorySmoothing" in ompl_text
-    assert ompl_text.index("default_planning_response_adapters/AddRuckigTrajectorySmoothing") < ompl_text.index(
-        "default_planning_response_adapters/AddTimeOptimalParameterization"
-    )
+    import yaml
+    adapters = yaml.safe_load(ompl_text)["response_adapters"]
+    assert adapters == [
+        "default_planning_response_adapters/AddTimeOptimalParameterization",
+        "default_planning_response_adapters/AddRuckigTrajectorySmoothing",
+        "default_planning_response_adapters/ValidateSolution",
+        "default_planning_response_adapters/DisplayMotionPath",
+    ]
     assert "has_jerk_limits: true" in joint_limits_text
     assert "max_jerk: 20.0" in joint_limits_text
 

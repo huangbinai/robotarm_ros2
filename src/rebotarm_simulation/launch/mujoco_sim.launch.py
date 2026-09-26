@@ -78,11 +78,11 @@ def generate_launch_description():
             # 虚拟相机光学坐标系名（遵循光学惯例：z 向前、x 向右、y 向下）。
             DeclareLaunchArgument(
                 "virtual_camera_frame_id",
-                default_value="mujoco_fixed_camera_optical_frame",
+                default_value="mujoco_wrist_camera_optical_frame",
             ),
             # 虚拟相机静态外参的父坐标系；相机在该坐标系下的位姿由节点从模型中的安装位姿读取。
             DeclareLaunchArgument(
-                "virtual_camera_parent_frame_id", default_value="base_link"
+                "virtual_camera_parent_frame_id", default_value="end_link"
             ),
             # MuJoCo 离屏渲染后端（MUJOCO_GL）：egl 适合无显示器的服务器，桌面环境可改用 glfw，软件渲染用 osmesa。
             DeclareLaunchArgument("mujoco_gl", default_value="egl"),

@@ -21,6 +21,8 @@
     <mesh name="gripper_base" file="assets/gripper_base.stl" />
     <mesh name="left_finger" file="assets/left_finger.stl" />
     <mesh name="right_finger" file="assets/right_finger.stl" />
+    <mesh name="gemini2_mount_part0" file="assets/gemini2/mount_part0.stl" />
+    <mesh name="gemini2_shell" file="assets/gemini2/camera.STL" />
   </asset>
   <worldbody>
     <body name="base_link">
@@ -62,17 +64,30 @@
                     <geom name="end_link_gripper_base_visual" type="mesh" contype="0" conaffinity="0" group="2" rgba="0.627451 0.627451 0.627451 1" mesh="gripper_base" class="visual" />
                     <geom name="end_link_gripper_base_collision" type="mesh" mesh="gripper_base" class="collision" contype="1" conaffinity="1" group="3" />
                     <body name="left_finger_link">
-                      <joint name="left_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.045" actuatorfrcrange="-1 1" damping="20" armature="0.001" frictionloss="0.1" />
+                      <joint name="left_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.045" actuatorfrcrange="-1.5 1.5" damping="20" armature="0.001" frictionloss="0.1" actuatorfrclimited="true" />
                       <geom name="left_finger_link_left_finger_visual" type="mesh" contype="0" conaffinity="0" group="2" rgba="0.627451 0.627451 0.627451 1" mesh="left_finger" class="visual" />
                       <geom name="left_finger_link_left_finger_collision" type="mesh" mesh="left_finger" class="collision" contype="1" conaffinity="1" group="3" friction="1.2 0.02 0.001" />
                     </body>
                     <body name="right_finger_link">
-                      <joint name="right_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="-0.045 0" actuatorfrcrange="-1 1" damping="20" armature="0.001" frictionloss="0.1" />
+                      <joint name="right_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="-0.045 0" actuatorfrcrange="-1.5 1.5" damping="20" armature="0.001" frictionloss="0.1" actuatorfrclimited="true" />
                       <geom name="right_finger_link_right_finger_visual" type="mesh" contype="0" conaffinity="0" group="2" rgba="0.627451 0.627451 0.627451 1" mesh="right_finger" class="visual" />
                       <geom name="right_finger_link_right_finger_collision" type="mesh" mesh="right_finger" class="collision" contype="1" conaffinity="1" group="3" friction="1.2 0.02 0.001" />
                     </body>
                     <site name="ee_site" pos="-0.04 0 0" size="0.008" />
                     <site name="wrist_camera_mount" pos="-0.04 0 0.04" quat="1 0 0 0" size="0.005" />
+                    <camera name="wrist_camera" pos="-0.085 0.01 0.045" quat="0.52309281087 0.476997913881 -0.405717913899 -0.578134824856" resolution="640 480" sensorsize="0.0064 0.0048" focalpixel="519.422 519.17" principalpixel="-1.181 1.862" />
+                    <body name="gemini2_mount" pos="-0.08630933 0.00020790689328 7.587263523e-07" quat="0.5 0.5 0.5 0.5">
+                      <body name="gemini2_mount_part0">
+                        <inertial pos="0.00173054255996 0.0527321114727 -0.013516537449" mass="0.022" fullinertia="4.47569786106e-06 1.42079810965e-05 1.71545232971e-05 -2.01204022696e-07 -2.42559046932e-07 -2.26879380975e-08" />
+                        <geom class="visual" name="gemini2_mount_part0_visual" type="mesh" mesh="gemini2_mount_part0" rgba="0.50 0.50 0.50 1" mass="0" />
+                        <geom class="collision" name="gemini2_mount_part0_collision" type="mesh" mesh="gemini2_mount_part0" mass="0" />
+                      </body>
+                      <body name="gemini2_camera" pos="-4.0854564881e-05 0.0570258847817 0.00171630832144" quat="-0.560984851945 0.43046021406 0.43046021406 0.560984851945">
+                        <inertial pos="0 0 0" mass="0.098" diaginertia="7.12541666667e-05 1.24541666667e-05 7.35e-05" />
+                        <geom class="visual" name="gemini2_camera_visual" type="mesh" mesh="gemini2_shell" pos="-0.00509999832138 5.49666583538e-06 -0.0124999977647" rgba="0.23 0.25 0.28 1" mass="0" />
+                        <geom class="collision" name="gemini2_camera_collision" type="box" size="0.015 0.045 0.0125" mass="0" />
+                      </body>
+                    </body>
                   </body>
                 </body>
               </body>
@@ -106,8 +121,8 @@
     <motor name="joint4_torque" joint="joint4" gear="1" ctrlrange="-7.0 7.0" ctrllimited="true" forcelimited="true" forcerange="-7.0 7.0" />
     <motor name="joint5_torque" joint="joint5" gear="1" ctrlrange="-7.0 7.0" ctrllimited="true" forcelimited="true" forcerange="-7.0 7.0" />
     <motor name="joint6_torque" joint="joint6" gear="1" ctrlrange="-7.0 7.0" ctrllimited="true" forcelimited="true" forcerange="-7.0 7.0" />
-    <motor name="left_finger_force" joint="left_finger_joint" gear="1" ctrlrange="-20.0 20.0" ctrllimited="true" forcelimited="true" forcerange="-20.0 20.0" />
-    <motor name="right_finger_force" joint="right_finger_joint" gear="1" ctrlrange="-20.0 20.0" ctrllimited="true" forcelimited="true" forcerange="-20.0 20.0" />
+    <motor name="left_finger_force" joint="left_finger_joint" gear="1" ctrlrange="-1.5 1.5" ctrllimited="true" forcelimited="true" forcerange="-1.5 1.5" />
+    <motor name="right_finger_force" joint="right_finger_joint" gear="1" ctrlrange="-1.5 1.5" ctrllimited="true" forcelimited="true" forcerange="-1.5 1.5" />
   </actuator>
   <sensor>
     <jointpos name="joint1_pos" joint="joint1" />

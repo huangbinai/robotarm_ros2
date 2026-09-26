@@ -22,6 +22,7 @@
   <exec_depend>builtin_interfaces</exec_depend>
   <!-- 轨迹执行动作接口（FollowJointTrajectory 的目标/反馈/结果）。 -->
   <exec_depend>control_msgs</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
   <!-- 位姿、变换等几何消息。 -->
   <exec_depend>geometry_msgs</exec_depend>
   <!-- 启动描述与节点编排（launch 文件使用）。 -->
@@ -33,6 +34,9 @@
   <exec_depend>rebotarm_msgs</exec_depend>
   <!-- 运动规划配置包：提供 URDF、SRDF 与网格，仿真模型与关节限位一致性检查都读它。 -->
   <exec_depend>rebotarm_moveit_config</exec_depend>
+  <!-- Offline MJCF generation reads handeye.yaml and camera profile resources only;
+       no perception nodes or Python implementation are imported or started. -->
+  <exec_depend>rebotarm_vision</exec_depend>
   <!-- 仿真时钟消息 /clock，保证规划与执行共用仿真时间。 -->
   <exec_depend>rosgraph_msgs</exec_depend>
   <!-- 图像、相机内参与关节状态消息（虚拟相机与关节状态发布）。 -->

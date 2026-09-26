@@ -4,6 +4,18 @@
 
 ## 当前焦点
 
+- 2026-09-24：开始RGB-D→MuJoCo物体重建最小闭环。新增 `rebotarm_mujoco_pointcloud_proxy` 与 `pointcloud_proxy.py`：输入已转到 `base_link` 的目标Nx3 `.npy/.npz/.json` 点云，按nearest quantile边界+margin估计AABB，输出独立场景并把同一代理中心写入home freejoint；规范 `scene.xml` 不修改、不推断隐藏表面/质量/摩擦。合成点云生成代理并经MuJoCo health加载成功。系统全量752 passed/13 skipped，分层18，MuJoCo相关6，build/compileall/diff通过。下一步将视觉现有 `build_detection_cloud()` 的camera-frame点云按TF转换到base_link后接此工具；未操作真机。
+
+- 2026-09-24：按用户要求新增无需训练的MuJoCo多姿态搜索与示教轨迹预演。`tools/mujoco_grasp_search.py`在仅MoveIt假状态环境中枚举9个瓶子候选，逐段做IK、状态有效性和规划；每候选使用独立MuJoCo实例执行预抓取/接近/抬升、闭合夹爪并按分阶段双侧接触、最终抬升、横移和穿透评分。隔离domain206实际9/9候选完成评估，稳定抬升0；最高分仅相对排名，闭合/抬升中接触但保持阶段失去接触，不能宣称成功抓取。`rebotarm_teach.mujoco_preview`读取原示教JSONL，复用现有平滑/滤波/重采样/重定时，只在独立MuJoCo实例播放并报告跟踪、接触、瓶位变化，支持桌面Viewer；合成20帧记录经96个重定点完成headless与Viewer测试，原文件保持不变。说明见docs/mujoco_grasp_search_and_teach_preview.md。仿真/motion/teach三包重建，layering18、系统全量751 passed/12 skipped、MuJoCo环境相关8 passed、compileall/diff通过。未运行真机/未自动修改真机参数；需后续改进候选/夹爪接触模型才可能稳定抬升。
+
+- 2026-09-23：用户截图 `rebotarm_mujoco_bottle_trial` 在 preflight 报 `/rebotarm/sim/grasp_state` 不可用，现场只读检查无 `rebotarm_mujoco_node`/`move_group` 进程，且此前手册默认给 headless，导致即使运行也看不到窗口。已修正 docs/mujoco_bottle_trial.md：桌面默认 `mujoco_rviz_viewer.launch.py`，headless 作为无显示环境替代；trial 前检查服务并对齐 ROS_DOMAIN_ID。未启动真机。
+
+- 2026-09-23：新增纯MuJoCo已知瓶位接触试验 `rebotarm_motion rebotarm_mujoco_bottle_trial` 与只读 `/rebotarm/sim/grasp_state`。只接受规范瓶位附近，核对唯一MuJoCo Action owner，再按瓶位生成预抓取/接近目标，逐段经MoveIt IK+状态有效性+GetMotionPlan与MuJoCo FollowJointTrajectory执行；闭合仿真夹爪后同帧检查双侧接触、力、穿透和瓶子位移。隔离ROS_DOMAIN_ID=199完成端到端仿真实测：预抓取79点、接近29点，二段Action均status4/error0；同帧双侧接触 true、最大力1.70N、穿透0.290mm、瓶位移2.53mm、抬升0.030mm，结论`bilateral_contact_without_lift`，不宣称成功抬起。预检失败不发送停止请求到未经核验的同名后端，执行失败尝试取消和仿真停止。三个包重建、分层18、全量749 passed/10 skipped、compileall/diff通过。操作说明docs/mujoco_bottle_trial.md；临时MuJoCo/MoveIt进程已退出；未触碰真机。
+
+- 2026-09-23：按用户确认，清理前一轮未提交的旧仓库 MuJoCo 实验迁移：Reach/Pick/Gymnasium/向量环境、方块场景/接触批量、域随机化/JSONL回放、Real2Sim桥和Viewer、增强Viewer/Console/笛卡尔IK、可选primitive碰撞档位与相关入口/测试均移除。保留既有瓶子物理、ROS轨迹/夹爪、虚拟RGB-D、模型/限位/健康/指标、状态存取；另保留瓶子固定seed位姿变化、接触法向/穿透、ROS诊断、带MuJoCo服务端核验的MoveIt仿真执行探针。删除范围只限本轮迁移产生的未提交文件；旧build/install的22个失效软链接与过期命令定向移入回收站，未清理其它资源。仿真、motion、teleop、bringup重建通过；`ros2 pkg executables`不再列出旧命令。分层18通过、系统Python全量746 passed/10 skipped、MuJoCo专用环境16通过、MJCF `--check`、compileall、`git diff --check`通过；ROS `/diagnostics`实测发布healthy。未操作真机。
+
+- 2026-09-22：曾按用户要求迁移旧备份 MuJoCo 扩展并完成软件测试；该迁移未提交。2026-09-23 用户明确决定删去当前阶段不用的实验功能，以下一条为当前状态。本条只保留历史，不再作为现行功能清单。
+
 - 2026-09-22：采样区预检清单从覆盖度内部移到独立整行卡片，桌面五列、窄屏换行；相机与 TF/覆盖度卡片上沿对齐，移除旧40px补偿留白。静态截图验证、Dashboard重建、745 passed/7 skipped、分层18、compileall/diff通过；仅布局变更。
 
 - 2026-09-22：试采预检新增后端请求级检查清单：图像、CameraInfo、同期机器人 TF、ArUco 质量、姿态稳定性；每次观测重置状态，成功或超时返回最后观测的逐项结果，不把未执行项目标为通过。TCP 相机三项标记不适用；前端等待期间不宣称实时阶段完成。双包重建、完整745 passed/7 skipped、分层18、聚焦3与compileall/diff通过；无真实采样或硬件操作。
@@ -777,3 +789,45 @@ Dashboard 的 `TeachReplayWorkflow` 已定为唯一正式示教回放实现，�
 2026-09-21 视觉夹取第四级运动档：普通移动/最终接近/抓后撤退速度缩放默认调整为0.15/0.05/0.10，全阶段加速度缩放为0.10；四项由visual_grasp_system公开launch参数统一传给视觉执行器与PoseExecutionNode，节点独立启动默认值同步。vision/bringup重建成功，安装入口show-args确认默认值，全量739 passed/7 skipped、分层18、compileall通过；仅完成软件验证，尚未进行第四级真机安全验收。
 
 2026-09-21 视觉夹取暂定上限档：按用户要求将普通移动/最终接近/抓后撤退速度缩放默认提高到0.25/0.08/0.15，全阶段加速度缩放提高到0.12；joint_limits未改，四项仍可由visual_grasp_system启动参数覆盖回退。vision/bringup重建成功，安装入口show-args确认，全量739 passed/7 skipped、分层18、compileall通过；未启动真机，暂定上限尚未完成真机安全验收。用户维护的docs/USER_MAINTAINED_TODO.md未修改。
+
+- 2026-09-24 仿真/RL参数只读盘点：当前canonical URDF的base/link1-6/end_link含质量、质心与惯量，两手指无显式inertial；相机安装site不等于附加载荷模型。常规POS_VEL调用SDK默认取arm.yaml rate=100 Hz，feedback刷新默认50 Hz、ROS joint_state_rate=100 Hz；hardware_manager中500 Hz注释不能替代调用链。标称夹爪90 mm映射与硬件verified 85 mm上限有区别；launch位置力矩默认1.0 N.m，仿真motor cap为1.5 N.m、finger force配置20 N，均非实测指尖力。手眼当前为上游外参、TCP为[-0.04,0,0]且固定同向；旧标定摘要不作为当前独立复验。历史记录含paired采集与用户接受上游动力学来源，但本次未找到当前检出中的对应P5原始证据文件。未启动硬件或仿真，未修改生产代码/参数。
+
+- 2026-09-24 Gemini2/Seeed支架加入当前MuJoCo生成模型：新增gemini2_payload.yaml与生成扩展，end_link下固定相机及STEP转换的两件支架，无新DOF/执行器/TF。相机规格98g，支架各20g为未称重工程估计，总新增138g；安装变换、均匀等效惯量也为工程初值。相机使用官方STL+盒碰撞，支架CAD外形+保守凸包，源STEP/许可证/哈希随资源保留。MoveIt URDF、真实控制器与handeye未改；原end_link质量是否已含附件仍待核实，不能视为已解决重复计重来源问题。新增3项MuJoCo测试通过，home无附件接触、100步有限、生成一致；全量754 passed/14 skipped、layering18、compileall/diff通过，simulation重建及安装资源加载成功。纯软件，无真机；文档docs/gemini2_mujoco_payload.md。
+
+- 2026-09-24 用户实物照片纠正Gemini2装配：撤回先前把末端-X当作夹指前方的错误初值，夹指实际从滑轨x约-0.09向指尖x=0延伸。mount CAD X/Y/Z改映射end +Y/+X/-Z，平移[-0.100,0,0.045]m；CAD平面法向确认相机托座约30度，camera采用Rx30*Rz90与CAD中心[0,0.056,-0.00065]m，镜头朝夹爪前方/下方且支撑在后侧。几何仍为照片约束近似非实测标定；质量未改。新方向回归断言、MuJoCo3、layering18、全量754 passed/14 skipped、compileall/diff及simulation重建通过，安装模型离屏截图已核对；未操作真机。
+
+- 2026-09-25 腕部附件照片核对：读取现有gemini2_payload配置/STEP派生网格，EGL离屏渲染当前候选与零件局部。当前enabled=false、parent=end_link，CAD为相机托架+长斜臂卡座；照片遮挡实际后部固定界面，无法唯一确认parent及安装朝向。临时link5摆放仅用于排查、未写回配置；没有把目测候选当作修正完成。等待能同时显示支架后部、固定螺丝及腕部电机的侧后照片。未改生产代码/模型/手眼外参，未访问硬件；未运行构建或全量测试。
+
+- 2026-09-25 用户明确附件仅用于simulation：将gemini2_payload enabled改为true，按用户确认的既有end_link装配生成canonical robot.xml；默认MuJoCo场景和使用该模型的仿真入口加载相机与支架。真实URDF、控制器、手眼外参不改；RViz/MoveIt仍使用原URDF，不含附件碰撞。simulation重建通过、安装模型含camera；附件MuJoCo测试3 passed、分层18、系统全量754 passed/14 skipped、生成一致性/compileall/diff通过。未启动硬件；尺寸/质量仍保留原估计依据，不声称实物校准。
+
+- 2026-09-25 用户确认旧版支架并授权替换：simulation资源改为官方840971c的2026-04-21单实体STEP，替换9月新版长臂；重新生成STL/CAD质心与惯量，更新相机旧版座面倾角及卡座位置，保留end_link父连接。支架20g仍为估计、相机98g，总118g；只影响MuJoCo。离屏装配核对、附件3、分层18、全量754 passed/14 skipped、compileall/MJCF/diff通过。首次build因被删除长臂的build/install残留软链失败，定向移至/tmp/gemini-new-version-backup后重建通过；安装scene实际加载只含mount_part0。未操作硬件。
+
+- 2026-09-25 用户指出旧支架安装缝隙：检查网格确认上部夹爪安装面end X=-0.10320933 m，原先误用整体后界-0.10670933 m。仿真附件整体向+X移动3.5mm，相机相对支架、质量、实机URDF/手眼不变；侧面与背面离屏核对接合，canonical MJCF重生成，simulation重建通过。附件3、分层18、全量754 passed/14 skipped、compileall/MJCF check/diff通过。仅软件装配修正，未访问硬件。
+
+- 2026-09-25 再次装配修正：撤回之前仅移动3.5mm即装配正确的结论。对旧STEP解析确认安装卡槽内侧平面z=-16.9mm，应对齐gripper_base上部面end X=-103.20933mm，非槽口z=0。总成平移改[-0.08630933,0.0002079068933,0.0000007587264]m；两个孔轴配准Y=±11/Z=30mm。侧面/背面离屏检查及安装面/孔轴回归通过，附件3、分层18、全量754 passed/14 skipped、simulation build/compileall/MJCF/diff通过。仅simulation，未实物验收或手眼标定。
+
+- 2026-09-25 按用户配色将simulation支架visual RGBA改为[0.5,0.5,0.5,1]中灰，相机保留[0.23,0.25,0.28,1]深灰。重生成MJCF、simulation重建、离屏渲染核对通过；分层18、全量754 passed/14 skipped、compileall/生成一致性/diff通过；仅外观颜色变化。
+
+- 2026-09-25 end_link归属核对：URDF引用gripper_base.stl；临时分色渲染确认固定夹爪底座/导轨支撑为end_link，左右活动手指及随动齿条/滑块分别为finger link。几何独立不证明end_link 500g未合并手指质量，质量来源仍未确定。用户指定Gemini2继续采用官方98g；旧版STEP与许可证、打印说明复制至/home/huangbin/文档/Gemini2旧版支架_2026-04-21，哈希一致。仅临时预览分色、无生产模型改动。
+
+- 2026-09-25 用户实测旧版打印相机支架22g并授权写入：gemini2_payload mount_part_masses_kg=[0.022]；camera保持官方0.098kg，总附件0.120kg。生成器沿用CAD20g参考归一化并自动将惯量乘1.1，COM与分布仍为CAD均匀密度估计；来源文档同步。单个打印夹指12g仅为用户报告，未写入活动总成。simulation build、安装模型质量回读、附件3、分层18、全量754 passed/14 skipped、compileall/MJCF/diff通过。未操作硬件。
+
+- 2026-09-26 修正OMPL响应适配器为TOTG→Ruckig→ValidateSolution→DisplayMotionPath，撤回旧注释和测试强制的反向顺序；回归改解析YAML。moveit_config重建通过，隔离domain219无硬件GetMotionPlan实测SUCCESS/10点/0.90289203秒，调用日志确认顺序；临时进程退出。分层18、全量754 passed/14 skipped、compileall通过。证据Agent/evidence/maintenance/2026-09-26-totg-ruckig-order.md；不代表实机或所有轨迹jerk验收。
+
+- 2026-09-26 D3静态核对：常规SDK循环arm.yaml=100Hz，feedback刷新上限50Hz，ROS发布100Hz且同批反馈保留stamp；反馈先结算旧请求后发新请求，配置频率不能代表端到端延迟。MuJoCo控制参考100Hz、物理dt=.002，MoveIt组合发布50Hz，独立默认30Hz通过round生成17步有名义时间比1.02差异。100/50/100可保留为位置伺服基线，未实测周期抖动/新样本率，不提升频率，不做实机验收。
+
+- 2026-09-26 用户确认24V J1-3 DM-J4340P-2EC V1.1、J4-6 DM-J4310-2EC V1.2并授权更新：仿真规格4340P额定12/峰值40，4310额定3.5/峰值12.5；新增逐轴simulation_effort_limit_nm=40/12.5，生成器同步motor ctrl/force和joint actuatorfrcrange，控制器用同源限矩；真实URDF27/7与POS_VEL5/3不改。SDK0.4.7+rebotarm.1量程4340P=(12.5,10,28)、4310=(12.5,30,10)为协议映射，不按机械峰值盲改，待disabled寄存器读回。厂家dmBots两本V1.4手册p20提供Damp11/Inertia12/Gr20，只读但无固定D5数值，粘性系数注明仅供参考，无干摩擦固定值；未运行厂商会转动电机的辨识。文档docs/damiao_24v_simulation_parameters.md，PDF保存文档/达妙电机官方资料_24V。build及安装限矩回读通过、全量755 passed15 skipped、MuJoCo聚焦5、分层18、compileall/MJCF/diff通过。
+
+- 2026-09-26 用户要求恢复仿真限矩基线：撤销simulation_effort_limit_nm及生成器/控制器覆盖逻辑，重新由URDF effort给出J1-3=27/J4-6=7 Nm，安装模型motor与joint限矩回读一致。保留24V真实型号额定/峰值12/40、3.5/12.5规格及厂家D5资料；POS_VEL、SDK不改。明确SDK映射量程不是保护限矩，恢复基线不代表SDK能力验收。build、MuJoCo5、layering18、全量755 passed/15 skipped、compileall/MJCF/diff通过。
+
+- 2026-09-26 用户指定MuJoCo每指执行器限力1N：finger_force_limit_n从20改1，重生成canonical robot.xml并重建simulation。安装模型left/right ctrlrange、forcerange及joint actuatorfrcrange均[-1,1]，真实夹爪参数不改；历史comparison profile保持原值。分层18、全量755 passed/15 skipped、compileall/MJCF/diff通过。不是实测夹持能力。
+
+- 2026-09-26 用户将仿真左右手指执行器与关节总执行器限力均指定1.5N：finger_force_limit_n=1.5，生成器对手指同步ctrlrange/forcerange/joint actuatorfrcrange并显式启用关节限力；保留真实URDF手指effort1及硬件电机力矩不变。安装模型回读三层±1.5N，MuJoCo聚焦6、分层18、全量755 passed/16 skipped、build/compileall/MJCF/diff通过。未硬件操作。
+
+- 2026-09-26 F1核对：生产camera_ubuntu彩色640x480@30、原生深度640x400@30、HW D2C；YOLO读彩色、GraspNet读对齐深度及SDK CameraInfo K，未处理D也未保留CameraInfo尺寸/stamp。设备USB未见Gemini2，无真实流，当前不能验收实机图像/内参一致。simulation fixed_camera改用仓库legacy ordinary_grasp参考K=(519.422,519.17,320.681,241.362)，明确非当前设备标定；真实投影与CameraInfo由cam_intrinsic匹配，D=0理想针孔、外参不变。EGL投影/分辨率测试通过；domain218安装MuJoCo实际两路各5组同stamp Image/Info一致，退出SIGINT打断join但进程已退出。build、系统755 passed19 skipped、MuJoCo相机10、真实消息/driver替身12、layering18、compileall/diff通过。tools/check_rgbd_camera_info.py只读审计入口；docs/rgbd_camera_parameter_audit.md记录仍需连接相机读取真实K/D及畸变处理缺口。
+
+- 2026-09-26 用户同意F2腕部虚拟相机接线：生成器读取vision handeye/camera配置资源，将wrist_camera挂end_link，ROS optical→MuJoCo局部X旋转pi；默认虚拟输出和TF parent/frame切换腕部，渲染仍opt-in。实体附件/真实手眼不改，K仍旧配置参考待实机。两姿态渲染与相对TF测试通过4；ROS实际各5组图像/Info及静态TF一致；755 passed20 skipped、layering18、build/compileall/MJCF/diff通过。样图可见近场几何遮挡，实体外壳配准与光学视野未物理验收；未通过挪动标定或隐藏几何掩盖。退出有late publish context警告但进程clean exit。
+
+- 2026-09-26 腕部传感器画面修正：球体确认为wrist_camera_mount site，上方灰区为gemini2_camera_visual。渲染器三通道统一禁sites与group3碰撞代理；wrist相机使用私有model副本排除自身粗略外壳（无光学孔模型），保持物理/总览外壳、夹爪和支架以及手眼位姿。此为显式渲染近似，不宣称修正机械装配与光学标定吻合。图像已目视检查，分割ID/深度/共享模型不变测试通过；MuJoCo相机12、layering18、全量755 passed21 skipped、build/compileall/diff通过。
+
+- 2026-09-26 用户授权上传当前进度：待提交范围包含仿真抓取/预演/点云代理、旧版Gemini2附件和22g支架、腕部光学相机/传感器渲染、TOTG→Ruckig、参数审计与用户授权TODO。提交前系统755 passed/21 skipped、分层18、compileall/diff通过；本轮未硬件操作。

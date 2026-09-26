@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import threading
 from dataclasses import dataclass
@@ -133,10 +134,10 @@ class PinholeIntrinsics:
     # 图像宽、高（像素），与渲染尺寸一致，用于校验并填充 CameraInfo
     width: int
     height: int
-    # fx / fy：x、y 方向焦距（像素）。虚拟相机像素为正方形，两者恒等
+    # fx / fy：x、y 方向焦距（像素）。原生物理内参允许两者不同
     fx: float
     fy: float
-    # cx / cy：主点（光轴与像面交点）像素坐标，取图像几何中心 (w-1)/2、(h-1)/2
+    # cx / cy：主点（光轴与像面交点）像素坐标，fovy 回退时取图像几何中心，物理内参可偏心
     cx: float
     cy: float
 
@@ -208,7 +209,7 @@ def pinhole_intrinsics(width: int, height: int, fovy_degrees: float) -> PinholeI
     """由垂直视场角推导针孔内参（像素）。
 
     焦距按 ``f = 0.5 * height / tan(fovy / 2)`` 计算：MuJoCo 的 ``cam_fovy`` 是垂直视场
-    角（度），只与图像高度有关；x/y 用同一焦距，等价于假设正方形像素。主点取图像几何中心
+    角（度），只与图像高度有关；此 fovy 回退路径的 x/y 用同一焦距，等价于假设正方形像素。主点取图像几何中心
     ``(width - 1) / 2``、``(height - 1) / 2``，与上层填充 CameraInfo 的口径一致。
 
     宽、高必须为正；``fovy_degrees`` 必须是 (0, 180) 内的有限值，否则抛 ``ValueError``。
@@ -285,6 +286,31 @@ def rotation_matrix_to_quaternion_xyzw(matrix: Any) -> tuple[float, float, float
     if quaternion[3] < 0.0:
         quaternion *= -1.0
     return tuple(float(value) for value in quaternion)
+
+
+def model_camera_intrinsics(model: Any, camera_id: int, width: int, height: int) -> PinholeIntrinsics:
+    """Read the lens actually used by MuJoCo (physical intrinsics or legacy fovy).
+
+    MuJoCo principal offsets use a centered OpenGL image plane. ROS uses
+    top-left pixel centers. Resize scales pixel edges, preserving half-pixel alignment.
+    The rendered lens is ideal: no real-camera distortion coefficients are implied.
+    """
+    if hasattr(model, "cam_sensorsize"):
+        sensor = np.asarray(model.cam_sensorsize[camera_id], dtype=float)
+        if np.any(sensor > 0):
+            lens = np.asarray(model.cam_intrinsic[camera_id], dtype=float)
+            if (sensor.shape != (2,) or lens.shape != (4,)
+                    or not np.isfinite(sensor).all() or not np.isfinite(lens).all()
+                    or np.any(sensor <= 0) or np.any(lens[:2] <= 0)):
+                raise ValueError("invalid MuJoCo camera sensor/intrinsic parameters")
+            fx, fy, px, py = lens
+            return PinholeIntrinsics(
+                width=width, height=height,
+                fx=float(fx * width / sensor[0]), fy=float(fy * height / sensor[1]),
+                cx=float((width - 1) / 2 - px * width / sensor[0]),
+                cy=float((height - 1) / 2 + py * height / sensor[1]),
+            )
+    return pinhole_intrinsics(width, height, float(model.cam_fovy[camera_id]))
 
 
 def camera_optical_transform(
@@ -409,7 +435,7 @@ class VirtualCameraRenderer:
     """持有一个绑定到既有 MuJoCo model/data 的离屏渲染器。
 
     构造阶段完成一次性解析：相机 id、父 body id、每个待标注 body 名下的 geom id 列表，并
-    由 ``cam_fovy`` 算出内参、由当前仿真状态算出外参；每次 ``render`` 前都会 ``update_scene``
+    由模型物理内参（或 cam_fovy 回退）算出内参、由当前仿真状态算出外参；每次 ``render`` 前都会 ``update_scene``
     重新同步仿真状态，因此能跟随机械臂与物体的运动。
 
     线程约束：MuJoCo 渲染上下文绑定创建它的线程，渲染器必须在同一线程内构造、渲染与销毁，
@@ -443,9 +469,9 @@ class VirtualCameraRenderer:
             self._model.cam_orthographic[camera_id]
         ):
             raise ValueError("orthographic MuJoCo cameras are not supported")
-        # 内参只由垂直视场角与渲染尺寸决定，与相机安装位姿无关
-        self.intrinsics = pinhole_intrinsics(
-            config.width, config.height, float(self._model.cam_fovy[camera_id])
+        # Match the renderer's physical lens when focalpixel/principalpixel are configured.
+        self.intrinsics = model_camera_intrinsics(
+            self._model, camera_id, config.width, config.height
         )
         parent_body_id = int(
             self._mj.mj_name2id(
@@ -456,8 +482,8 @@ class VirtualCameraRenderer:
             raise ValueError(
                 f"MuJoCo virtual camera parent body not found: {config.parent_body_name}"
             )
-        # 外参只在构造时计算一次并由 on_ready 上报一次；默认配置是固定在基座上的相机，
-        # 若把相机挂到运动连杆上，上层发布的静态 TF 不会随运动更新，需自行处理
+        # 相机必须刚性连接到所选父body；相对末端的外参保持不变，
+        # 因此腕部相机也可发布静态 end_link -> optical TF，世界姿态由机器人TF链更新。
         self.extrinsics = camera_optical_transform(
             camera_position_world=np.asarray(self._data.cam_xpos[camera_id]),
             camera_rotation_world_mujoco=np.asarray(
@@ -487,8 +513,27 @@ class VirtualCameraRenderer:
             if not geom_ids:
                 raise ValueError(f"MuJoCo annotation body has no geometry: {body_name}")
             self._body_geoms[body_name] = geom_ids
+        # Sensor images must exclude diagnostic sites and duplicate collision proxies.
+        self._scene_option = self._mj.MjvOption()
+        self._scene_option.sitegroup[:] = 0
+        self._scene_option.geomgroup[3] = 0
+        self._scene_option.geomgroup[5] = 0
+        # The coarse camera shell has no optical aperture model. Only its own
+        # sensor omits that shell; gripper, mount and external obstacles remain.
+        # Use a private rendering model so the shared physics/viewer geometry,
+        # collision properties, masses and calibrated optical transform never change.
+        self._render_model = self._model
+        self._sensor_excluded_geom_ids: tuple[int, ...] = ()
+        if config.camera_name == "wrist_camera":
+            shell_id = self._mj.mj_name2id(
+                self._model, self._mj.mjtObj.mjOBJ_GEOM, "gemini2_camera_visual"
+            )
+            if shell_id >= 0:
+                self._render_model = copy.copy(self._model)
+                self._render_model.geom_group[shell_id] = 5
+                self._sensor_excluded_geom_ids = (int(shell_id),)
         self._renderer = self._mj.Renderer(
-            self._model, height=config.height, width=config.width
+            self._render_model, height=config.height, width=config.width
         )
 
     @classmethod
@@ -512,20 +557,26 @@ class VirtualCameraRenderer:
         """
         if self._closed:
             raise RuntimeError("virtual camera renderer is closed")
-        self._renderer.update_scene(self._data, camera=self.config.camera_name)
+        self._renderer.update_scene(
+            self._data, camera=self.config.camera_name, scene_option=self._scene_option
+        )
         # copy() 让像素数据脱离渲染器内部缓冲，避免下一帧渲染覆盖本帧结果
         rgb = np.ascontiguousarray(self._renderer.render().copy())
 
         self._renderer.enable_depth_rendering()
         try:
-            self._renderer.update_scene(self._data, camera=self.config.camera_name)
+            self._renderer.update_scene(
+                self._data, camera=self.config.camera_name, scene_option=self._scene_option
+            )
             depth_m = self._renderer.render().copy()
         finally:
             self._renderer.disable_depth_rendering()
 
         self._renderer.enable_segmentation_rendering()
         try:
-            self._renderer.update_scene(self._data, camera=self.config.camera_name)
+            self._renderer.update_scene(
+                self._data, camera=self.config.camera_name, scene_option=self._scene_option
+            )
             segmentation = self._renderer.render().copy()
         finally:
             self._renderer.disable_segmentation_rendering()

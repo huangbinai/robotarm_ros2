@@ -138,6 +138,8 @@ class ContactInfo:
     geom2: str
     position: Vector3
     force: float
+    penetration_depth: float = 0.0
+    normal: Vector3 = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         """校验名称非空、接触点长度为 3 且有限、接触力有限且非负。"""
@@ -153,6 +155,13 @@ class ContactInfo:
         if force < 0.0:
             raise ValueError("contact force must be non-negative")
         object.__setattr__(self, "force", force)
+        penetration = float(self.penetration_depth)
+        if not math.isfinite(penetration) or penetration < 0.0:
+            raise ValueError("contact penetration_depth must be finite and non-negative")
+        object.__setattr__(self, "penetration_depth", penetration)
+        object.__setattr__(self, "normal", _float_tuple(
+            self.normal, length=3, label="contact normal"
+        ))
 
 
 @dataclass(frozen=True)

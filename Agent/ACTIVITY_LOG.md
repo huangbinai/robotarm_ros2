@@ -860,3 +860,67 @@
 - 2026-09-22T19:11:51+08:00 | actor=codex | event=complete | note=预检五项清单接入真实检查结果；无硬件操作 | verification=745 passed 7 skipped; focused 3; layering 18; calibration/dashboard build; compileall; diff check
 - 2026-09-22T19:13:34+08:00 | actor=codex | event=start | note=优化采样预览与预检清单布局 | verification=-
 - 2026-09-22T19:16:05+08:00 | actor=codex | event=complete | note=预检清单独立整行，优化采样区域布局 | verification=browser screenshot; 745 passed 7 skipped; layering 18; dashboard build; compileall; diff check
+- 2026-09-22T19:24:42+08:00 | actor=Codex | event=start | note=迁移旧仓库 MuJoCo 扩展功能，保留当前接口与虚拟相机，修复并验证 | verification=-
+- 2026-09-22T19:47:42+08:00 | actor=Codex | event=complete | note=旧仓库MuJoCo扩展迁移完成；功能清单见docs/mujoco_migration.md，仅软件与仿真验证 | verification=749 passed/22 skipped; MuJoCo 34 passed; layering 18; 5 packages build; ROS action/MoveIt/RGB-D/EGL/viewer/Real2Sim/Sim2Real smoke; compileall; MJCF check; diff check
+- 2026-09-23T13:25:00+08:00 | actor=Codex | event=start | note=按用户确认清理旧仓库迁入的暂不用 MuJoCo 扩展功能 | verification=-
+- 2026-09-23T13:38:08+08:00 | actor=Codex | event=complete | note=按确认范围清理暂不用MuJoCo实验功能，保留当前瓶子仿真主链 | verification=4 packages build; layering 18; full 746 passed 10 skipped; MuJoCo 16 passed; diagnostics runtime; MJCF check; compileall; diff check
+- 2026-09-23T14:15:04+08:00 | actor=codex | event=start | note=Explain package-local launch files versus rebotarm_bringup launch files | verification=-
+- 2026-09-23T14:27:02+08:00 | actor=Codex | event=start | note=实现已知瓶位的纯 MuJoCo 抓取动作和接触结果测试 | verification=-
+- 2026-09-23T14:38:39+08:00 | actor=codex | event=start | note=解释 MuJoCo 能力及本项目应用 | verification=-
+- 2026-09-23T14:39:07+08:00 | actor=codex | event=complete | note=已核对官方 MuJoCo 概述与本地仿真包，说明能力、现有接口与扩展边界；未运行仿真或实机 | verification=-
+- 2026-09-23T16:29:10+08:00 | actor=Codex | event=complete | note=已知瓶位纯MuJoCo接触试验实现并完成端到端仿真验证 | verification=MuJoCo pregrasp/grasp Action 4/0; same-frame bilateral contact; no lift; 3 packages build; layering 18; full 749 passed 10 skipped; compileall; diff check
+- 2026-09-23T16:34:34+08:00 | actor=Codex | event=start | note=修正MuJoCo瓶子试验可视化启动说明与服务预检 | verification=-
+- 2026-09-23T16:38:40+08:00 | actor=Codex | event=complete | note=修正瓶子试验可视化启动与grasp_state服务预检说明 | verification=layering 18 passed; full 749 passed 10 skipped; compileall; diff check
+- 2026-09-24T13:01:36+08:00 | actor=Codex | event=start | note=实现多姿态MuJoCo搜索与示教轨迹预演 | verification=-
+- 2026-09-24T13:28:25+08:00 | actor=Codex | event=complete | note=多姿态MuJoCo搜索与示教轨迹预演已实现并软件验证 | verification=search 9 candidates 0 stable lifts; teach headless+Viewer smoke; 3 packages build; layering 18; full 751 passed 12 skipped; MuJoCo 8 passed; compileall; diff check
+- 2026-09-24T18:28:15+08:00 | actor=Codex | event=start | note=实现RGB-D观测目标几何到MuJoCo碰撞代理的只读最小闭环 | verification=-
+- 2026-09-24T18:40:51+08:00 | actor=Codex | event=start | note=实现RGB-D目标点云到MuJoCo碰撞代理的最小闭环 | verification=-
+- 2026-09-24T18:50:23+08:00 | actor=Codex | event=complete | note=完成RGB-D目标点云到独立MuJoCo碰撞代理的最小闭环 | verification=pointcloud proxy synthetic smoke; MuJoCo health proxy scene; full 752 passed 13 skipped; layering 18; build; compileall; diff check
+- 2026-09-24T19:43:33+08:00 | actor=codex | event=start | note=只读盘点强化学习仿真 B C D E F 参数及校准依据 | verification=-
+- 2026-09-24T19:46:06+08:00 | actor=codex | event=complete | note=完成B C D E F参数文件盘点，区分已填写、历史来源确认与当前缺失实测依据；未启动硬件或仿真 | verification=XML静态解析及配置/SDK调用链核对；只读审计未运行测试或构建
+- 2026-09-24T20:32:52+08:00 | actor=codex-side | event=start | note=将Gemini2及Seeed支架加入当前MuJoCo模型，纯软件验证，不操作硬件 | verification=-
+- 2026-09-24T20:42:43+08:00 | actor=codex-side | event=complete | note=Gemini2与Seeed支架接入当前MuJoCo；估计质量/位姿明确标注，MoveIt与真机未改 | verification=754 passed/14 skipped; layering18; MuJoCo focused3; compileall/diff; simulation build; installed MJCF load
+- 2026-09-24T20:44:47+08:00 | actor=codex-side | event=start | note=依据用户实物照片纠正Gemini2支架装配朝向，纯仿真 | verification=-
+- 2026-09-24T20:52:42+08:00 | actor=codex-side | event=complete | note=按实物照片纠正支架前后与相机30度座面倾斜；安装模型截图核对完成 | verification=MuJoCo3; layering18; 754 passed/14 skipped; compileall/diff; simulation build
+- 2026-09-25T12:17:42+08:00 | actor=codex | event=start | note=按实物照片修正腕部相机和支架模型安装位置并验证 | verification=-
+- 2026-09-25T12:25:13+08:00 | actor=codex | event=checkpoint | note=完成腕部附件静态与离屏装配检查；安装界面被照片遮挡，等待侧后视图后修正；配置仍保持原值 | verification=现有模型临时启用后EGL渲染成功；未操作硬件
+- 2026-09-25T13:57:30+08:00 | actor=codex | event=start | note=仅在simulation默认模型启用用户确认的相机支架装配 | verification=-
+- 2026-09-25T13:59:03+08:00 | actor=codex | event=complete | note=相机支架仅接入simulation默认MJCF，已重建；真实模型和手眼参数不变 | verification=附件3 passed; layering18; 全量754 passed/14 skipped; build/compileall/MJCF check通过
+- 2026-09-25T14:31:18+08:00 | actor=codex | event=start | note=替换simulation Gemini2为用户确认旧版支架 | verification=-
+- 2026-09-25T14:36:10+08:00 | actor=codex | event=complete | note=旧版Gemini2短支架已替换至simulation默认模型并重建验证 | verification=附件3、分层18、全量754 passed/14 skipped；build/installed model/compileall/MJCF一致性通过
+- 2026-09-25T14:46:46+08:00 | actor=codex | event=start | note=修正旧版相机支架腕部安装缝隙 | verification=-
+- 2026-09-25T14:50:18+08:00 | actor=codex | event=complete | note=旧支架安装面偏移3.5mm已修正，simulation重建和回归通过 | verification=附件3、分层18、全量754 passed/14 skipped；build/compileall/MJCF/diff通过
+- 2026-09-25T14:54:28+08:00 | actor=codex | event=start | note=按侧面实物照片重新修正旧版相机支架装配 | verification=-
+- 2026-09-25T14:58:47+08:00 | actor=codex | event=complete | note=旧支架按卡槽内侧面和双孔轴重新配准，仿真重建验证完成 | verification=附件3、layering18、754 passed/14 skipped、build/compileall/MJCF/diff通过
+- 2026-09-25T15:03:06+08:00 | actor=codex | event=start | note=仿真支架改中灰，相机保留深灰 | verification=-
+- 2026-09-25T15:04:21+08:00 | actor=codex | event=complete | note=仿真支架中灰配色完成，相机保留深灰 | verification=build/渲染/MJCF/compileall通过；layering18；754 passed/14 skipped
+- 2026-09-25T17:36:31+08:00 | actor=codex | event=start | note=检查end_link与左右手指归属，导出旧版支架STEP供打印 | verification=-
+- 2026-09-25T17:37:39+08:00 | actor=codex | event=complete | note=完成end_link几何归属可视化和旧版支架STEP本地导出；相机沿用98g | verification=URDF/网格分色核对；导出STEP哈希一致；无生产代码修改
+- 2026-09-25T18:18:40+08:00 | actor=codex | event=start | note=将相机支架质量更新为用户实测22g | verification=-
+- 2026-09-25T18:20:26+08:00 | actor=codex | event=complete | note=实测支架22g已写入仿真并同步惯量缩放，已重建验证 | verification=installed mass22g; 附件3/layering18/754 passed14 skipped; build/compileall/MJCF/diff通过
+- 2026-09-25T18:23:51+08:00 | actor=codex | event=start | note=逐项核对D1真实控制接口，仅静态源码审计 | verification=-
+- 2026-09-25T18:24:56+08:00 | actor=codex | event=complete | note=D1源码核对完成：FollowJointTrajectory按positions/time更新目标，SDK发送目标位置和速度上限；无实机操作 | verification=ros_actions -> ArmEndPos._loop_cb -> RobotArm.pos_vel -> send_pos_vel静态追踪
+- 2026-09-25T18:28:03+08:00 | actor=codex | event=start | note=D2运动限制逐层只读审计 | verification=-
+- 2026-09-25T18:31:58+08:00 | actor=codex | event=complete | note=D2只读核对完成：规划与POS_VEL限速不同，URDF effort非实机限矩证明；底层action无独立速度加速度复核 | verification=配置、ROS轨迹校验、SDK mode_pos_vel及仿真限矩源码核对；无硬件或参数修改
+- 2026-09-26T10:35:19+08:00 | actor=codex | event=start | note=修正验证TOTG先于Ruckig后处理顺序 | verification=-
+- 2026-09-26T10:37:40+08:00 | actor=codex | event=complete | note=TOTG→Ruckig顺序修正，实际MoveIt只规划请求与回归验证通过 | verification=build; runtime SUCCESS实际调用顺序; layering18; 754 passed14 skipped; compileall/diff
+- 2026-09-26T10:40:15+08:00 | actor=codex | event=start | note=D3频率配置与采样语义只读核对 | verification=-
+- 2026-09-26T10:41:17+08:00 | actor=codex | event=complete | note=D3静态审计完成，频率可作为位置控制基线，实际时序仍待测量 | verification=控制循环/反馈事务/发布stamp/仿真步进源码检查；未改参数或启动硬件
+- 2026-09-26T11:03:35+08:00 | actor=codex | event=start | note=修正规格与仅仿真限矩，核对SDK及厂家D5资料 | verification=-
+- 2026-09-26T11:16:39+08:00 | actor=codex | event=complete | note=24V规格与仿真峰值限矩更新完成；SDK与厂家D5审计完成，POS_VEL未改 | verification=755 passed/15 skipped; MuJoCo5; layering18; build/installed limits/MJCF/compileall/diff通过
+- 2026-09-26T11:17:51+08:00 | actor=codex | event=start | note=恢复URDF27/7仿真限矩，移除新增覆盖逻辑，保留已核实规格 | verification=-
+- 2026-09-26T11:20:06+08:00 | actor=codex | event=complete | note=仿真限矩恢复27/7并移除覆盖逻辑，保留实证电机规格 | verification=build/installed limits/MJCF/compileall/diff通过；MuJoCo5; layering18;755 passed15 skipped
+- 2026-09-26T11:43:37+08:00 | actor=codex | event=start | note=更新用户维护TODO：活动手指总成及D4 D5 D6待补充项 | verification=-
+- 2026-09-26T11:44:54+08:00 | actor=codex | event=complete | note=按明确授权更新USER_MAINTAINED_TODO：活动手指总成及D4 D5 D6待补充项 | verification=文档逐项核对与git diff --check通过；无代码/参数修改
+- 2026-09-26T12:11:02+08:00 | actor=codex | event=start | note=仿真左右手指执行器限力改为每指1N | verification=-
+- 2026-09-26T12:13:01+08:00 | actor=codex | event=complete | note=MuJoCo左右手指执行器限力均改1N，安装模型三层限幅一致 | verification=build/installed ranges/compileall/MJCF/diff通过；layering18；755 passed15 skipped
+- 2026-09-26T12:17:07+08:00 | actor=codex | event=start | note=仿真手指执行器和关节限力统一1.5N | verification=-
+- 2026-09-26T12:19:27+08:00 | actor=codex | event=complete | note=仿真每指执行器与关节总执行器限力统一±1.5N，重建验证完成 | verification=installed三层限幅;MuJoCo6;layering18;755 passed16 skipped;build/compileall/MJCF/diff通过
+- 2026-09-26T12:52:03+08:00 | actor=codex | event=start | note=核对RGBD YOLO GraspNet CameraInfo实际一致性并对齐MuJoCo相机内参 | verification=-
+- 2026-09-26T13:04:42+08:00 | actor=codex | event=checkpoint | note=F1源码审计及MuJoCo参考K对齐和ROS发布验证完成；真实Gemini2未连接，实测K/D与一致性待设备连接 | verification=build;755 passed19 skipped;MuJoCo camera10;driver/message12;layering18;实际仿真ROS两路各5帧一致;compileall/diff
+- 2026-09-26T13:16:08+08:00 | actor=codex | event=start | note=MuJoCo腕部虚拟相机接入已有眼在手上标定 | verification=-
+- 2026-09-26T13:22:21+08:00 | actor=codex | event=complete | note=已有眼在手上标定接入MuJoCo腕部相机，渲染与ROS TF验证完成；近场遮挡保留记录 | verification=MuJoCo4;ROS image/info5pairs per stream+TF;755 passed20 skipped;layering18;build/compileall/MJCF/diff
+- 2026-09-26T13:32:53+08:00 | actor=codex | event=start | note=修正MuJoCo相机调试标记与相机外壳遮挡，说明RL视觉需求 | verification=-
+- 2026-09-26T13:38:31+08:00 | actor=codex | event=complete | note=相机调试标记和自身外壳传感器渲染修正，夹爪可见，物理与手眼不变 | verification=render ID/depth/model invariance;MuJoCo12;layering18;755 passed21 skipped;build/compileall/diff
+- 2026-09-26T13:41:25+08:00 | actor=codex | event=start | note=提交推送当前仿真与相机工作进度到origin/main | verification=-
+- 2026-09-26T13:43:39+08:00 | actor=codex | event=checkpoint | note=提交前验证通过，保存当前59文件工作进度并推送origin/main | verification=755 passed21 skipped;layering18;compileall/diff;未发现凭据模式

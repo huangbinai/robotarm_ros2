@@ -59,8 +59,8 @@ def test_mujoco_only_launch_exposes_opt_in_virtual_camera_without_new_backend():
     assert '"virtual_camera.enabled": ParameterValue(' in launch_text
     assert 'additional_env={"MUJOCO_GL": mujoco_gl}' in launch_text
     assert "virtual_camera.enabled: false" in config_text
-    assert "virtual_camera.parent_body_name: base_link" in config_text
-    assert "virtual_camera.parent_frame_id: base_link" in config_text
+    assert "virtual_camera.parent_body_name: end_link" in config_text
+    assert "virtual_camera.parent_frame_id: end_link" in config_text
     assert '"/camera/color/image_raw"' in node_text
     assert '"/camera/depth/image_raw"' in node_text
     assert '"/camera/depth/camera_info"' in node_text

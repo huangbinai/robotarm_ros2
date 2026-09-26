@@ -61,6 +61,9 @@ setup(
     ]
     + install_resources("models/**/*.xml")
     + install_resources("models/**/*.[sS][tT][lL]")
+    + install_resources("models/**/*.json")
+    + install_resources("models/**/*.txt")
+    + install_resources("models/**/*.step")
     + install_resources("config/*.yaml")
     + install_resources("launch/*.launch.py")
     + [(f"share/{package_name}/launch", sorted(launch_files))],
@@ -79,6 +82,7 @@ setup(
             "rebotarm_mujoco_viewer = rebotarm_simulation.mujoco_viewer:main",
             "rebotarm_mujoco_node = rebotarm_simulation.mujoco_ros_node:main",
             "rebotarm_urdf_to_mjcf = rebotarm_simulation.urdf_to_mjcf:main",
+            "rebotarm_mujoco_pointcloud_proxy = rebotarm_simulation.pointcloud_proxy:main",
         ],
     },
 )

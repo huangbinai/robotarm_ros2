@@ -319,6 +319,8 @@ class RebotArmMujoco:
                 raise ValueError(
                     f"{ARM_JOINT_NAMES[index]} position {value} outside [{lower}, {upper}]"
                 )
+        # Reject the whole reset before changing any joint state.
+        for joint_id, value in zip(self._joint_ids[:6], values):
             self._data.qpos[int(self._model.jnt_qposadr[joint_id])] = value
             self._data.qvel[int(self._model.jnt_dofadr[joint_id])] = 0.0
             self._position_targets[index] = value
@@ -611,6 +613,8 @@ class RebotArmMujoco:
                 geom2=str(self._mj.mj_id2name(self._model, self._mj.mjtObj.mjOBJ_GEOM, geom2) or f"geom{geom2}"),
                 position=tuple(float(value) for value in contact.pos),
                 force=float(np.linalg.norm(force[:3])),
+                penetration_depth=max(0.0, -float(contact.dist)),
+                normal=tuple(float(value) for value in contact.frame[:3]),
             ))
         return tuple(contacts)
 
@@ -716,6 +720,15 @@ class RebotArmMujoco:
             self._data.qvel[dof_address : dof_address + 6] = 0.0
         self._mj.mj_forward(self._model, self._data)
         return (*position_values, *orientation_xyzw)
+
+    def randomize_bottle_pose(self, seed: int | None = None) -> tuple[float, ...]:
+        """Place the canonical bottle reproducibly within the tabletop workspace."""
+        self._ensure_open()
+        if "bottle" not in self._free_bodies:
+            raise ValueError("the loaded scene has no free bottle")
+        rng = np.random.default_rng(seed) if seed is not None else self._rng
+        position = (float(rng.uniform(0.22, 0.38)), float(rng.uniform(-0.14, 0.14)), 0.0)
+        return self.set_object_pose("bottle", position, (0.0, 0.0, 0.0, 1.0))
 
     def close(self) -> None:
         """释放模型与数据句柄（可重复调用）；此后任何访问都会报“已关闭”。"""

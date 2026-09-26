@@ -451,6 +451,7 @@ def create_node_class():
     """
     import rclpy
     from control_msgs.action import FollowJointTrajectory
+    from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
     from geometry_msgs.msg import TransformStamped
     from rclpy.action import ActionServer, CancelResponse, GoalResponse
     from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
@@ -459,7 +460,7 @@ def create_node_class():
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from rebotarm_msgs.msg import Detection2D, Detection2DArray, JointMotorState
-    from rebotarm_msgs.srv import SetGripper
+    from rebotarm_msgs.srv import GetSimulationGraspState, SetGripper
     from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import CameraInfo, Image, JointState
     from std_srvs.srv import Trigger
@@ -467,6 +468,7 @@ def create_node_class():
     from trajectory_msgs.msg import JointTrajectoryPoint
 
     from .mujoco_sim import RebotArmMujoco
+    from .ros_diagnostics import build_control_diagnostic
 
     class RebotArmMujocoNode(Node):
         """仿真控制器节点：唯一持有 MuJoCo 实例并对外提供假硬件接口。
@@ -508,17 +510,24 @@ def create_node_class():
             self.declare_parameter("goal_time_tolerance_sec", 5.0)
             # 动作反馈发布频率，单位 Hz（上限 200，见 FeedbackRateLimiter）。
             self.declare_parameter("feedback_rate_hz", 20.0)
+            self.declare_parameter("diagnostic_rate_hz", 1.0)
+            self.declare_parameter("max_contact_force_n", 200.0)
+            self.declare_parameter("max_contact_penetration_m", 0.005)
+            for name in ("diagnostic_rate_hz", "max_contact_force_n", "max_contact_penetration_m"):
+                value = float(self.get_parameter(name).value)
+                if not math.isfinite(value) or value <= 0.0:
+                    raise ValueError(f"{name} must be positive and finite")
             # 虚拟 RGB-D 相机默认关闭：仅运动仿真时不需要 EGL/离屏渲染能力。
             self.declare_parameter("virtual_camera.enabled", False)
             # MuJoCo 模型里的相机名（仅作渲染视角，不改物理）。
-            self.declare_parameter("virtual_camera.camera_name", "fixed_camera")
+            self.declare_parameter("virtual_camera.camera_name", "wrist_camera")
             # 发布的彩色/深度图 frame_id（相机光学坐标系，已按 ROS 约定翻转轴向）。
             self.declare_parameter(
-                "virtual_camera.frame_id", "mujoco_fixed_camera_optical_frame"
+                "virtual_camera.frame_id", "mujoco_wrist_camera_optical_frame"
             )
             # 外参计算所参照的 MuJoCo body 名与对应的 ROS 父坐标系名。
-            self.declare_parameter("virtual_camera.parent_body_name", "base_link")
-            self.declare_parameter("virtual_camera.parent_frame_id", "base_link")
+            self.declare_parameter("virtual_camera.parent_body_name", "end_link")
+            self.declare_parameter("virtual_camera.parent_frame_id", "end_link")
             # 图像分辨率（像素）与出图频率（Hz，上限 120）。
             self.declare_parameter("virtual_camera.width", 640)
             self.declare_parameter("virtual_camera.height", 480)
@@ -626,6 +635,9 @@ def create_node_class():
                 JointMotorState, f"/{self._arm_namespace}/gripper/state", 10
             )
             self._clock_pub = self.create_publisher(Clock, "/clock", 10)
+            self._diagnostic_pub = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
+            self._diagnostic_last_wall = time.monotonic()
+            self._diagnostic_last_sim = 0.0
             # 虚拟相机发布者默认全部为空，仅在开启相机时创建，便于用同一套
             # 清理路径处理"未启用"的情况。
             self._color_pub = None
@@ -658,8 +670,8 @@ def create_node_class():
                 self._annotation_pub = self.create_publisher(
                     Detection2DArray, annotation_topic, qos_profile_sensor_data
                 )
-                # 相机外参固定不变（相机挂在固定 body 上），因此只广播一次静态 TF：
-                # parent_frame_id -> frame_id，供上层把像素反投影到机器人基座标系。
+                # 相机相对父连杆固定，广播 end_link -> optical 静态TF；
+                # 末端的世界位姿由机器人状态TF链更新。
                 self._virtual_camera_tf_broadcaster = StaticTransformBroadcaster(self)
                 self._virtual_camera_worker = VirtualCameraWorker(
                     self._sim_access,
@@ -700,12 +712,24 @@ def create_node_class():
                 self._gripper_service,
                 callback_group=self._callback_group,
             )
+            self.create_service(
+                GetSimulationGraspState,
+                f"/{self._arm_namespace}/sim/grasp_state",
+                self._grasp_state_service,
+                callback_group=self._callback_group,
+            )
             # 每次定时器回调推进足够多的固定物理步，使其时长与配置的发布周期一致；
             # 轨迹采样始终以仿真时间（而非墙钟）为准，因此慢机器上轨迹不会"变慢"。
             self._steps_per_tick = max(1, round((1.0 / rate) / self._sim.timestep))
             self.create_timer(
                 1.0 / rate,
                 self._timer_callback,
+                callback_group=self._timer_callback_group,
+                clock=self._physics_clock,
+            )
+            self.create_timer(
+                1.0 / float(self.get_parameter("diagnostic_rate_hz").value),
+                self._publish_diagnostics,
                 callback_group=self._timer_callback_group,
                 clock=self._physics_clock,
             )
@@ -782,6 +806,37 @@ def create_node_class():
             response.message = "simulation trajectory stop requested" if stopped else "no active trajectory"
             return response
 
+        def _publish_diagnostics(self):
+            state, contacts, status = self._sim_access.run(
+                lambda sim: (
+                    sim.get_state(),
+                    sim.get_contacts(),
+                    {"mode": sim.control_mode, "joint_targets": sim.control_targets[:6]},
+                )
+            )
+            now = time.monotonic()
+            elapsed = max(now - self._diagnostic_last_wall, 1e-9)
+            physics_rate = (state.simulation_time - self._diagnostic_last_sim) / elapsed / self._sim.timestep
+            self._diagnostic_last_wall, self._diagnostic_last_sim = now, state.simulation_time
+            summary = build_control_diagnostic(
+                arm_namespace=self._arm_namespace,
+                configured_rate_hz=1.0 / self._sim.timestep,
+                measured_rate_hz=physics_rate,
+                state=state,
+                status=status,
+                contacts=contacts,
+                max_contact_force_n=self.get_parameter("max_contact_force_n").value,
+                max_contact_penetration_m=self.get_parameter("max_contact_penetration_m").value,
+            )
+            msg = DiagnosticArray()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            item = DiagnosticStatus()
+            item.level = DiagnosticStatus.WARN if summary.warning else DiagnosticStatus.OK
+            item.name, item.hardware_id, item.message = summary.name, summary.hardware_id, summary.message
+            item.values = [KeyValue(key=value.key, value=value.value) for value in summary.values]
+            msg.status = [item]
+            self._diagnostic_pub.publish(msg)
+
         def _gripper_service(self, request, response):
             """夹爪服务：校验开口宽度后交给仿真裁剪到可信行程并返回实际到位值。"""
             try:
@@ -794,6 +849,47 @@ def create_node_class():
                 return response
             response.success = True
             response.reached_position = float(reached)
+            return response
+
+        def _grasp_state_service(self, _request, response):
+            state, contacts = self._sim_access.run(
+                lambda sim: (sim.get_state(), sim.get_contacts())
+            )
+            bottle_pose = state.object_poses.get("bottle")
+            if bottle_pose is None:
+                response.message = "loaded MuJoCo scene has no free bottle"
+                return response
+            response.success = True
+            response.message = "simulation observation"
+            seconds, nanoseconds = seconds_to_stamp_parts(state.simulation_time)
+            response.simulation_stamp.sec = seconds
+            response.simulation_stamp.nanosec = nanoseconds
+            response.bottle_pose.position.x = bottle_pose[0]
+            response.bottle_pose.position.y = bottle_pose[1]
+            response.bottle_pose.position.z = bottle_pose[2]
+            response.bottle_pose.orientation.x = bottle_pose[3]
+            response.bottle_pose.orientation.y = bottle_pose[4]
+            response.bottle_pose.orientation.z = bottle_pose[5]
+            response.bottle_pose.orientation.w = bottle_pose[6]
+            response.gripper_width_m = state.gripper_width
+            bottle_contacts = tuple(
+                contact for contact in contacts if "bottle" in (contact.body1, contact.body2)
+            )
+            response.bottle_contact_count = len(bottle_contacts)
+            response.left_finger_contact_count = sum(
+                "left_finger_link" in (contact.body1, contact.body2)
+                for contact in bottle_contacts
+            )
+            response.right_finger_contact_count = sum(
+                "right_finger_link" in (contact.body1, contact.body2)
+                for contact in bottle_contacts
+            )
+            response.max_bottle_contact_force_n = max(
+                (contact.force for contact in bottle_contacts), default=0.0
+            )
+            response.max_bottle_penetration_m = max(
+                (contact.penetration_depth for contact in bottle_contacts), default=0.0
+            )
             return response
 
         @staticmethod
